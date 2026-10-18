@@ -176,5 +176,10 @@ src/
 - Адреса и структуры движка сверялись с проектами [gta-reversed](https://github.com/gta-reversed/gta-reversed)
   и [plugin-sdk](https://github.com/DK22Pac/plugin-sdk).
 
+## Лицензия
+
+Код SA:COOP распространяется по лицензии MIT (файл [LICENSE](LICENSE)). У ENet и MinHook свои лицензии. Их тексты
+лежат в `third_party` и в архиве в папке `coop\licenses`.
+
 SA:COOP не связан с Rockstar Games и Take-Two Interactive. Для игры нужна своя копия GTA San Andreas, файлов
 игры в репозитории нет.

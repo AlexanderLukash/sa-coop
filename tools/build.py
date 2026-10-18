@@ -227,6 +227,11 @@ def assemble_dist(debug):
             dst = dist / f.relative_to(ROOT / "package")
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(f, dst)
+    licenses = dist / "coop" / "licenses"  # the binaries carry ENet and MinHook: their notices go along
+    licenses.mkdir()
+    shutil.copy2(ROOT / "LICENSE", licenses / "SA-COOP.txt")
+    shutil.copy2(ROOT / "third_party" / "enet" / "LICENSE", licenses / "ENet.txt")
+    shutil.copy2(ROOT / "third_party" / "minhook" / "LICENSE.txt", licenses / "MinHook.txt")
     archive = shutil.make_archive(str(ROOT / "dist" / "SA-COOP"), "zip", dist)
     print(f"dist assembled in {dist.relative_to(ROOT)} and {Path(archive).relative_to(ROOT)}")
 
