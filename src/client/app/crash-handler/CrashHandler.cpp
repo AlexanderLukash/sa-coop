@@ -1,0 +1,168 @@
+#include "app/crash-handler/CrashHandler.h"
+
+#include <windows.h>
+#include <psapi.h>
+
+#include <algorithm>
+#include <cstdio>
+
+#include "common/config/version/Version.h"
+#include "common/lib/log/Log.h"
+#include "common/lib/util/Util.h"
+
+namespace coop {
+
+namespace {
+std::wstring g_crashPath;
+LPTOP_LEVEL_EXCEPTION_FILTER g_prevFilter = nullptr;
+volatile LONG g_reports = 0;
+volatile LONG g_heartbeat = 0;
+DWORD g_mainThreadId = 0;
+unsigned g_hangSeconds = 15;
+
+bool DescribeAddress(uintptr_t addr, char* out, size_t outSize) {
+    HMODULE mod = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCWSTR)addr, &mod) ||
+        !mod) {
+        snprintf(out, outSize, "%08X", (unsigned)addr);
+        return false;
+    }
+    wchar_t path[MAX_PATH];
+    GetModuleFileNameW(mod, path, MAX_PATH);
+    const wchar_t* name = wcsrchr(path, L'\\');
+    name = name ? name + 1 : path;
+    std::string n = WideToUtf8(name);
+    if (mod == GetModuleHandleW(nullptr))
+        snprintf(out, outSize, "%08X (gta_sa.exe)", (unsigned)addr);
+    else
+        snprintf(out, outSize, "%08X (%s+%X)", (unsigned)addr, n.c_str(), (unsigned)(addr - (uintptr_t)mod));
+    return true;
+}
+
+bool IsExecutable(uintptr_t addr) {
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery((void*)addr, &mbi, sizeof(mbi))) return false;
+    DWORD p = mbi.Protect & 0xFF;
+    return mbi.State == MEM_COMMIT &&
+           (p == PAGE_EXECUTE || p == PAGE_EXECUTE_READ || p == PAGE_EXECUTE_READWRITE || p == PAGE_EXECUTE_WRITECOPY);
+}
+
+// Writes return-address-looking values found between `from` and `to` (stack range).
+void WriteStack(FILE* f, uintptr_t from, uintptr_t to) {
+    int found = 0;
+    for (uintptr_t a = from; a + 4 <= to && found < 40; a += 4) {
+        uintptr_t v = *(uintptr_t*)a;
+        if (v < 0x401000 || !IsExecutable(v)) continue;
+        char d[160];
+        DescribeAddress(v, d, sizeof(d));
+        fprintf(f, "  [esp+%03X] %s\r\n", (unsigned)(a - from), d);
+        ++found;
+    }
+}
+
+void WriteReport(EXCEPTION_POINTERS* ep, bool firstChance) {
+    if (InterlockedIncrement(&g_reports) > 6) return;
+    FILE* f = _wfopen(g_crashPath.c_str(), L"ab");
+    if (!f) return;
+    auto* er = ep->ExceptionRecord;
+    auto* ctx = ep->ContextRecord;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char where[160];
+    DescribeAddress((uintptr_t)er->ExceptionAddress, where, sizeof(where));
+    fprintf(f, "\r\n==== %s %s - %04d-%02d-%02d %02d:%02d:%02d - %s ====\r\n", COOP_NAME, COOP_VERSION_STR, st.wYear,
+            st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, firstChance ? "first-chance" : "UNHANDLED");
+    fprintf(f, "Exception %08X at %s\r\n", (unsigned)er->ExceptionCode, where);
+    if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2)
+        fprintf(f, "  %s address %08X\r\n", er->ExceptionInformation[0] ? "write to" : "read from",
+                (unsigned)er->ExceptionInformation[1]);
+    fprintf(f, "EAX=%08X EBX=%08X ECX=%08X EDX=%08X ESI=%08X EDI=%08X\r\nEBP=%08X ESP=%08X EIP=%08X EFL=%08X\r\n",
+            (unsigned)ctx->Eax, (unsigned)ctx->Ebx, (unsigned)ctx->Ecx, (unsigned)ctx->Edx, (unsigned)ctx->Esi,
+            (unsigned)ctx->Edi, (unsigned)ctx->Ebp, (unsigned)ctx->Esp, (unsigned)ctx->Eip, (unsigned)ctx->EFlags);
+    fprintf(f, "Probable call stack (return addresses on the stack):\r\n");
+    // the handler runs on the faulting thread: its stack ends at NT_TIB::StackBase
+    uintptr_t stackBase = (uintptr_t)((NT_TIB*)NtCurrentTeb())->StackBase;
+    uintptr_t to = std::min<uintptr_t>(stackBase, (uintptr_t)ctx->Esp + 4096);
+    WriteStack(f, (uintptr_t)ctx->Esp, to);
+    fclose(f);
+    LOGE("Exception %08X at %s (%s) - see crash.log", (unsigned)er->ExceptionCode, where,
+         firstChance ? "first-chance" : "unhandled");
+}
+
+LONG WINAPI VectoredHandler(EXCEPTION_POINTERS* ep) {
+    DWORD code = ep->ExceptionRecord->ExceptionCode;
+    if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+        code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_PRIV_INSTRUCTION || code == STATUS_HEAP_CORRUPTION) {
+        WriteReport(ep, true);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+LONG WINAPI UnhandledFilter(EXCEPTION_POINTERS* ep) {
+    WriteReport(ep, false);
+    return g_prevFilter ? g_prevFilter(ep) : EXCEPTION_CONTINUE_SEARCH;
+}
+
+void DumpThread(DWORD tid, const char* why) {
+    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
+    if (!th) return;
+    SuspendThread(th);
+    CONTEXT ctx{};
+    ctx.ContextFlags = CONTEXT_FULL;
+    if (GetThreadContext(th, &ctx)) {
+        char where[160];
+        DescribeAddress(ctx.Eip, where, sizeof(where));
+        if (FILE* f = _wfopen(g_crashPath.c_str(), L"ab")) {
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            fprintf(f, "\r\n==== %s - %02d:%02d:%02d - main thread %s ====\r\nEIP %s ESP=%08X EBP=%08X\r\n",
+                    COOP_NAME, st.wHour, st.wMinute, st.wSecond, why, where, (unsigned)ctx.Esp, (unsigned)ctx.Ebp);
+            MEMORY_BASIC_INFORMATION mbi{};
+            VirtualQuery((void*)ctx.Esp, &mbi, sizeof(mbi));
+            uintptr_t top = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+            WriteStack(f, ctx.Esp, std::min<uintptr_t>(top, ctx.Esp + 8192));
+            fclose(f);
+        }
+        LOGE("Main thread %s at %s - stack written to crash.log", why, where);
+    }
+    ResumeThread(th);
+    CloseHandle(th);
+}
+
+DWORD WINAPI HangThread(void*) {
+    LONG last = g_heartbeat;
+    unsigned still = 0;
+    bool reported = false;
+    for (;;) {
+        Sleep(1000);
+        LONG now = g_heartbeat;
+        if (now != last) {
+            last = now;
+            still = 0;
+            reported = false;
+            continue;
+        }
+        if (++still >= g_hangSeconds && !reported) {
+            reported = true;
+            DumpThread(g_mainThreadId, "not responding");
+        }
+    }
+}
+}  // namespace
+
+void Heartbeat() { InterlockedIncrement(&g_heartbeat); }
+
+void StartHangDetector(unsigned seconds) {
+    g_hangSeconds = seconds;
+    g_mainThreadId = GetCurrentThreadId();
+    CreateThread(nullptr, 0, HangThread, nullptr, 0, nullptr);
+}
+
+void InstallCrashHandler(const std::wstring& coopDir) {
+    g_crashPath = coopDir + L"crash.log";
+    AddVectoredExceptionHandler(0, VectoredHandler);
+    g_prevFilter = SetUnhandledExceptionFilter(UnhandledFilter);
+}
+
+}  // namespace coop

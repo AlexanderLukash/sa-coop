@@ -1,0 +1,19 @@
+#pragma once
+#include <cstdint>
+#include <string>
+
+namespace coop {
+
+// a mission marker waits for everybody: "Ждём напарника" for the host, "<host> ждёт вас..." for the partner,
+// empty otherwise
+std::string MissionWaitText();
+
+// someone wants to skip the cutscene: the line for the box ("Tester1 хочет пропустить катсцену") and the keys to
+// answer (empty when this player said yes already); empty when no vote is on
+std::string CutsceneSkipText(std::string& hint);
+// Esc: this player wants to watch on. False when there was nothing to answer (the key goes on to the game).
+bool CutsceneSkipDecline();
+// what the skip button does in a cutscene (debug bot)
+void CutsceneSkipPress();
+
+}  // namespace coop

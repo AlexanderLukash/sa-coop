@@ -1,0 +1,387 @@
+// Separate progression and looks.
+//  * the host progresses in its own save; the partner keeps a profile on the server (money, every stat:
+//    fat, muscle, stamina, lung capacity, weapon/driving skills..., clothes with haircut and tattoos,
+//    weapons, fighting style, max health/armour and the rewards of side missions: no tiring, fast reload,
+//    fireproof, free jail and hospital). It is applied over the host's world after each world load and saved back
+//    when it changes, and at once when the host saves its game. A partner without a profile starts from what the
+//    world gave him; a new game of the host starts every profile over (the server keeps the old ones aside);
+//  * both players broadcast their look (clothes description incl. fat/muscle) and their stats block: the
+//    other game rebuilds the remote ped's clothes and uses those stats while processing it;
+//  * each player has a look of its own: a partner brings the CJ of its own game into the host's world (the game it
+//    played before joining, else its newest save) instead of keeping the host's CJ the world came with.
+#include <windows.h>
+
+#include <cstring>
+#include <map>
+#include <vector>
+
+#include "common/api/protocol/Protocol.h"
+#include "common/lib/log/Log.h"
+#include "common/lib/util/Util.h"
+#include "entities/player/Players.h"
+#include "entities/profile/Profile.h"
+#include "entities/session/Flow.h"
+#include "shared/api/net-session/Session.h"
+#include "shared/game/Game.h"
+#include "shared/game/Script.h"
+#include "shared/lib/core/Core.h"
+#include "shared/lib/memory/Memory.h"
+#include "shared/ui/chat/Chat.h"
+
+namespace coop {
+
+namespace {
+using namespace game;
+using game::script::Cmd;
+
+constexpr uint32_t kProfileMagic = 0x46504353;  // "SCPF"
+constexpr uint16_t kProfileVersion = 3;  // 2: the rewards of side missions (CPlayerInfo +0x14C..+0x152); 3: whose look
+constexpr uintptr_t kStatsBlock = 0xB79000;  // CStats::StatTypesInt + StatTypesFloat
+constexpr size_t kStatsSize = 0x4C8;
+constexpr size_t kClothesSize = sizeof(CPedClothesDesc);
+
+void RebuildPlayer(CPlayerPed* ped, bool keepDescFatMuscle) { Call<0x5A82C0>(ped, keepDescFatMuscle); }  // CClothes::RebuildPlayer
+
+// The partner's look in the host's world is its own, or one it was given (the host's CJ the world came with, on a
+// first visit with no CJ of its own to bring, or in a profile older than version 3): that one gives way to its own CJ
+// once there is one, unless the partner changed its clothes meanwhile.
+bool g_lookOwn = false;
+uint32_t g_givenKeys[28] = {};   // the clothes (model and texture keys) of a given look
+std::vector<uint8_t> g_ownLook;  // the CJ of the last game of its own this player played (not a host's world)
+bool g_foreignGame = false;      // the game was started as a partner: a host's world, kept after leaving it too
+
+bool LookIsOwn() { return g_lookOwn || memcmp(FindPlayerPed(0)->ClothesDesc(), g_givenKeys, sizeof g_givenKeys) != 0; }
+
+// CJ's clothes in a save of this game: block 2 holds the player peds (pool ref, model, ped type, the CPed part with its
+// size, then the CPlayerPedDataSaveStructure with its size: 0x84 bytes, the clothes at +8)
+bool LookFromSave(const std::wstring& path, std::vector<uint8_t>& look) {
+    std::vector<uint8_t> b;
+    if (!ReadFileBytes(path, b)) return false;
+    auto next = [&](size_t from) {
+        for (size_t i = from; i + 5 <= b.size(); ++i)
+            if (!memcmp(&b[i], "BLOCK", 5)) return i;
+        return b.size();
+    };
+    size_t p = next(next(next(0) + 5) + 5) + 5;
+    auto u32 = [&](size_t at) { return at + 4 <= b.size() ? *(const uint32_t*)&b[at] : 0xFFFFFFFFu; };
+    uint32_t peds = u32(p);
+    p += 4;
+    for (uint32_t i = 0; i < peds && i < 8; ++i) {
+        uint32_t type = u32(p + 8), size = u32(p + 12);
+        if (size > 0x1000) return false;
+        p += 16 + size;
+        uint32_t dataSize = u32(p);
+        p += 4;
+        if (type == PED_TYPE_PLAYER1 && dataSize == 0x84 && p + 8 + kClothesSize <= b.size()) {
+            look.assign(&b[p + 8], &b[p + 8] + kClothesSize);
+            return true;
+        }
+        if (dataSize > 0x1000) return false;
+        p += dataSize;
+    }
+    return false;
+}
+
+// Puts the player's own CJ on: with its body on a first visit (later the body is that of the profile's stats)
+bool WearOwnLook(bool body) {
+    std::vector<uint8_t> look = g_ownLook;
+    std::wstring newest;
+    if (look.empty()) {
+        FILETIME newestTime{};
+        for (int slot = 1; slot <= 8; ++slot) {
+            WIN32_FILE_ATTRIBUTE_DATA a;
+            std::wstring path = core::SlotPath(slot);
+            if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &a) &&
+                (newest.empty() || CompareFileTime(&a.ftLastWriteTime, &newestTime) > 0))
+                newest = path, newestTime = a.ftLastWriteTime;
+        }
+        if (newest.empty() || !LookFromSave(newest, look)) return false;
+    }
+    const auto* desc = (const CPedClothesDesc*)look.data();
+    if (body) Ref<float>(0xB793D4) = desc->fatStat, Ref<float>(0xB793DC) = desc->muscleStat;  // CStats: fat, muscle
+    CPlayerPed* me = FindPlayerPed(0);
+    memcpy(me->ClothesDesc(), look.data(), kClothesSize);
+    RebuildPlayer(me, false);  // fat and muscle from the stats
+    LOGI("Own look put on (%s): torso %08X, head %08X", newest.empty() ? "the game played before" : WideToUtf8(newest).c_str(),
+         desc->textureKeys[0], desc->textureKeys[1]);
+    return true;
+}
+
+std::vector<uint8_t> CaptureProfile() {
+    CPlayerPed* me = FindPlayerPed(0);
+    CPlayerInfo& info = PlayerInfos()[0];
+    Writer w;
+    w.U32(kProfileMagic);
+    w.U16(kProfileVersion);
+    w.I32(info.money);
+    w.Bytes((void*)kStatsBlock, kStatsSize);
+    w.Bytes(me->ClothesDesc(), kClothesSize);
+    w.U8(NUM_WEAPON_SLOTS);
+    for (int i = 0; i < NUM_WEAPON_SLOTS; ++i) {
+        const CWeapon& wpn = me->Weapons()[i];
+        w.U8((uint8_t)wpn.type);
+        w.I32(wpn.ammoTotal);
+    }
+    w.U8(me->FightingStyle());
+    w.U8(info.maxHealth);
+    w.U8(info.maxArmour);
+    const uint8_t* perks = (const uint8_t*)&info + 0x14C;  // m_bDoesNotGetTired, m_bFastReload, m_bFireProof
+    w.U8(perks[0]);
+    w.U8(perks[1]);
+    w.U8(perks[2]);
+    w.U8(perks[5]);  // m_bGetOutOfJailFree
+    w.U8(perks[6]);  // m_bFreeHealthCare
+    w.U8(LookIsOwn());
+    return w.Buffer();
+}
+
+bool ApplyProfile(const std::vector<uint8_t>& blob, bool& lookOwn) {
+    Reader r(blob.data(), blob.size());
+    if (r.U32() != kProfileMagic) return false;
+    uint16_t version = r.U16();
+    if (version < 1 || version > kProfileVersion) return false;
+    int32_t money = r.I32();
+    std::vector<uint8_t> stats = r.Bytes(kStatsSize);
+    std::vector<uint8_t> clothes = r.Bytes(kClothesSize);
+    uint8_t n = r.U8();
+    struct Slot {
+        uint8_t type;
+        int32_t ammo;
+    } slots[NUM_WEAPON_SLOTS] = {};
+    for (int i = 0; i < n && i < NUM_WEAPON_SLOTS; ++i) slots[i] = {r.U8(), r.I32()};
+    uint8_t fight = r.U8(), maxHealth = r.U8(), maxArmour = r.U8();
+    uint8_t perks[5] = {};
+    if (version >= 2)
+        for (uint8_t& b : perks) b = r.U8();
+    uint8_t own = version >= 3 ? r.U8() : 0;
+    if (!r.Ok() || stats.size() != kStatsSize || clothes.size() != kClothesSize) return false;
+    lookOwn = own != 0;
+
+    CPlayerPed* me = FindPlayerPed(0);
+    CPlayerInfo& info = PlayerInfos()[0];
+    int h = GetPedRef(me);
+    info.money = info.displayMoney = money;
+    memcpy((void*)kStatsBlock, stats.data(), kStatsSize);
+    memcpy(me->ClothesDesc(), clothes.data(), kClothesSize);
+    RebuildPlayer(me, false);  // body from the profile's fat/muscle stats
+    Cmd(0x048F).I(h).Run();    // REMOVE_ALL_CHAR_WEAPONS
+    for (const Slot& s : slots) {
+        if (s.type == 0) continue;
+        int model = -1;
+        Cmd(0x0781).I(s.type).Out(&model).Run();  // GET_WEAPONTYPE_MODEL
+        if (model > 0) LoadModelNow(model);
+        Cmd(0x01B2).I(h).I(s.type).I(std::max(s.ammo, 1)).Run();  // GIVE_WEAPON_TO_CHAR
+    }
+    Cmd(0x01B9).I(h).I(0).Run();  // fists in hand
+    me->FightingStyle() = fight;
+    info.maxHealth = maxHealth;
+    info.maxArmour = maxArmour;
+    if (version >= 2) {  // the host's rewards came with its world: the partner has its own
+        uint8_t* own = (uint8_t*)&info + 0x14C;
+        own[0] = perks[0], own[1] = perks[1], own[2] = perks[2], own[5] = perks[3], own[6] = perks[4];
+    }
+    return true;
+}
+
+struct RemoteLook {
+    std::vector<uint8_t> desc;
+    int appliedTo = -1;  // handle of the ped it was last rebuilt on: a respawned ped can reuse the old one's address
+};
+std::map<uint8_t, RemoteLook> g_looks;
+
+void HandleLook(uint8_t from, Reader& r) {
+    std::vector<uint8_t> desc = r.Bytes(kClothesSize);
+    if (!r.Ok() || desc.size() != kClothesSize || from == Net().MyId()) return;
+    RemoteLook& l = g_looks[from];
+    if (l.desc != desc) l.appliedTo = -1;
+    l.desc = std::move(desc);
+}
+
+void HandleStats(uint8_t from, Reader& r) {
+    std::vector<uint8_t> stats = r.Bytes(kStatsSize);
+    if (!r.Ok() || stats.size() != kStatsSize || from == Net().MyId()) return;
+    if (RemotePlayer* rp = Players::Instance().Get(from)) rp->stats = std::move(stats);
+}
+
+// The profile's stats go over the world's at once: the game takes the jump for a rise and shows its "Respect -
+// Upgraded" help (GXT hash 3B797709), over the cutscene too. That help goes for a few seconds after a profile.
+bool ShowsRespectUpgrade() {
+    struct Key {
+        const char* text;
+        uint32_t hash;
+    };
+    const auto* keys = Ref<Key*>(0xC1B340);   // TheText's main table: sorted by hash
+    uint32_t n = Ref<uint32_t>(0xC1B340 + 4), lo = 0, hi = n;
+    while (keys && lo < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        if (keys[mid].hash == 0x3B797709u) return !strncmp((const char*)0xBAA7A0, keys[mid].text, 40);  // CHud::m_pHelpMessage
+        if (keys[mid].hash < 0x3B797709u) lo = mid + 1;
+        else hi = mid;
+    }
+    return false;
+}
+
+using GenericSaveFn = bool(__cdecl*)(int);
+GenericSaveFn g_origMenuSave = nullptr;
+void PartnerSaved();
+bool __cdecl HookMenuSave(int file) {
+    bool ok = g_origMenuSave(file);
+    if (ok && Net().Online() && Net().IsHost()) {
+        Net().Send(proto::CH_RELIABLE, Writer(proto::G_HOST_SAVED));
+        flow::RequestFreshWorld();  // the server keeps the world as saved
+        LOGI("The host saved its game: the partners save their profiles");
+    } else if (ok && Net().Online()) {
+        PartnerSaved();  // at a save point of his own game: his money, skills and look go to the host's server too
+    }
+    return ok;
+}
+
+class Progress : public Module {
+public:
+    const char* Name() const override { return "Progress"; }
+
+    void OnInstallHooks() override {
+        mem::RedirectCallFn(0x619081, &HookMenuSave, &g_origMenuSave);  // C_PcSave::SaveSlot -> GenericSave
+        Net().onProfile = [](const std::vector<uint8_t>& blob) {
+            Progress& p = Instance();
+            // an empty profile after a real one, or during a prologue, in the same session (the first one of a session
+            // is the newcomer's): the host began a new game, which this game is not in yet
+            if (blob.empty() && p.m_profileReceived && (!p.m_profile.empty() || !flow::InHostWorld())) p.m_resetPending = true;
+            p.m_profile = blob;
+            p.m_profileReceived = true;
+            p.m_applied = false;
+        };
+        Net().SetHandler(proto::G_PLAYER_LOOK, &HandleLook);
+        Net().SetHandler(proto::G_PLAYER_STATS, &HandleStats);
+        Net().SetHandler(proto::G_HOST_SAVED, [](uint8_t from, Reader&) {
+            if (from != Net().HostId() || Net().IsHost() || !Instance().m_applied || !core::IsPlayerReady()) return;
+            Instance().SaveNow(true);
+            ui::TheChat().AddSystem("Хост сохранил игру. Ваши деньги, навыки и внешность тоже сохранены.");
+        });
+    }
+
+    void OnSessionEnd() override {
+        m_profileReceived = m_applied = m_resetPending = m_reset = false;
+        m_profile.clear();
+        g_looks.clear();
+    }
+    void OnGameStarted() override {  // a new world: the partner's profile goes on top again
+        m_applied = false;
+        g_foreignGame = Net().Online() && !Net().IsHost();
+        if (m_resetPending && flow::InHostWorld()) m_reset = true, m_resetPending = false;  // the new game's world
+    }
+
+    void OnPostProcess() override {
+        if (core::IsPlayerReady() && !g_foreignGame) {  // a game of its own: the look it brings along
+            const auto* d = (const uint8_t*)FindPlayerPed(0)->ClothesDesc();
+            g_ownLook.assign(d, d + kClothesSize);
+        }
+        if (!Net().Online() || !core::IsPlayerReady()) return;
+        CPlayerPed* me = FindPlayerPed(0);
+        uint64_t now = NowMs();
+
+        // only in the host's world: a game of its own (joined from single player, waiting) or an old world during a
+        // new game's prologue is no profile, it would have gone to the server as one
+        bool hostWorld = flow::InHostWorld();
+        if (!Net().IsHost() && hostWorld && m_profileReceived && !m_applied && !m_resetPending) {
+            m_applied = true;
+            bool own = false;
+            if (m_profile.empty()) {
+                ui::TheChat().AddSystem(m_reset ? "Хост начал новую игру. Деньги, оружие и навыки у вас тоже начинаются заново."
+                                                : "Вы здесь впервые. Дальше деньги, навыки и внешность у вас будут свои.");
+                m_reset = false;
+            } else if (ApplyProfile(m_profile, own)) {
+                LOGI("Profile applied (%zu bytes)", m_profile.size());
+                m_quietUntil = now + 5000;
+                ui::TheChat().AddSystem("Загружены ваши деньги, навыки и внешность.");
+            } else {
+                LOGW("Profile rejected (bad format), starting from the world's state");
+            }
+            g_lookOwn = own || WearOwnLook(m_profile.empty());
+            if (!g_lookOwn) memcpy(g_givenKeys, me->ClothesDesc(), sizeof g_givenKeys);
+            m_saved = m_profile;
+            m_lastSaveMs = now;
+        }
+
+        if (m_quietUntil && Ref<uint8_t>(0xB5F851)) m_quietUntil = std::max(m_quietUntil, now + 3000);  // a cutscene: later
+        if (now < m_quietUntil && ShowsRespectUpgrade()) {
+            Cmd(0x03E6).Run();  // CLEAR_HELP
+            m_quietUntil = 0;
+            LOGI("The respect help the profile caused is cleared");
+        }
+
+        // look and stats for the other game: on change, and every 10 s for late joiners
+        if (now - m_lastLookMs >= 1000) {
+            m_lastLookMs = now;
+            std::vector<uint8_t> desc((uint8_t*)me->ClothesDesc(), (uint8_t*)me->ClothesDesc() + kClothesSize);
+            if (desc != m_sentLook || now - m_lookSentMs > 10000) {
+                Writer w(proto::G_PLAYER_LOOK);
+                w.Bytes(desc.data(), desc.size());
+                Net().Send(proto::CH_RELIABLE, w);
+                m_sentLook = std::move(desc);
+                m_lookSentMs = now;
+            }
+            std::vector<uint8_t> stats((uint8_t*)kStatsBlock, (uint8_t*)kStatsBlock + kStatsSize);
+            if ((stats != m_sentStats && now - m_statsSentMs > 3000) || now - m_statsSentMs > 10000) {
+                Writer w(proto::G_PLAYER_STATS);
+                w.Bytes(stats.data(), stats.size());
+                Net().Send(proto::CH_RELIABLE, w);
+                m_sentStats = std::move(stats);
+                m_statsSentMs = now;
+            }
+        }
+
+        // remote looks: rebuild the remote ped once per new description (on foot: the rebuild swaps its clump)
+        for (auto& [id, l] : g_looks) {
+            RemotePlayer* rp = Players::Instance().Get(id);
+            if (!rp || !rp->ped || rp->pedHandle == l.appliedTo || rp->ped->InVehicle()) continue;
+            memcpy(rp->ped->ClothesDesc(), l.desc.data(), kClothesSize);
+            MuscleFrom muscle(rp->ped->ClothesDesc());
+            RebuildPlayer(rp->ped, true);  // fat/muscle from the description, not from our stats
+            l.appliedTo = rp->pedHandle;
+            LOGI("Look of player %d applied", id);
+        }
+
+        // the partner's profile goes to the server when it changed (checked every 30 s)
+        if (now - m_lastSaveMs >= 30000 && hostWorld) SaveNow();
+    }
+
+    void SaveNow(bool always = false) {
+        if (!Net().Online() || Net().IsHost() || !m_applied || !core::IsPlayerReady() || !flow::InHostWorld()) return;
+        m_lastSaveMs = NowMs();
+        std::vector<uint8_t> blob = CaptureProfile();
+        if (blob == m_saved && !always) return;
+        Writer w(proto::C_PROFILE_SAVE);
+        w.Bytes(blob.data(), blob.size());
+        Net().Send(proto::CH_RELIABLE, w);
+        m_saved = std::move(blob);
+        m_profile = m_saved;  // a reload of the world re-applies the latest state
+        LOGI("Profile saved (%zu bytes)", m_saved.size());
+    }
+
+    static Progress& Instance() {
+        static Progress p;
+        return p;
+    }
+
+private:
+    std::vector<uint8_t> m_profile, m_saved, m_sentLook, m_sentStats;
+    bool m_profileReceived = false, m_applied = false;
+    bool m_resetPending = false, m_reset = false;  // a new game emptied the profile: applied in the next world
+    uint64_t m_lastSaveMs = 0, m_lastLookMs = 0, m_lookSentMs = 0, m_statsSentMs = 0, m_quietUntil = 0;
+};
+
+void PartnerSaved() {
+    if (!flow::InHostWorld()) return;
+    Progress::Instance().SaveNow(true);
+    ui::TheChat().AddSystem("Ваши деньги, навыки и внешность сохранены и у хоста.");
+}
+
+struct Reg {
+    Reg() { core::RegisterModule(&Progress::Instance()); }
+} g_reg;
+}  // namespace
+
+void SaveProfileNow() { Progress::Instance().SaveNow(); }
+
+}  // namespace coop

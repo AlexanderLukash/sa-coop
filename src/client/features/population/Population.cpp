@@ -1,0 +1,160 @@
+// Population control for co-op:
+//  * near the host only the host generates random peds, traffic and parked cars (the partner sees the
+//    host's population through Peds/Vehicles sync), unless the partner is wanted (police chases);
+//  * entities owned by this game are not removed while the other player is close to them
+//    (CPopulation::ManagePed / CCarCtrl::PossiblyRemoveVehicle measure distance to the nearest player);
+//  * farther from this game's player, an ordinary ped or car the other player is nearer to goes to the other game
+//    instead of being dropped here (it vanished in front of the other player).
+#include <algorithm>
+#include <cmath>
+
+#include "features/population/Population.h"
+#include "common/lib/log/Log.h"
+#include "common/lib/util/Util.h"
+#include "entities/ped/Peds.h"
+#include "entities/player/Players.h"
+#include "entities/vehicle/Vehicles.h"
+#include "shared/api/net-session/Session.h"
+#include "shared/game/Game.h"
+#include "shared/lib/core/Core.h"
+#include "shared/lib/memory/Memory.h"
+
+namespace coop {
+
+namespace {
+using namespace game;
+
+// partner closer than this to the host: the host's population (spawned 40-55 m around the host) covers both
+constexpr float kShareRadius = 60.0f;
+constexpr float kShareRadiusOff = 90.0f;  // hysteresis
+
+bool g_suppress = false;
+
+int LocalWantedLevel() {
+    void* wanted = Call<0x56E230, void*>(-1);  // FindPlayerWanted
+    return wanted ? Field<int32_t>(wanted, 0x2C) : 0;
+}
+
+void UpdateSuppression() {
+    bool want = false;
+    if (Net().Online() && !Net().IsHost() && core::IsPlayerReady()) {
+        CPlayerPed* me = FindPlayerPed(0);
+        if (const RemotePlayer* host = Players::Instance().Get(Net().HostId()); host && host->hasState) {
+            float d = (host->state.pos - me->GetPosition()).Length2D();
+            bool sameArea = host->state.area == me->AreaCode();
+            float limit = g_suppress ? kShareRadiusOff : kShareRadius;
+            want = sameArea && d < limit && LocalWantedLevel() == 0;
+        }
+    }
+    if (want != g_suppress) LOGI("Population generation %s (host nearby: %d)", want ? "handed to the host" : "local", want);
+    if (g_suppress && !want) {
+        // the engine adds one ped a frame at the edge of view: the empty streets around would fill slowly. The
+        // countdowns of a game's start (and of a respawn) fill them at once
+        Ref<uint8_t>(0xC0EC23) = 2;  // CPopulation::m_CountDownToPedsAtStart
+        Ref<uint8_t>(0x9690C0) = 2;  // CCarCtrl::CountDownToCarsAtStart
+    }
+    g_suppress = want;
+}
+
+using UpdatePopFn = void(__cdecl*)(bool);
+UpdatePopFn g_origPopUpdate = nullptr;
+void __cdecl HookPopulationUpdate(bool generate) { g_origPopUpdate(generate && !g_suppress); }
+
+using VoidFn = void(__cdecl*)();
+VoidFn g_origGenerateRandomCars = nullptr;
+void __cdecl HookGenerateRandomCars() {
+    if (g_suppress) return;
+    g_origGenerateRandomCars();
+}
+
+VoidFn g_origCarGenerators = nullptr;
+void __cdecl HookCarGeneratorsProcess() {
+    if (g_suppress) return;
+    g_origCarGenerators();
+}
+
+// the other player is in the game (states keep coming): what it is given goes nowhere while it loads a world
+bool CanTake(uint8_t who) {
+    const RemotePlayer* rp = Players::Instance().Get(who);
+    return rp && rp->ped && NowMs() - rp->stateRecvMs < 1500;
+}
+
+// nearest remote player position (same interior) within maxDist, or nullptr
+const CVector* NearestRemote(const CVector& p, float maxDist, int8_t area, uint8_t* who = nullptr) {
+    const CVector* best = nullptr;
+    float bestD = maxDist;
+    for (auto& [id, rp] : Players::Instance().All()) {
+        if (!rp.hasState || rp.state.area != area) continue;
+        float d = (rp.state.pos - p).Length2D();
+        if (d < bestD) {
+            bestD = d;
+            best = &rp.state.pos;
+            if (who) *who = id;
+        }
+    }
+    return best;
+}
+
+using ManagePedFn = void(__cdecl*)(CPed*, const CVector*);
+ManagePedFn g_origManagePed = nullptr;
+void __cdecl HookManagePed(CPed* ped, const CVector* centre) {
+    if (Net().Online() && ped && centre) {
+        CVector p = ped->GetPosition();
+        float local = (p - *centre).Length2D();
+        uint8_t who = 0;
+        if (const CVector* r = NearestRemote(p, local, ped->AreaCode(), &who)) {
+            // far from this game's player and clearly nearer the other one: the other game keeps it (the margin keeps a
+            // ped from going back and forth between two players standing together)
+            if (local > 60.0f && (p - *r).Length2D() < local - 30.0f && CanTake(who) && Peds::Instance().QueueGiveAway(ped, who))
+                return;
+            // the other player still needs this ped, yet the engine culls by this game's camera too (off screen and
+            // over 25 m: gone in 4 s). While this game has ground under it (collision loads ~120 m around its
+            // player), a live one near the other player stays; farther it would fall through the map here, so it
+            // goes as usual and the other player's own population takes over
+            if (local < 100.0f && (p - *r).Length2D() < 50.0f && ped->Health() > 0.0f) return;
+            g_origManagePed(ped, r);
+            return;
+        }
+    }
+    g_origManagePed(ped, centre);
+}
+
+using PossiblyRemoveFn = void(__cdecl*)(CVehicle*);
+PossiblyRemoveFn g_origPossiblyRemove = nullptr;
+void __cdecl HookPossiblyRemoveVehicle(CVehicle* v) {
+    // kept for the other player while this game has ground under it (see HookManagePed), then given to it; a wreck
+    // goes as usual (kept, they filled the vehicle pool around two players)
+    uint8_t who = 0;
+    if (Net().Online() && v && v->Status() != 5 /* STATUS_WRECKED */)
+        if (const CVector* r = NearestRemote(v->GetPosition(), 140.0f, v->AreaCode(), &who)) {
+            float local = (v->GetPosition() - FindPlayerPed(0)->GetPosition()).Length2D();
+            if (local < 100.0f) return;
+            if ((v->GetPosition() - *r).Length2D() < local - 40.0f && CanTake(who) && Vehicles::Instance().QueueGiveAway(v, who))
+                return;
+        }
+    g_origPossiblyRemove(v);
+}
+
+class Population : public Module {
+public:
+    const char* Name() const override { return "Population"; }
+    void OnInstallHooks() override {
+        mem::HookFn(0x616650, &HookPopulationUpdate, &g_origPopUpdate, "CPopulation::Update");
+        mem::HookFn(0x4341C0, &HookGenerateRandomCars, &g_origGenerateRandomCars, "CCarCtrl::GenerateRandomCars");
+        mem::HookFn(0x6F3F40, &HookCarGeneratorsProcess, &g_origCarGenerators, "CTheCarGenerators::Process");
+        mem::HookFn(0x611FC0, &HookManagePed, &g_origManagePed, "CPopulation::ManagePed");
+        mem::HookFn(0x424F80, &HookPossiblyRemoveVehicle, &g_origPossiblyRemove, "CCarCtrl::PossiblyRemoveVehicle");
+    }
+    void OnPreProcess() override { UpdateSuppression(); }
+    void OnSessionEnd() override { g_suppress = false; }
+};
+
+Population g_pop;
+struct Reg {
+    Reg() { core::RegisterModule(&g_pop); }
+} g_reg;
+}  // namespace
+
+bool PopulationSuppressed() { return g_suppress; }
+
+}  // namespace coop
