@@ -2,7 +2,15 @@
   <img src="docs/images/logo.png" alt="SA:COOP" width="440">
 </p>
 
-SA:COOP — мод для GTA San Andreas, с которым сюжет можно пройти вдвоём по сети. Один игрок становится хостом:
+<p align="center">
+  <a href="https://github.com/Karimov-Akbar/sa-coop/releases/latest"><img src="https://img.shields.io/github/v/release/Karimov-Akbar/sa-coop" alt="Релиз"></a>
+  <a href="https://github.com/Karimov-Akbar/sa-coop/releases"><img src="https://img.shields.io/github/downloads/Karimov-Akbar/sa-coop/total" alt="Скачивания"></a>
+  <a href="https://github.com/Karimov-Akbar/sa-coop/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/Karimov-Akbar/sa-coop/build.yml?branch=main" alt="Сборка"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Karimov-Akbar/sa-coop" alt="Лицензия MIT"></a>
+  <img src="https://img.shields.io/badge/GTA_San_Andreas-1.0_US-orange" alt="GTA San Andreas 1.0 US">
+</p>
+
+SA:COOP - мод для GTA San Andreas, с которым сюжет можно пройти вдвоём по сети. Один игрок становится хостом:
 игра идёт по его сохранению, и миссии запускает он. Второй подключается к нему и играет в том же мире своим
 персонажем, со своими деньгами, навыками и внешностью.
 
@@ -116,7 +124,8 @@ Hamachi и Radmin не нужны. Сервер сам открывает пор
 | F2 | список игроков |
 | Enter / Esc | в катсцене: предложить пропуск и согласиться / отказаться |
 
-В чате работают команды `/help`, `/players` и `/tp` (переместиться к напарнику).
+В чате работают команды `/help`, `/players` и `/tp` (переместиться к напарнику). Хост может выгнать игрока
+командой `/kick <ник> [причина]`.
 
 ## Ограничения
 
@@ -130,6 +139,14 @@ Hamachi и Radmin не нужны. Сервер сам открывает пор
   подключиться. Тогда нужен `turn` или проброшенный у хоста порт 7788/UDP.
 - Поддерживается только `gta_sa.exe` версии 1.0 US. Сборки у игроков могут отличаться, но моды, которые
   меняют сюжет или сохранения, нужны обоим.
+
+## Ошибки и предложения
+
+Об ошибках, вылетах и идеях пишите в [Issues](../../issues/new/choose). Там откроется короткая форма: что
+случилось, как это повторить, версия мода и какая у вас игра.
+
+К сообщению об ошибке приложите `coop\coop.log` из папки игры того, у кого она случилась. Если игра вылетела,
+нужен ещё `coop\crash.log`, а если не получается подключиться, то `coop\server-data\server.log` хоста.
 
 ## Сборка из исходников
 
