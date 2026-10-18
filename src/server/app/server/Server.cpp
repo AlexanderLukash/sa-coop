@@ -160,23 +160,33 @@ void Server::OnConnect(ENetPeer* peer) {
 }
 
 void Server::OnDisconnect(ENetPeer* peer, bool timeout) {
-    Player* p = FindByPeer(peer);
-    if (!p) return;
-    peer->data = nullptr;
-    bool wasJoined = p->joined, wasHost = p->isHost;
-    std::string name = p->name;
-    uint8_t id = p->id;
-    *p = Player{};
-    p->id = id;
+    // a kicked player has left already: no slot holds its peer
+    if (Player* p = FindByPeer(peer)) Leave(*p, timeout ? LEAVE_TIMEOUT : LEAVE_QUIT);
+}
+
+void Server::Leave(Player& p, LeaveReason why, const std::string& reason) {
+    if (p.peer) p.peer->data = nullptr;
+    bool wasJoined = p.joined, wasHost = p.isHost;
+    std::string name = p.name;
+    uint8_t id = p.id;
+    p = Player{};
+    p.id = id;
     m_worldWaiters.erase(std::remove(m_worldWaiters.begin(), m_worldWaiters.end(), id), m_worldWaiters.end());
     if (!wasJoined) return;
-    LOGI("%s (%d) отключился%s", name.c_str(), id, timeout ? " (таймаут)" : "");
     Writer w(S_PLAYER_LEAVE);
     w.U8(id);
-    w.U8(timeout ? LEAVE_TIMEOUT : LEAVE_QUIT);
+    w.U8(why);
     Broadcast(CH_RELIABLE, w);
-    SendChat(nullptr, kServerId, kColorInfo,
-             Format(timeout ? "%s потерял связь с сервером." : "%s вышел из игры.", name.c_str()));
+    std::string msg;
+    if (why == LEAVE_KICKED) {
+        LOGI("%s (%d) выгнан%s%s", name.c_str(), id, reason.empty() ? "" : ": ", reason.c_str());
+        msg = reason.empty() ? Format("%s выгнан с сервера.", name.c_str())
+                             : Format("%s выгнан с сервера: %s.", name.c_str(), reason.c_str());
+    } else {
+        LOGI("%s (%d) отключился%s", name.c_str(), id, why == LEAVE_TIMEOUT ? " (таймаут)" : "");
+        msg = Format(why == LEAVE_TIMEOUT ? "%s потерял связь с сервером." : "%s вышел из игры.", name.c_str());
+    }
+    SendChat(nullptr, kServerId, why == LEAVE_KICKED ? kColorServer : kColorInfo, msg);
     if (wasHost) EnsureHost();
 }
 
@@ -319,8 +329,9 @@ void Server::HandleChat(Player& p, const std::string& rawText) {
 
 void Server::HandleCommand(Player* p, const std::string& text) {
     std::string line = Trim(text);
-    if (!line.empty() && line[0] == '/') line = line.substr(1);
+    if (!line.empty() && line[0] == '/') line = Trim(line.substr(1));
     auto parts = Split(line, ' ');
+    parts.erase(std::remove(parts.begin(), parts.end(), std::string()), parts.end());  // doubled spaces
     std::string cmd = parts.empty() ? "" : ToLower(parts[0]);
     std::string rest = line.size() > cmd.size() ? Trim(line.substr(cmd.size())) : "";
     auto reply = [&](uint32_t color, const std::string& msg) {
@@ -333,7 +344,7 @@ void Server::HandleCommand(Player* p, const std::string& text) {
 
     if (cmd == "help" || cmd == "?") {
         reply(kColorServer, "Команды: /players, /pm <id> <текст>, /me <действие>");
-        if (admin) reply(kColorServer, "Для хоста: /kick <id> [причина], /say <текст>");
+        if (admin) reply(kColorServer, "Для хоста: /kick <ник или номер> [причина], /say <текст>");
         reply(kColorServer, "В игре: /tp (переместиться к напарнику), /tphere (позвать напарника к себе)");
     } else if (cmd == "players" || cmd == "status") {
         for (auto& o : m_players) {
@@ -350,14 +361,16 @@ void Server::HandleCommand(Player* p, const std::string& text) {
         reply(0xFFFF80FF, Format("[ЛС для %s] %s", to->name.c_str(), msg.c_str()));
     } else if (cmd == "me" && p && !rest.empty()) {
         SendChat(nullptr, kServerId, 0xC8A0FFFF, Format("* %s %s", p->name.c_str(), rest.c_str()));
-    } else if (cmd == "kick" && admin && parts.size() >= 2) {
-        Player* t = FindById(atoi(parts[1].c_str()));
+    } else if (cmd == "kick") {
+        if (!admin) return reply(kColorError, "Выгнать игрока может только хост.");
+        if (parts.size() < 2) return reply(kColorError, "Укажите игрока: /kick <ник или номер> [причина].");
+        // the nickname is what the player list shows, the number comes from /players
+        Player* t = FindByName(parts[1]);
+        if (!t && parts[1].find_first_not_of("0123456789") == std::string::npos) t = FindById(atoi(parts[1].c_str()));
         if (!t || !t->joined) return reply(kColorError, "Нет такого игрока.");
-        if (p && t == p) return reply(kColorError, "Себя выгнать нельзя.");
-        std::string reason = parts.size() > 2 ? Trim(rest.substr(parts[1].size())) : std::string();
-        SendChat(nullptr, kServerId, kColorServer,
-                 reason.empty() ? Format("%s выгнан с сервера.", t->name.c_str())
-                                : Format("%s выгнан с сервера: %s.", t->name.c_str(), reason.c_str()));
+        if (t == p) return reply(kColorError, "Себя выгнать нельзя.");
+        std::string reason = Trim(rest.substr(parts[1].size()));
+        while (!reason.empty() && reason.back() == '.') reason.pop_back();  // the message adds its own period
         Kick(*t, reason);
     } else if (cmd == "say" && admin && !rest.empty()) {
         SendChat(nullptr, kServerId, kColorServer, "[Сервер] " + rest);
@@ -609,12 +622,15 @@ void Server::Broadcast(uint8_t channel, const Writer& w, int exceptId) {
         if (o.joined && o.id != exceptId) net::Send(o.peer, channel, w);
 }
 
+// The player leaves the game at once: its game confirms the disconnect only later, a hung one never (ENet drops it after
+// the 20 s timeout), and the others would see the player in the list until then.
 void Server::Kick(Player& p, const std::string& reason) {
     if (!p.peer) return;
     Writer w(S_KICKED);
     w.Str(reason);
     net::Send(p.peer, CH_RELIABLE, w);
     enet_peer_disconnect_later(p.peer, 0);
+    Leave(p, LEAVE_KICKED, reason);
 }
 
 void Server::EnsureHost() {

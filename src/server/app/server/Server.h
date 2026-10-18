@@ -78,6 +78,7 @@ private:
     void SendChat(Player* to, uint8_t fromId, uint32_t rgba, const std::string& text);  // to == nullptr: everyone
     void Broadcast(uint8_t channel, const Writer& w, int exceptId = -1);
     void Kick(Player& p, const std::string& reason);
+    void Leave(Player& p, proto::LeaveReason why, const std::string& reason = {});  // frees the slot, tells the others
     void EnsureHost();
     void SendPings();
 

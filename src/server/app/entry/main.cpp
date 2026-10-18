@@ -102,7 +102,7 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
     SetConsoleCtrlHandler(CtrlHandler, TRUE);
-    LOGI("Команды консоли: players, kick <id>, say <текст>, quit");
+    LOGI("Команды консоли: players, kick <ник или номер> [причина], say <текст>, quit");
 
     std::thread input([] {
         HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
