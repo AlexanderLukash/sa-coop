@@ -26,7 +26,11 @@ void LoadFrom(const std::wstring& dir) {
         std::wstring path = dir + name;
         if (GetModuleHandleW(path.c_str())) continue;  // another loader may have it already
         if (!LoadLibraryW(path.c_str())) {
-            std::wstring msg = L"Не удалось загрузить плагин " + name + L" (ошибка " + std::to_wstring(GetLastError()) + L").";
+            std::wstring error = std::to_wstring(GetLastError());
+            // no config of its own here: the language of Windows
+            std::wstring msg = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_RUSSIAN
+                                   ? L"Не удалось загрузить плагин " + name + L" (ошибка " + error + L")."
+                                   : L"Could not load the plugin " + name + L" (error " + error + L").";
             MessageBoxW(nullptr, msg.c_str(), L"ASI loader", MB_ICONWARNING);
         }
     }

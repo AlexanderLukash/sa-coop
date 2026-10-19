@@ -8,6 +8,7 @@
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
 #include "shared/api/net-session/Session.h"
+#include "shared/config/Config.h"
 #include "shared/game/Game.h"
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
@@ -79,7 +80,8 @@ public:
             bool on = r.U8() != 0;
             if (!r.Ok() || !WorldCheat(id) || !core::IsPlayerReady()) return;
             if (OneShot(id) || Active(id) != on) Call<0x438370>(id);  // CCheat::ApplyCheat
-            ui::TheChat().AddSystem("Чит-код от " + Net().PeerName(from) + " действует и у вас.");
+            ui::TheChat().AddSystem(
+                Format(TR("Чит-код от %s действует и у вас.", "The cheat %s entered works for you too."), Net().PeerName(from).c_str()));
             LOGI("Cheat %d from player %d applied", id, from);
         });
     }

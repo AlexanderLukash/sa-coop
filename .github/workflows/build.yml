@@ -35,6 +35,9 @@ jobs:
       - name: Check the layers (Feature-Sliced Design)
         run: python tools/fsd_check.py
 
+      - name: Check that every text of the game has its English one
+        run: python tools/i18n_check.py
+
       - name: Build the archive
         run: python tools/build.py dist
 

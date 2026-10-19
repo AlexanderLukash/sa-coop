@@ -96,8 +96,8 @@ bool Button(const char* id, float x, float y, float w, float h, const std::strin
     return MenuItem(x, y, w, h, big ? FONT_BIG : FONT_MENU, label, enabled, lit, true);
 }
 
-bool Tab(const char* id, float x, float y, float w, float h, const std::string& label, bool active) {
-    return MenuItem(x, y, w, h, FONT_MENU, label, true, active, false) && !active;
+bool Tab(const char* id, float x, float y, float w, float h, const std::string& label, bool active, bool small) {
+    return MenuItem(x, y, w, h, small ? FONT_MENU_SMALL : FONT_MENU, label, true, active, false) && !active;
 }
 
 void Pointer(float cx, float cy, float size, uint32_t argb) {

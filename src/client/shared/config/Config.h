@@ -7,6 +7,7 @@ namespace coop {
 struct ClientConfig {
     // [player]
     std::string nickname = "Player";
+    bool english = false;             // language = en: the interface in English instead of Russian
 
     // [connect]
     bool autoConnect = false;  // the F9 menu by default; launchers and test setups switch it on
@@ -15,6 +16,7 @@ struct ClientConfig {
     std::string password;
     bool wantsHost = false;   // started from "Create server" in the launcher
     int loadSlot = 0;         // host: save slot (1..8) to load automatically, -1 a new game, 0 = choose in the menu
+    bool friendlyFire = false;  // host: the players can hurt each other
 
     // [game]
     bool windowed = false;
@@ -58,3 +60,6 @@ struct ClientConfig {
 ClientConfig& Cfg();
 
 }  // namespace coop
+
+// A text of the interface in both languages, where it is used: TR("Подключиться", "Connect").
+#define TR(ru, en) (::coop::Cfg().english ? (en) : (ru))

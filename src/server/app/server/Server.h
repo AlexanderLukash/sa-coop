@@ -17,6 +17,7 @@ struct Config {
     std::string name = "SA:COOP server";
     std::string password;
     std::string motd = "Добро пожаловать! Чтобы увидеть список команд, напишите /help.";
+    bool friendlyFire = false;  // the players can hurt each other
     uint16_t port = 7788;
     int maxPlayers = 2;
     std::wstring dataDir;    // profiles/, world/
@@ -75,9 +76,10 @@ private:
     void ResetProfiles();
 
     void Relay(Player& from, uint8_t channel, const uint8_t* data, size_t size, uint32_t flags);
-    void SendChat(Player* to, uint8_t fromId, uint32_t rgba, const std::string& text);  // to == nullptr: everyone
+    // to == nullptr: everyone. The server's own texts come in both languages (en empty: the same in English).
+    void SendChat(Player* to, uint8_t fromId, uint32_t rgba, const std::string& text, const std::string& en = {});
     void Broadcast(uint8_t channel, const Writer& w, int exceptId = -1);
-    void Kick(Player& p, const std::string& reason);
+    void Kick(Player& p, const std::string& reason, const std::string& reasonEn = {});
     void Leave(Player& p, proto::LeaveReason why, const std::string& reason = {});  // frees the slot, tells the others
     void EnsureHost();
     void SendPings();

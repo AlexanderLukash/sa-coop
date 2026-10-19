@@ -736,7 +736,7 @@ void Players::HandleTeleport(uint8_t from, Reader& r) {
     Cmd(0x0860).I(handle).I(area).Run();       // SET_CHAR_AREA_VISIBLE
     Cmd(0x00A1).I(handle).F(pos.x).F(pos.y).F(pos.z).Run();  // SET_CHAR_COORDINATES
     LightArea(area, pos);
-    ui::TheChat().AddSystem(Net().PeerName(from) + " переместил вас к себе.");
+    ui::TheChat().AddSystem(Format(TR("%s переместил вас к себе.", "%s brought you over."), Net().PeerName(from).c_str()));
 }
 
 void Players::ApplyState(RemotePlayer& rp) {
@@ -1095,7 +1095,8 @@ void Players::FollowHost() {
     if (car < 0) return;
     Cmd(0x0175).I(car).F(h * 57.29578f).Run();  // SET_CAR_HEADING
     Cmd(0x01C3).I(car).Run();                   // MARK_CAR_AS_NO_LONGER_NEEDED: an ordinary vehicle from now on
-    ui::TheChat().AddSystem("Рядом с вами велосипед. Садитесь и езжайте за хостом.");
+    ui::TheChat().AddSystem(TR("Рядом с вами велосипед. Садитесь и езжайте за хостом.",
+                               "There is a bike next to you. Get on and follow the host."));
     LOGI("The host got on a bike (model %d): one for the partner too", model);
 }
 
@@ -1167,7 +1168,7 @@ bool Players::OnCommand(const std::string& cmd, const std::vector<std::string>& 
     for (auto& [id, rp] : m_remote)
         if (rp.hasState) target = &rp;
     if (!target) {
-        ui::TheChat().AddError("Напарник ещё не в игре.");
+        ui::TheChat().AddError(TR("Напарник ещё не в игре.", "Your partner is not in the game yet."));
         return true;
     }
     CPlayerPed* me = FindPlayerPed(0);
@@ -1178,7 +1179,7 @@ bool Players::OnCommand(const std::string& cmd, const std::vector<std::string>& 
         Cmd(0x0860).I(handle).I(target->state.area).Run();
         Cmd(0x00A1).I(handle).F(p.x).F(p.y).F(p.z - 1.0f).Run();
         LightArea(target->state.area, p);
-        ui::TheChat().AddSystem("Вы переместились к " + Net().PeerName(target->id) + ".");
+        ui::TheChat().AddSystem(Format(TR("Вы переместились к %s.", "You went over to %s."), Net().PeerName(target->id).c_str()));
     } else {
         CVector p = me->GetPosition() + CVector{1.0f, 0, 0};
         Writer w(proto::G_TELEPORT);
@@ -1188,7 +1189,7 @@ bool Players::OnCommand(const std::string& cmd, const std::vector<std::string>& 
         w.F32(p.z - 1.0f);
         w.I8(me->AreaCode());
         Net().Send(proto::CH_RELIABLE, w);
-        ui::TheChat().AddSystem(Net().PeerName(target->id) + " перемещён к вам.");
+        ui::TheChat().AddSystem(Format(TR("%s перемещён к вам.", "%s was brought over to you."), Net().PeerName(target->id).c_str()));
     }
     return true;
 }

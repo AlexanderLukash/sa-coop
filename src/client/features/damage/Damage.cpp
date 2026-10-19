@@ -10,7 +10,10 @@
 //    and the NPC's mirror there only plays the animation (its gunfire needs nothing: the mirror there shoots for real);
 //  * a ped killed by the other player drops its money and weapon in the killer's game, where the killer is;
 //  * a crime is charged by the game of whoever committed it: the owner keeps its own player's wanted level when it
-//    applies the other player's hit, and the hitter's game reports the crime itself.
+//    applies the other player's hit, and the hitter's game reports the crime itself;
+//  * the players hurt each other only with friendly fire (the host's choice). The shooter's game reports its bullets
+//    and blows on the other player (it sees them hit), the victim's game lets the other player's explosions, fire and
+//    car hurt its player (the copy here is proof against them, so they never reach the shooter's game).
 #include <algorithm>
 
 #include "common/api/protocol/Protocol.h"
@@ -31,9 +34,11 @@ namespace {
 using namespace game;
 using game::script::Cmd;
 
-constexpr int WEAPON_LAST_MELEE = 15, WEAPON_SPRAYCAN = 41, WEAPON_EXTINGUISHER = 42, WEAPON_RAMMEDBYCAR = 49,
-              WEAPON_RUNOVERBYCAR = 50;
-enum : uint8_t { TARGET_PED = 1, TARGET_VEHICLE = 2, TARGET_PLAYER = 3 };
+constexpr int WEAPON_LAST_MELEE = 15, WEAPON_PISTOL = 22, WEAPON_SNIPERRIFLE = 34, WEAPON_MINIGUN = 38,
+              WEAPON_SPRAYCAN = 41, WEAPON_EXTINGUISHER = 42, WEAPON_RAMMEDBYCAR = 49, WEAPON_RUNOVERBYCAR = 50,
+              WEAPON_UZI_DRIVEBY = 52;
+// TARGET_PLAYER: an NPC hit the player (netId is the NPC), TARGET_PLAYER_BY_PLAYER: the sender hit the player itself
+enum : uint8_t { TARGET_PED = 1, TARGET_VEHICLE = 2, TARGET_PLAYER = 3, TARGET_PLAYER_BY_PLAYER = 4 };
 constexpr int CRIME_DAMAGED_PED = 2, CRIME_DAMAGED_COP = 3;
 
 // The engine charges a crime to the player in focus (CEventGroup::Add -> ReportCriminalEvent -> FindPlayerWanted):
@@ -53,6 +58,11 @@ struct KeepWanted {
 };
 
 bool IsCollision(int weapon) { return weapon == WEAPON_RAMMEDBYCAR || weapon == WEAPON_RUNOVERBYCAR; }
+// a bullet or a blow: the shooter's game sees where it hits
+bool IsDirect(int weapon) {
+    return weapon <= WEAPON_LAST_MELEE || (weapon >= WEAPON_PISTOL && weapon <= WEAPON_SNIPERRIFLE) || weapon == WEAPON_MINIGUN ||
+           weapon == WEAPON_UZI_DRIVEBY;
+}
 // a spray never reaches a mirror (mirrors are fire-proof and CShotInfo skips them): the owner applies the remote
 // player's own spray on its peds
 bool IsSpray(int weapon) { return weapon == WEAPON_SPRAYCAN || weapon == WEAPON_EXTINGUISHER; }
@@ -91,14 +101,23 @@ GenerateDamageFn g_origGenerateDamage = nullptr;
 // hit): one decided in the other game still does here.
 bool __cdecl HookGenerateDamageEvent(CPed* victim, CEntity* creator, int weapon, int damage, int piece, int dir) {
     if (Net().Online() && victim && core::IsPlayerReady()) {
-        if (!IsCollision(weapon) && IsRemotePlayerEntity(creator) && !(IsSpray(weapon) && victim != FindPlayerPed(0))) return true;
-        if (RemotePlayer* rp = Players::Instance().FindByPed(victim);
-            rp && weapon <= WEAPON_LAST_MELEE && creator && creator->IsPed() && !IsLocalPlayerEntity(creator)) {
-            NetPed* attacker = Peds::Instance().Find((CPed*)creator);
-            SendDamage(TARGET_PLAYER, rp->id, attacker ? attacker->netId : 0, weapon, (float)damage, piece, dir,
-                       victim->GetPosition());
-            LOGD("NPC %04X hit player %d: weapon %d, damage %d", attacker ? attacker->netId : 0, rp->id, weapon, damage);
-            return true;
+        bool fromRemote = IsRemotePlayerEntity(creator);
+        if (fromRemote && victim == FindPlayerPed(0))  // see the top of the file
+            return Net().FriendlyFire() && !IsDirect(weapon) ? g_origGenerateDamage(victim, creator, weapon, damage, piece, dir) : true;
+        if (!IsCollision(weapon) && fromRemote && !IsSpray(weapon)) return true;
+        if (RemotePlayer* rp = Players::Instance().FindByPed(victim)) {
+            if (weapon <= WEAPON_LAST_MELEE && creator && creator->IsPed() && !IsLocalPlayerEntity(creator)) {
+                NetPed* attacker = Peds::Instance().Find((CPed*)creator);
+                SendDamage(TARGET_PLAYER, rp->id, attacker ? attacker->netId : 0, weapon, (float)damage, piece, dir,
+                           victim->GetPosition());
+                LOGD("NPC %04X hit player %d: weapon %d, damage %d", attacker ? attacker->netId : 0, rp->id, weapon, damage);
+                return true;
+            }
+            if (Net().FriendlyFire() && IsDirect(weapon) && IsLocalPlayerEntity(creator)) {
+                SendDamage(TARGET_PLAYER_BY_PLAYER, rp->id, 0, weapon, (float)damage, piece, dir, victim->GetPosition());
+                LOGI("Hit player %d: weapon %d, damage %d", rp->id, weapon, damage);
+                return true;
+            }
         }
         if (NetPed* np = Peds::Instance().Find(victim); np && np->owner != Net().MyId()) {
             if (!IsCollision(weapon) && IsLocalPlayerEntity(creator) && !np->deadApplied) {
@@ -116,13 +135,16 @@ bool __cdecl HookGenerateDamageEvent(CPed* victim, CEntity* creator, int weapon,
 
 // CPed::KillPedWithCar(car, impulse, ...): a car knocks a ped down. The driver's game decides it: a mirror that the
 // local player's car hits is sent to its owner (a mirror is collision-proof and would stand like a stone), and the
-// remote player's car here hits nobody by itself.
+// remote player's car here hits nobody by itself, but this game's player with friendly fire.
 using KillWithCarFn = void(__fastcall*)(CPed*, void*, CVehicle*, float, int);
 KillWithCarFn g_origKillWithCar = nullptr;
 void __fastcall HookKillPedWithCar(CPed* ped, void* edx, CVehicle* car, float impulse, int flag) {
     if (Net().Online() && car && core::IsPlayerReady()) {
         CPed* driver = car->Driver();
-        if (driver && Players::Instance().FindByPed(driver)) return;
+        if (driver && Players::Instance().FindByPed(driver)) {
+            if (Net().FriendlyFire() && ped == FindPlayerPed(0)) g_origKillWithCar(ped, edx, car, impulse, flag);
+            return;
+        }
         if (NetPed* np = Peds::Instance().Find(ped); np && np->owner != Net().MyId()) {
             if (driver == FindPlayerPed(0) && !np->deadApplied && NowMs() - np->lastRamMs > 500) {
                 np->lastRamMs = np->lastHitMs = NowMs();
@@ -177,6 +199,13 @@ void HandleDamage(uint8_t from, Reader& r) {
                 ped->Money() = 0;
             }
         }
+    } else if (kind == TARGET_PLAYER_BY_PLAYER) {
+        if (!Net().FriendlyFire()) return;
+        {
+            KeepWanted keep;
+            g_origGenerateDamage(FindPlayerPed(0), attacker, weapon, (int)damage, piece, dir);
+        }
+        LOGI("Player %d hit us: weapon %d, damage %.0f, health now %.0f", from, weapon, damage, FindPlayerPed(0)->Health());
     } else if (kind == TARGET_PLAYER) {
         int h = Peds::Instance().HandleOf(netId);
         g_origGenerateDamage(FindPlayerPed(0), h >= 0 ? GetPed(h) : nullptr, weapon, (int)damage, piece, dir);

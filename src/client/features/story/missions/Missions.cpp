@@ -31,6 +31,7 @@
 #include "entities/vehicle/Vehicles.h"
 #include "features/story/cutscene-partner/ScenePartner.h"
 #include "shared/api/net-session/Session.h"
+#include "shared/config/Config.h"
 #include "shared/game/Game.h"
 #include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
@@ -1261,7 +1262,7 @@ void ClearPartnerOnscreen() {
 void HandleMissionStart(uint8_t from, Reader& r) {
     std::string name = r.Str(16);
     if (!r.Ok() || from != Net().HostId() || Net().IsHost()) return;
-    if (!g_partnerMission) ui::TheChat().AddSystem(Net().PeerName(from) + " начал миссию.");
+    if (!g_partnerMission) ui::TheChat().AddSystem(Format(TR("%s начал миссию.", "%s started a mission."), Net().PeerName(from).c_str()));
     g_partnerMission = true;
     LOGI("Host mission started (%s)", name.c_str());
 }
@@ -1282,7 +1283,7 @@ void PartnerMissionCleanup() {
 
 void HandleMissionEnd(uint8_t from, Reader&) {
     if (from != Net().HostId() || Net().IsHost()) return;
-    if (g_partnerMission) ui::TheChat().AddSystem("Миссия закончилась.");
+    if (g_partnerMission) ui::TheChat().AddSystem(TR("Миссия закончилась.", "The mission is over."));
     g_partnerMission = false;
     g_partnerMissionEndedAt = NowMs();
     PartnerMissionCleanup();
@@ -1293,7 +1294,7 @@ void HandleReward(uint8_t from, Reader& r) {
     int32_t money = r.I32();
     if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || money <= 0 || money > 10000000) return;
     PlayerInfos()[0].money += money;
-    ui::TheChat().AddSystem(Format("Награда за миссию: $%d.", money));
+    ui::TheChat().AddSystem(Format(TR("Награда за миссию: $%d.", "Mission reward: $%d."), money));
 }
 
 // ---------------------------------------------------------------- module
@@ -1367,7 +1368,9 @@ public:
     }
 
     void OnSessionStart() override {
-        if (!Net().IsHost()) ui::TheChat().AddSystem("Сюжетные миссии запускает хост, а вы проходите их вместе с ним.");
+        if (!Net().IsHost())
+            ui::TheChat().AddSystem(TR("Сюжетные миссии запускает хост, а вы проходите их вместе с ним.",
+                                       "The host starts the story missions, and you play them together."));
     }
     void OnSessionEnd() override {
         if (core::IsPlayerReady()) {  // the host's cutscene, blips, markers and fades stay no longer
@@ -1567,7 +1570,7 @@ std::string CutsceneSkipText(std::string& hint) {
     uint8_t me = Net().MyId();
     if (!g_skipOpen) {
         bool no = g_skipNo != 0xFF && g_skipNo != me && g_skipNoMs && NowMs() - g_skipNoMs < 3000;
-        return no ? Net().PeerName(g_skipNo) + " хочет досмотреть" : "";
+        return no ? Format(TR("%s хочет досмотреть", "%s wants to keep watching"), Net().PeerName(g_skipNo).c_str()) : "";
     }
     std::vector<uint8_t> players{me};
     for (auto& [id, peer] : Net().Peers())
@@ -1580,9 +1583,11 @@ std::string CutsceneSkipText(std::string& hint) {
         list += (list.empty() ? "" : ", ") + Net().PeerName(id);
         yesCount += g_skipYes.count(id) ? 1 : 0;
     }
-    if (g_skipYes.count(me)) return wait.empty() ? "" : "Ждём ответа " + wait;
-    hint = "Enter — пропустить, Esc — смотреть дальше";
-    return yes + (yesCount > 1 ? " хотят" : " хочет") + " пропустить катсцену";
+    if (g_skipYes.count(me)) return wait.empty() ? "" : Format(TR("Ждём ответа %s", "Waiting for %s"), wait.c_str());
+    hint = TR("Enter — пропустить, Esc — смотреть дальше", "Enter: skip, Esc: keep watching");
+    return Format(yesCount > 1 ? TR("%s хотят пропустить катсцену", "%s want to skip the cutscene")
+                               : TR("%s хочет пропустить катсцену", "%s wants to skip the cutscene"),
+                  yes.c_str());
 }
 
 void CutsceneSkipPress() {
@@ -1597,8 +1602,10 @@ bool CutsceneSkipDecline() {
 
 std::string MissionWaitText() {
     if (!Net().Online()) return "";
-    if (Net().IsHost()) return g_waitSent ? "Ждём напарника" : "";
-    return g_hostWaits ? Net().PeerName(Net().HostId()) + " ждёт вас у маркера миссии" : "";
+    if (Net().IsHost()) return g_waitSent ? TR("Ждём напарника", "Waiting for your partner") : "";
+    return g_hostWaits ? Format(TR("%s ждёт вас у маркера миссии", "%s is waiting for you at the mission marker"),
+                                Net().PeerName(Net().HostId()).c_str())
+                       : "";
 }
 
 bool HostReplicating() { return Replicating(); }

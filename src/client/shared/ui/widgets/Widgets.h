@@ -23,7 +23,7 @@ void Label(float x, float y, const std::string& utf8, uint32_t argb = 0xFFE0E0E0
 // A menu item (text, no box). lit = drawn as the selected item, big = the large menu font. Returns true when clicked.
 bool Button(const char* id, float x, float y, float w, float h, const std::string& label, bool enabled = true,
             bool lit = false, bool big = false);
-bool Tab(const char* id, float x, float y, float w, float h, const std::string& label, bool active);
+bool Tab(const char* id, float x, float y, float w, float h, const std::string& label, bool active, bool small = false);
 // Single-line text box. Returns true when Enter was pressed inside it.
 bool TextBox(const char* id, float x, float y, float w, float h, std::wstring& value, size_t maxLen,
              bool password = false, bool digitsOnly = false, const char* placeholder = nullptr);

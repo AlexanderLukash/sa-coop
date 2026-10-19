@@ -6,6 +6,7 @@
 
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
+#include "shared/config/Config.h"
 #include "shared/ui/input/Input.h"
 #include "shared/ui/renderer/Renderer.h"
 
@@ -198,8 +199,9 @@ void Chat::Render() {
         float ih = lh + 8 * s;
         g.Rect(x - 8 * s, iy, width + 16 * s, ih, 0xB0101010);
         g.RectOutline(x - 8 * s, iy, width + 16 * s, ih, 0xFF5A82C8);
-        std::wstring shown = L"Сказать: " + m_input;
-        float prefixW = g.TextWidthW(FONT_NORMAL, L"Сказать: ");
+        const wchar_t* prefix = TR(L"Сказать: ", L"Say: ");
+        std::wstring shown = prefix + m_input;
+        float prefixW = g.TextWidthW(FONT_NORMAL, prefix);
         // scroll the input horizontally if it is too long
         float caretX = prefixW + g.TextWidthW(FONT_NORMAL, std::wstring_view(m_input).substr(0, m_cursor));
         float offset = std::max(0.0f, caretX - width + 10 * s);

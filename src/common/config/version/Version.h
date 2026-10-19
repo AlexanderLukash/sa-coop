@@ -2,11 +2,11 @@
 #include <cstdint>
 
 #define COOP_NAME "SA:COOP"
-#define COOP_VERSION_STR "0.1.0"
+#define COOP_VERSION_STR "0.2.0"
 
 namespace coop {
 // Bumped on any incompatible change of the network protocol.
-constexpr uint32_t kProtocolVersion = 14;
+constexpr uint32_t kProtocolVersion = 15;
 constexpr uint16_t kDefaultPort = 7788;
 // Size of gta_sa.exe 1.0 US (HOODLUM) — the only supported executable.
 constexpr uint32_t kSupportedExeSize = 14383616;

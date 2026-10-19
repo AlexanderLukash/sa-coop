@@ -26,7 +26,8 @@ uint32_t Crc32(const void* data, size_t size, uint32_t crc = 0);
 std::string Trim(std::string_view s);
 std::string ToLower(std::string_view s);
 std::vector<std::string> Split(std::string_view s, char sep);
-std::string Format(const char* fmt, ...);
+// printf-checked: both texts of TR(...) get checked against the arguments
+std::string Format(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 
 // Keeps only characters allowed in a nickname (letters incl. Cyrillic, digits, _-.[]) and limits length.
 std::string SanitizeNickname(std::string_view nick);

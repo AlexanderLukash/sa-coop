@@ -103,7 +103,7 @@ public:
         auto& g = ui::Gfx();
         float s = g.Scale(), y = g.Height() * 0.62f;
         if (m_transmitting) {
-            g.Text(ui::FONT_SMALL, 24 * s, y, "{FF5050}●{FFFFFF} Микрофон", 0xFFFFFFFF, ui::TEXT_OUTLINE);
+            g.Text(ui::FONT_SMALL, 24 * s, y, TR("{FF5050}●{FFFFFF} Микрофон", "{FF5050}●{FFFFFF} Mic"), 0xFFFFFFFF, ui::TEXT_OUTLINE);
             y += g.LineHeight(ui::FONT_SMALL);
         }
         for (auto& [id, stream] : m_streams)  // who is heard now, wherever they are (the name tag needs them in sight)
@@ -186,7 +186,8 @@ private:
             m_micTriedMs = NowMs();
             if (OpenMic() || m_micWarned) return;
             m_micWarned = true;
-            ui::TheChat().AddError("Не удалось открыть микрофон. Проверьте, что он подключён, а в Windows разрешён доступ к микрофону для классических приложений.");
+            ui::TheChat().AddError(TR("Не удалось открыть микрофон. Проверьте, что он подключён, а в Windows разрешён доступ к микрофону для классических приложений.",
+                                      "Could not open the microphone. Check that it is plugged in and that Windows lets desktop apps use the microphone."));
             return;
         }
         // in the order they were queued: by index, a wrap-around would swap 20 ms pieces
@@ -225,7 +226,8 @@ private:
         LOGI("Voice: %d frames sent, rms %.0f", m_txFrames, rms);
         if (rms < 1.0 && m_txFrames >= 100 && !m_silenceWarned) {
             m_silenceWarned = true;
-            ui::TheChat().AddError("Микрофон передаёт тишину. Проверьте, что в Windows разрешён доступ к микрофону для классических приложений, а нужный микрофон выбран устройством записи по умолчанию.");
+            ui::TheChat().AddError(TR("Микрофон передаёт тишину. Проверьте, что в Windows разрешён доступ к микрофону для классических приложений, а нужный микрофон выбран устройством записи по умолчанию.",
+                                      "The microphone sends only silence. Check that Windows lets desktop apps use the microphone and that the right one is the default recording device."));
         }
         m_txFrames = 0;
         m_txEnergy = 0;

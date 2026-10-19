@@ -22,6 +22,7 @@
 #include "entities/profile/Profile.h"
 #include "entities/session/Flow.h"
 #include "shared/api/net-session/Session.h"
+#include "shared/config/Config.h"
 #include "shared/game/Game.h"
 #include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
@@ -256,7 +257,8 @@ public:
         Net().SetHandler(proto::G_HOST_SAVED, [](uint8_t from, Reader&) {
             if (from != Net().HostId() || Net().IsHost() || !Instance().m_applied || !core::IsPlayerReady()) return;
             Instance().SaveNow(true);
-            ui::TheChat().AddSystem("Хост сохранил игру. Ваши деньги, навыки и внешность тоже сохранены.");
+            ui::TheChat().AddSystem(TR("Хост сохранил игру. Ваши деньги, навыки и внешность тоже сохранены.",
+                                       "The host saved the game. Your money, skills and look are saved too."));
         });
     }
 
@@ -287,13 +289,16 @@ public:
             m_applied = true;
             bool own = false;
             if (m_profile.empty()) {
-                ui::TheChat().AddSystem(m_reset ? "Хост начал новую игру. Деньги, оружие и навыки у вас тоже начинаются заново."
-                                                : "Вы здесь впервые. Дальше деньги, навыки и внешность у вас будут свои.");
+                ui::TheChat().AddSystem(m_reset ? TR("Хост начал новую игру. Деньги, оружие и навыки у вас тоже начинаются заново.",
+                                                     "The host started a new game. Your money, weapons and skills start over too.")
+                                                : TR("Вы здесь впервые. Дальше деньги, навыки и внешность у вас будут свои.",
+                                                     "You are here for the first time. From now on your money, skills and look "
+                                                     "are your own."));
                 m_reset = false;
             } else if (ApplyProfile(m_profile, own)) {
                 LOGI("Profile applied (%zu bytes)", m_profile.size());
                 m_quietUntil = now + 5000;
-                ui::TheChat().AddSystem("Загружены ваши деньги, навыки и внешность.");
+                ui::TheChat().AddSystem(TR("Загружены ваши деньги, навыки и внешность.", "Your money, skills and look are loaded."));
             } else {
                 LOGW("Profile rejected (bad format), starting from the world's state");
             }
@@ -374,7 +379,8 @@ private:
 void PartnerSaved() {
     if (!flow::InHostWorld()) return;
     Progress::Instance().SaveNow(true);
-    ui::TheChat().AddSystem("Ваши деньги, навыки и внешность сохранены и у хоста.");
+    ui::TheChat().AddSystem(TR("Ваши деньги, навыки и внешность сохранены и у хоста.",
+                               "Your money, skills and look are saved on the host's side too."));
 }
 
 struct Reg {

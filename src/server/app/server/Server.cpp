@@ -90,7 +90,8 @@ void Server::Run() {
             SendPings();
             // drop peers that never sent HELLO
             for (auto& p : m_players)
-                if (p.used && !p.joined && NowMs() - p.connectTime > 10000) Kick(p, "клиент не прислал приветствие");
+                if (p.used && !p.joined && NowMs() - p.connectTime > 10000)
+                    Kick(p, "клиент не прислал приветствие", "the client sent no greeting");
         }
     }
     for (auto& p : m_players)
@@ -144,6 +145,7 @@ void Server::OnConnect(ENetPeer* peer) {
         LOGW("Отказ %s: сервер заполнен", ip);
         Writer w(S_REJECT);
         w.Str("на сервере нет свободных мест");
+        w.Str("the server is full");
         net::Send(peer, CH_RELIABLE, w);
         enet_peer_disconnect_later(peer, 0);
         return;
@@ -177,16 +179,19 @@ void Server::Leave(Player& p, LeaveReason why, const std::string& reason) {
     w.U8(id);
     w.U8(why);
     Broadcast(CH_RELIABLE, w);
-    std::string msg;
+    std::string msg, en;
     if (why == LEAVE_KICKED) {
         LOGI("%s (%d) выгнан%s%s", name.c_str(), id, reason.empty() ? "" : ": ", reason.c_str());
         msg = reason.empty() ? Format("%s выгнан с сервера.", name.c_str())
                              : Format("%s выгнан с сервера: %s.", name.c_str(), reason.c_str());
+        en = reason.empty() ? Format("%s was kicked from the server.", name.c_str())
+                            : Format("%s was kicked from the server: %s.", name.c_str(), reason.c_str());
     } else {
         LOGI("%s (%d) отключился%s", name.c_str(), id, why == LEAVE_TIMEOUT ? " (таймаут)" : "");
         msg = Format(why == LEAVE_TIMEOUT ? "%s потерял связь с сервером." : "%s вышел из игры.", name.c_str());
+        en = Format(why == LEAVE_TIMEOUT ? "%s lost connection to the server." : "%s left the game.", name.c_str());
     }
-    SendChat(nullptr, kServerId, why == LEAVE_KICKED ? kColorServer : kColorInfo, msg);
+    SendChat(nullptr, kServerId, why == LEAVE_KICKED ? kColorServer : kColorInfo, msg, en);
     if (wasHost) EnsureHost();
 }
 
@@ -255,22 +260,27 @@ void Server::OnPacket(ENetPeer* peer, uint8_t channel, const uint8_t* data, size
 
 void Server::HandleHello(Player& p, Reader& r) {
     Hello h;
-    auto reject = [&](const std::string& why) {
+    auto reject = [&](const std::string& why, const std::string& en) {
         LOGW("Отказ \"%s\": %s", h.name.c_str(), why.c_str());
         Writer w(S_REJECT);
         w.Str(why);
+        w.Str(en);
         net::Send(p.peer, CH_RELIABLE, w);
         enet_peer_disconnect_later(p.peer, 0);
         p.joined = false;
     };
-    if (!h.Read(r)) return reject("клиент прислал повреждённые данные");
+    if (!h.Read(r)) return reject("клиент прислал повреждённые данные", "the client sent damaged data");
     if (h.protocol != kProtocolVersion)
         return reject(Format("у вас другая версия мода (у сервера %u, у вас %u). Версия должна быть одинаковой у обоих",
-                             kProtocolVersion, h.protocol));
+                             kProtocolVersion, h.protocol),
+                      Format("your version of the mod differs (the server has %u, you have %u). Both players need the "
+                             "same version", kProtocolVersion, h.protocol));
     std::string name = SanitizeNickname(h.name);
-    if (name.size() < 2) return reject("в нике должно быть от 2 до 20 символов (буквы, цифры, знаки _-.[])");
-    if (FindByName(name)) return reject("игрок с таким ником уже на сервере");
-    if (!m_cfg.password.empty() && h.password != m_cfg.password) return reject("неверный пароль");
+    if (name.size() < 2)
+        return reject("в нике должно быть от 2 до 20 символов (буквы, цифры, знаки _-.[])",
+                      "a nickname needs 2 to 20 characters (letters, digits, _-.[])");
+    if (FindByName(name)) return reject("игрок с таким ником уже на сервере", "a player with this nickname is already here");
+    if (!m_cfg.password.empty() && h.password != m_cfg.password) return reject("неверный пароль", "wrong password");
 
     p.name = name;
     p.joined = true;
@@ -293,6 +303,9 @@ void Server::HandleHello(Player& p, Reader& r) {
     }
     wel.serverName = m_cfg.name;
     wel.motd = m_cfg.motd;
+    // the default greeting has an English one, a greeting of the server's owner is shown as it is
+    wel.motdEn = m_cfg.motd == Config{}.motd ? "Welcome! Type /help to see the commands." : "";
+    wel.friendlyFire = m_cfg.friendlyFire;
     wel.worldAvailable = !m_world.empty();
     Writer w(S_WELCOME);
     wel.Write(w);
@@ -307,8 +320,8 @@ void Server::HandleHello(Player& p, Reader& r) {
     SendProfile(p);
     SendInvite(&p);
     LOGI("%s вошёл как игрок %d%s (версия %s)", p.name.c_str(), p.id, p.isHost ? " [ХОСТ]" : "", h.version.c_str());
-    SendChat(nullptr, kServerId, kColorInfo,
-             Format("%s зашёл в игру%s.", p.name.c_str(), p.isHost ? " (хост)" : ""));
+    SendChat(nullptr, kServerId, kColorInfo, Format("%s зашёл в игру%s.", p.name.c_str(), p.isHost ? " (хост)" : ""),
+             Format("%s joined the game%s.", p.name.c_str(), p.isHost ? " (host)" : ""));
     // with a reserved host nickname the role waits for that player
     if (wel.hostId == 255 && !p.isHost && m_cfg.hostName.empty()) EnsureHost();
 }
@@ -334,52 +347,64 @@ void Server::HandleCommand(Player* p, const std::string& text) {
     parts.erase(std::remove(parts.begin(), parts.end(), std::string()), parts.end());  // doubled spaces
     std::string cmd = parts.empty() ? "" : ToLower(parts[0]);
     std::string rest = line.size() > cmd.size() ? Trim(line.substr(cmd.size())) : "";
-    auto reply = [&](uint32_t color, const std::string& msg) {
+    auto reply = [&](uint32_t color, const std::string& msg, const std::string& en = {}) {
         if (p)
-            SendChat(p, kServerId, color, msg);
+            SendChat(p, kServerId, color, msg, en);
         else
             LOGI("%s", msg.c_str());
     };
     bool admin = !p || p->isHost;
 
     if (cmd == "help" || cmd == "?") {
-        reply(kColorServer, "Команды: /players, /pm <id> <текст>, /me <действие>");
-        if (admin) reply(kColorServer, "Для хоста: /kick <ник или номер> [причина], /say <текст>");
-        reply(kColorServer, "В игре: /tp (переместиться к напарнику), /tphere (позвать напарника к себе)");
+        reply(kColorServer, "Команды: /players, /pm <id> <текст>, /me <действие>",
+              "Commands: /players, /pm <id> <text>, /me <action>");
+        if (admin)
+            reply(kColorServer, "Для хоста: /kick <ник или номер> [причина], /say <текст>",
+                  "For the host: /kick <nickname or number> [reason], /say <text>");
+        reply(kColorServer, "В игре: /tp (переместиться к напарнику), /tphere (позвать напарника к себе)",
+              "In the game: /tp (go to your partner), /tphere (bring your partner to you)");
     } else if (cmd == "players" || cmd == "status") {
         for (auto& o : m_players) {
             if (!o.joined) continue;
             static const char* st[] = {"в меню", "загрузка", "в игре", "пауза"};
-            reply(kColorInfo, Format("[%d] %s%s, пинг %u мс, %s", o.id, o.name.c_str(), o.isHost ? " (хост)" : "",
-                                     o.peer ? o.peer->roundTripTime : 0, st[o.status < 4 ? o.status : 0]));
+            static const char* stEn[] = {"in the menu", "loading", "in the game", "paused"};
+            int s = o.status < 4 ? o.status : 0;
+            uint32_t ping = o.peer ? o.peer->roundTripTime : 0;
+            reply(kColorInfo, Format("[%d] %s%s, пинг %u мс, %s", o.id, o.name.c_str(), o.isHost ? " (хост)" : "", ping, st[s]),
+                  Format("[%d] %s%s, ping %u ms, %s", o.id, o.name.c_str(), o.isHost ? " (host)" : "", ping, stEn[s]));
         }
     } else if (cmd == "pm" && parts.size() >= 3 && p) {
         Player* to = FindById(atoi(parts[1].c_str()));
         std::string msg = Trim(rest.substr(parts[1].size()));
-        if (!to || !to->joined) return reply(kColorError, "Нет такого игрока.");
-        SendChat(to, kServerId, 0xFFFF80FF, Format("[ЛС от %s] %s", p->name.c_str(), msg.c_str()));
-        reply(0xFFFF80FF, Format("[ЛС для %s] %s", to->name.c_str(), msg.c_str()));
+        if (!to || !to->joined) return reply(kColorError, "Нет такого игрока.", "There is no such player.");
+        SendChat(to, kServerId, 0xFFFF80FF, Format("[ЛС от %s] %s", p->name.c_str(), msg.c_str()),
+                 Format("[PM from %s] %s", p->name.c_str(), msg.c_str()));
+        reply(0xFFFF80FF, Format("[ЛС для %s] %s", to->name.c_str(), msg.c_str()),
+              Format("[PM to %s] %s", to->name.c_str(), msg.c_str()));
     } else if (cmd == "me" && p && !rest.empty()) {
         SendChat(nullptr, kServerId, 0xC8A0FFFF, Format("* %s %s", p->name.c_str(), rest.c_str()));
     } else if (cmd == "kick") {
-        if (!admin) return reply(kColorError, "Выгнать игрока может только хост.");
-        if (parts.size() < 2) return reply(kColorError, "Укажите игрока: /kick <ник или номер> [причина].");
+        if (!admin) return reply(kColorError, "Выгнать игрока может только хост.", "Only the host can kick players.");
+        if (parts.size() < 2)
+            return reply(kColorError, "Укажите игрока: /kick <ник или номер> [причина].",
+                         "Name the player: /kick <nickname or number> [reason].");
         // the nickname is what the player list shows, the number comes from /players
         Player* t = FindByName(parts[1]);
         if (!t && parts[1].find_first_not_of("0123456789") == std::string::npos) t = FindById(atoi(parts[1].c_str()));
-        if (!t || !t->joined) return reply(kColorError, "Нет такого игрока.");
-        if (t == p) return reply(kColorError, "Себя выгнать нельзя.");
+        if (!t || !t->joined) return reply(kColorError, "Нет такого игрока.", "There is no such player.");
+        if (t == p) return reply(kColorError, "Себя выгнать нельзя.", "You cannot kick yourself.");
         std::string reason = Trim(rest.substr(parts[1].size()));
         while (!reason.empty() && reason.back() == '.') reason.pop_back();  // the message adds its own period
         Kick(*t, reason);
     } else if (cmd == "say" && admin && !rest.empty()) {
-        SendChat(nullptr, kServerId, kColorServer, "[Сервер] " + rest);
+        SendChat(nullptr, kServerId, kColorServer, "[Сервер] " + rest, "[Server] " + rest);
     } else if (cmd == "quit" && !p) {
         Stop();
     } else if (cmd == "tp" || cmd == "tphere" || cmd == "voice" || cmd == "save" || cmd == "skin") {
         // handled by the game client locally; nothing to do on the server
     } else {
-        reply(kColorError, "Такой команды нет. Чтобы увидеть список команд, напишите /help.");
+        reply(kColorError, "Такой команды нет. Чтобы увидеть список команд, напишите /help.",
+              "There is no such command. Type /help to see the commands.");
     }
 }
 
@@ -517,7 +542,7 @@ void Server::RequestWorld(Player& p) {
             net::Send(host->peer, CH_RELIABLE, w);
             m_worldWantedTime = NowMs();
         }
-        SendChat(&p, kServerId, kColorInfo, "Хост сохраняет мир. Подождите...");
+        SendChat(&p, kServerId, kColorInfo, "Хост сохраняет мир. Подождите...", "The host is saving the world. Please wait...");
         return;
     }
     if (m_world.empty()) {
@@ -525,7 +550,7 @@ void Server::RequestWorld(Player& p) {
         m_worldWaiters.push_back(p.id);
         Writer w(S_WORLD_NONE);
         net::Send(p.peer, CH_BULK, w);
-        SendChat(&p, kServerId, kColorInfo, "Хост ещё не загрузил игру. Ждём...");
+        SendChat(&p, kServerId, kColorInfo, "Хост ещё не загрузил игру. Ждём...", "The host has not loaded a game yet. Waiting...");
         return;
     }
     SendWorld(p);
@@ -606,11 +631,12 @@ void Server::Relay(Player& from, uint8_t channel, const uint8_t* data, size_t si
     if (!sent) enet_packet_destroy(pkt);
 }
 
-void Server::SendChat(Player* to, uint8_t fromId, uint32_t rgba, const std::string& text) {
+void Server::SendChat(Player* to, uint8_t fromId, uint32_t rgba, const std::string& text, const std::string& en) {
     Writer w(S_CHAT);
     w.U8(fromId);
     w.U32(rgba);
     w.Str(text, kMaxChatLen * 4 + 64);
+    w.Str(en, kMaxChatLen * 4 + 64);
     if (to)
         net::Send(to->peer, CH_RELIABLE, w);
     else
@@ -624,10 +650,11 @@ void Server::Broadcast(uint8_t channel, const Writer& w, int exceptId) {
 
 // The player leaves the game at once: its game confirms the disconnect only later, a hung one never (ENet drops it after
 // the 20 s timeout), and the others would see the player in the list until then.
-void Server::Kick(Player& p, const std::string& reason) {
+void Server::Kick(Player& p, const std::string& reason, const std::string& reasonEn) {
     if (!p.peer) return;
     Writer w(S_KICKED);
     w.Str(reason);
+    w.Str(reasonEn);
     net::Send(p.peer, CH_RELIABLE, w);
     enet_peer_disconnect_later(p.peer, 0);
     Leave(p, LEAVE_KICKED, reason);
@@ -643,7 +670,8 @@ void Server::EnsureHost() {
         Writer w(S_HOST_CHANGED);
         w.U8(o.id);
         Broadcast(CH_RELIABLE, w);
-        SendChat(nullptr, kServerId, kColorServer, Format("%s теперь хост.", o.name.c_str()));
+        SendChat(nullptr, kServerId, kColorServer, Format("%s теперь хост.", o.name.c_str()),
+                 Format("%s is the host now.", o.name.c_str()));
         LOGI("Новый хост: %s", o.name.c_str());
         return;
     }

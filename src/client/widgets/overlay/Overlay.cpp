@@ -32,9 +32,10 @@ void RenderOverlay() {
     // status line, bottom-right
     std::string line;
     if (net.Online()) {
-        line = Format("SA:COOP · %s · %u мс", net.IsHost() ? "хост" : "напарник", net.Rtt());
+        line = Format(TR("SA:COOP · %s · %u мс", "SA:COOP · %s · %u ms"),
+                      net.IsHost() ? TR("хост", "host") : TR("напарник", "partner"), net.Rtt());
     } else if (frontend) {
-        line = "SA:COOP " COOP_VERSION_STR " · F9: совместная игра";
+        line = TR("SA:COOP " COOP_VERSION_STR " · F9: совместная игра", "SA:COOP " COOP_VERSION_STR " · F9: co-op");
     }
     if (!line.empty())
         g.Text(FONT_SMALL, g.Width() - 16 * s, g.Height() - g.LineHeight(FONT_SMALL) - 10 * s, line, 0xC0FFFFFF,
@@ -65,16 +66,16 @@ void RenderOverlay() {
         float x = (g.Width() - W) * 0.5f, y = g.Height() * 0.25f;
         g.Rect(x, y, W, H, 0xE0000000);
         g.RectOutline(x, y, W, H, w::kSaLine, std::max(1.0f, s));
-        g.Text(FONT_MENU_SMALL, x + 16 * s, y + 12 * s, Format("%s · игроков: %d", net.ServerName().c_str(), rows),
-               w::kSaMuted);
+        g.Text(FONT_MENU_SMALL, x + 16 * s, y + 12 * s,
+               Format(TR("%s · игроков: %d", "%s · players: %d"), net.ServerName().c_str(), rows), w::kSaMuted);
         float cy = y + 10 * s + lh * 1.3f;
         auto row = [&](const std::string& name, bool host, uint32_t ping, bool me, bool talking) {
-            std::string shown = (talking ? "{FFDC50}((•)){FFFFFF} " : "") + name + (me ? " (вы)" : "");
+            std::string shown = (talking ? "{FFDC50}((•)){FFFFFF} " : "") + name + (me ? TR(" (вы)", " (you)") : "");
             g.Text(FONT_NORMAL, x + 16 * s, cy, shown, me ? 0xFFFFFFFF : 0xFFD0D0D0, TEXT_SHADOW);
             // the role ends before the ping column ("999 мс"): "напарник" in this font reached into it
-            g.Text(FONT_MENU_SMALL, x + W - 104 * s, cy + 3 * s, host ? "хост" : "напарник", host ? w::kSaBlue : w::kSaGreen,
-                   TEXT_RIGHT);
-            g.Text(FONT_NORMAL, x + W - 16 * s, cy, Format("%u мс", ping), w::kSaMuted, TEXT_RIGHT | TEXT_SHADOW);
+            g.Text(FONT_MENU_SMALL, x + W - 104 * s, cy + 3 * s, host ? TR("хост", "host") : TR("напарник", "partner"),
+                   host ? w::kSaBlue : w::kSaGreen, TEXT_RIGHT);
+            g.Text(FONT_NORMAL, x + W - 16 * s, cy, Format(TR("%u мс", "%u ms"), ping), w::kSaMuted, TEXT_RIGHT | TEXT_SHADOW);
             cy += lh;
         };
         row(Cfg().nickname, net.IsHost(), net.Rtt(), true, VoiceIsTransmitting());

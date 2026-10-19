@@ -42,10 +42,10 @@ enum MsgId : uint8_t {
 
     // ---- server -> client ----
     S_WELCOME = 20,          // see Welcome
-    S_REJECT = 21,           // str reason
+    S_REJECT = 21,           // str reason, str reasonEn (the same in English; empty when there is nothing to translate)
     S_PLAYER_JOIN = 22,      // u8 id, str name, u8 isHost
     S_PLAYER_LEAVE = 23,     // u8 id, u8 reason
-    S_CHAT = 24,             // u8 fromId (255 = server), u32 rgba, str text
+    S_CHAT = 24,             // u8 fromId (255 = server), u32 rgba, str text, str textEn (the server's own texts)
     S_PROFILE = 25,          // bytes profile (empty when the player is new)
     S_WORLD_BEGIN = 26,      // u32 size, u32 crc, str label
     S_WORLD_CHUNK = 27,      // u32 offset, bytes
@@ -53,7 +53,7 @@ enum MsgId : uint8_t {
     S_WORLD_NONE = 29,       // the host has not uploaded a save yet
     S_HOST_CHANGED = 30,     // u8 newHostId
     S_PINGS = 31,            // u8 count, {u8 id, u16 ping}
-    S_KICKED = 32,           // str reason
+    S_KICKED = 32,           // str reason, str reasonEn
     S_WORLD_WANTED = 33,     // to the host: a partner needs the world, please upload a fresh snapshot
     S_INVITE = 34,           // str invite code for internet play (when the server learned its public address)
     S_WORLD_NEWGAME = 35,    // to a partner: start a new game and join the host where the prologue left it
@@ -180,8 +180,9 @@ struct Welcome {
     uint8_t yourId = 0;
     uint8_t hostId = 0;
     std::string serverName;
-    std::string motd;
+    std::string motd, motdEn;
     bool worldAvailable = false;
+    bool friendlyFire = false;  // the players can hurt each other (the host chose it creating the game)
     std::vector<PlayerEntry> players;  // already connected players (excluding you)
 
     void Write(Writer& w) const {
@@ -196,6 +197,8 @@ struct Welcome {
             w.Str(p.name, 64);
             w.Bool(p.isHost);
         }
+        w.Str(motdEn, 512);
+        w.Bool(friendlyFire);
     }
     bool Read(Reader& r) {
         yourId = r.U8();
@@ -212,6 +215,8 @@ struct Welcome {
             p.isHost = r.Bool();
             players.push_back(p);
         }
+        motdEn = r.Str(512);
+        friendlyFire = r.Bool();
         return r.Ok();
     }
 };

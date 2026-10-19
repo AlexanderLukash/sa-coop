@@ -69,7 +69,7 @@ bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
     auto& cfg = Cfg();
     std::wstring exe = cfg.coopDir + L"coop-server.exe";
     if (!FileExists(exe)) {
-        Fail("Нет файла coop\\coop-server.exe. Переустановите мод.");
+        Fail(TR("Нет файла coop\\coop-server.exe. Переустановите мод.", "The file coop\\coop-server.exe is missing. Reinstall the mod."));
         return false;
     }
     std::wstring cmd = L"\"" + exe + L"\" --port " + std::to_wstring(g_port) + L" --data \"" + cfg.coopDir +
@@ -78,6 +78,7 @@ bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
     if (!g_password.empty()) cmd += L" --password \"" + Utf8ToWide(g_password) + L"\"";
     if (!worldPath.empty()) cmd += L" --world \"" + worldPath + L"\"";
     if (newGame) cmd += L" --new-game";
+    cmd += cfg.friendlyFire ? L" --friendly-fire 1" : L" --friendly-fire 0";  // the checkbox wins over server.ini
 
     if (!g_serverJob) {
         g_serverJob = CreateJobObjectW(nullptr, nullptr);
@@ -91,7 +92,7 @@ bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
     buf.push_back(0);
     if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
                         cfg.coopDir.c_str(), &si, &pi)) {
-        Fail(Format("Не удалось запустить сервер (ошибка %lu).", GetLastError()));
+        Fail(Format(TR("Не удалось запустить сервер (ошибка %lu).", "Could not start the server (error %lu)."), GetLastError()));
         return false;
     }
     // the server dies together with the game
@@ -113,18 +114,6 @@ void StopServerProcess() {
 
 bool ServerProcessAlive() {
     return g_serverProcess && WaitForSingleObject(g_serverProcess, 0) == WAIT_TIMEOUT;
-}
-
-void SaveConnectSettings() {
-    auto& cfg = Cfg();
-    Ini ini;
-    ini.Load(cfg.iniPath);
-    ini.Set("player", "name", cfg.nickname);
-    ini.Set("connect", "mode", cfg.wantsHost ? "host" : "join");  // the menu opens on the same tab next time
-    ini.Set("connect", "host", cfg.host);
-    ini.SetInt("connect", "port", cfg.port);
-    ini.Set("connect", "password", cfg.password);
-    ini.Save(cfg.iniPath);
 }
 
 void UploadWorld(const std::vector<uint8_t>& data, const std::string& label) {
@@ -149,24 +138,26 @@ void OnOnline() {
     auto& net = Net();
     if (net.IsHost()) {
         if (g_hostSlot > 0 && !core::IsInGame()) {
-            ui::TheChat().AddSystem(Format("Загружаем сохранение из слота %d...", g_hostSlot));
+            ui::TheChat().AddSystem(Format(TR("Загружаем сохранение из слота %d...", "Loading the save from slot %d..."), g_hostSlot));
             if (!core::LoadSaveFile(core::SlotPath(g_hostSlot))) {
-                Fail(Format("Не удалось загрузить сохранение из слота %d.", g_hostSlot));
+                Fail(Format(TR("Не удалось загрузить сохранение из слота %d.", "Could not load the save from slot %d."), g_hostSlot));
                 return;
             }
             SetPhase(Phase::LoadingWorld);
         } else if (g_hostSlot < 0 && !core::IsInGame()) {
-            ui::TheChat().AddSystem("Сервер создан. Начинаем новую игру...");
+            ui::TheChat().AddSystem(TR("Сервер создан. Начинаем новую игру...", "The server is up. Starting a new game..."));
             core::StartNewGame();
             SetPhase(Phase::LoadingWorld);
         } else {
             SetPhase(core::IsInGame() ? Phase::Playing : Phase::Idle);
-            if (!core::IsInGame()) ui::TheChat().AddSystem("Сервер создан. Начните новую игру или загрузите сохранение.");
+            if (!core::IsInGame())
+                ui::TheChat().AddSystem(TR("Сервер создан. Начните новую игру или загрузите сохранение.",
+                                           "The server is up. Start a new game or load a save."));
             else g_worldUploadPending = true;  // give the server a fresh world
         }
     } else {
         g_follower = g_prologueWait = false;  // a new session: the server says again whether the host is in a prologue
-        ui::TheChat().AddSystem("Запрашиваем мир у хоста...");
+        ui::TheChat().AddSystem(TR("Запрашиваем мир у хоста...", "Asking the host for the world..."));
         Writer w(C_WORLD_REQUEST);
         net.Send(CH_BULK, w);
         SetPhase(Phase::WaitingWorld);
@@ -174,6 +165,20 @@ void OnOnline() {
 }
 
 }  // namespace
+
+void SaveConnectSettings() {
+    auto& cfg = Cfg();
+    Ini ini;
+    ini.Load(cfg.iniPath);
+    ini.Set("player", "name", cfg.nickname);
+    ini.Set("player", "language", cfg.english ? "en" : "ru");
+    ini.Set("connect", "mode", cfg.wantsHost ? "host" : "join");  // the menu opens on the same tab next time
+    ini.Set("connect", "host", cfg.host);
+    ini.SetInt("connect", "port", cfg.port);
+    ini.Set("connect", "password", cfg.password);
+    ini.SetInt("connect", "friendly_fire", cfg.friendlyFire);
+    ini.Save(cfg.iniPath);
+}
 
 Phase GetPhase() { return g_phase; }
 const std::string& LastError() { return g_error; }
@@ -184,26 +189,27 @@ std::string StatusText() {
     auto& net = Net();
     switch (g_phase) {
         case Phase::Idle:
-            if (net.Online()) return net.IsHost() ? "Сервер работает" : "Подключено";
-            return g_error.empty() ? "Нет подключения" : g_error;
+            if (net.Online()) return net.IsHost() ? TR("Сервер работает", "Server running") : TR("Подключено", "Connected");
+            return g_error.empty() ? TR("Нет подключения", "Not connected") : g_error;
         case Phase::StartingServer:
-            return "Запускаем сервер...";
+            return TR("Запускаем сервер...", "Starting the server...");
         case Phase::Connecting: {
-            if (g_isHosting) return "Запускаем сервер...";
+            if (g_isHosting) return TR("Запускаем сервер...", "Starting the server...");
             nat::Endpoint ep;
             uint8_t key = 0;
-            if (nat::ParseInviteCode(g_hostAddr, ep, key)) return "Подключаемся по коду...";
-            return Format("Подключаемся к %s:%u...", g_hostAddr.c_str(), g_port);
+            if (nat::ParseInviteCode(g_hostAddr, ep, key)) return TR("Подключаемся по коду...", "Connecting by code...");
+            return Format(TR("Подключаемся к %s:%u...", "Connecting to %s:%u..."), g_hostAddr.c_str(), g_port);
         }
         case Phase::WaitingWorld: {
             float p = net.WorldProgress();
-            if (p >= 0) return Format("Получаем мир хоста: %d%%", (int)(p * 100));
-            return g_prologueWait ? "Хост проходит пролог" : "Ждём мир от хоста...";
+            if (p >= 0) return Format(TR("Получаем мир хоста: %d%%", "Receiving the host's world: %d%%"), (int)(p * 100));
+            return g_prologueWait ? TR("Хост проходит пролог", "The host plays the prologue")
+                                  : TR("Ждём мир от хоста...", "Waiting for the host's world...");
         }
         case Phase::LoadingWorld:
-            return "Загружаем мир...";
+            return TR("Загружаем мир...", "Loading the world...");
         case Phase::Playing:
-            return net.IsHost() ? "Вы хост" : "Вы в мире хоста";
+            return net.IsHost() ? TR("Вы хост", "You are the host") : TR("Вы в мире хоста", "You are in the host's world");
     }
     return "";
 }
@@ -231,10 +237,11 @@ std::vector<SaveSlotInfo> ListSaveSlots() {
             FILETIME local;
             FileTimeToLocalFileTime(&fad.ftLastWriteTime, &local);
             FileTimeToSystemTime(&local, &st);
-            info.title = Format("Слот %d · %02d.%02d.%04d, %02d:%02d", s, st.wDay, st.wMonth, st.wYear, st.wHour, st.wMinute);
+            info.title = Format(TR("Слот %d · %02d.%02d.%04d, %02d:%02d", "Slot %d · %02d.%02d.%04d, %02d:%02d"), s, st.wDay,
+                                st.wMonth, st.wYear, st.wHour, st.wMinute);
             if (ascii) info.title += " · " + name;
         } else {
-            info.title = Format("Слот %d · пусто", s);
+            info.title = Format(TR("Слот %d · пусто", "Slot %d · empty"), s);
         }
         out.push_back(info);
     }
@@ -256,7 +263,7 @@ void Host(int slot, uint16_t port, const std::string& password) {
     if (slot > 0) {
         world = core::SlotPath(slot);
         if (!FileExists(world)) {
-            Fail(Format("Слот %d пуст.", slot));
+            Fail(Format(TR("Слот %d пуст.", "Slot %d is empty."), slot));
             return;
         }
     } else if (slot == 0 && core::IsPlayerReady()) {
@@ -290,7 +297,8 @@ void Join(const std::string& hostArg, uint16_t port, const std::string& password
     cfg.password = password;
     SaveConnectSettings();
     if (core::IsInGame()) {
-        ui::TheChat().AddSystem("Подключаемся. Вместо текущей игры загрузится мир хоста.");
+        ui::TheChat().AddSystem(TR("Подключаемся. Вместо текущей игры загрузится мир хоста.",
+                                   "Connecting. The host's world will load instead of your current game."));
     }
     Net().Connect(host, port, cfg.nickname, password, false);
     SetPhase(Phase::Connecting);
@@ -303,7 +311,7 @@ void Leave() {
     g_isHosting = g_follower = g_prologueWait = g_progressUpload = g_hasSpot = false;
     g_pendingWorld.clear();
     SetPhase(Phase::Idle);
-    ui::TheChat().AddSystem("Вы вышли из совместной игры.");
+    ui::TheChat().AddSystem(TR("Вы вышли из совместной игры.", "You left the co-op game."));
 }
 
 namespace {
@@ -370,7 +378,8 @@ void Update() {
     switch (g_phase) {
         case Phase::StartingServer:
             if (!ServerProcessAlive()) {
-                Fail("Сервер не запустился. Возможно, порт уже занят. Подробности в файле coop\\server-data\\server.log.");
+                Fail(TR("Сервер не запустился. Возможно, порт уже занят. Подробности в файле coop\\server-data\\server.log.",
+                        "The server did not start. Perhaps the port is taken. See coop\\server-data\\server.log for details."));
                 break;
             }
             if (NowMs() - g_phaseTime > 400) {
@@ -390,7 +399,8 @@ void Update() {
             }
             break;
         case Phase::WaitingWorld:
-            if (NowMs() - g_phaseTime > 120000 && net.WorldProgress() < 0 && !g_prologueWait) Fail("Хост так и не прислал мир.");
+            if (NowMs() - g_phaseTime > 120000 && net.WorldProgress() < 0 && !g_prologueWait)
+                Fail(TR("Хост так и не прислал мир.", "The host never sent the world."));
             break;
         case Phase::LoadingWorld:
             break;
@@ -400,7 +410,8 @@ void Update() {
                 g_pendingWorld.clear();
                 SaveSpot();
                 SaveProfileNow();  // money, skills and look as they are now go on top of the new world
-                ui::TheChat().AddSystem("Хост продвинулся по сюжету. Загружаем его мир, вы останетесь на своём месте...");
+                ui::TheChat().AddSystem(TR("Хост продвинулся по сюжету. Загружаем его мир, вы останетесь на своём месте...",
+                                           "The host moved on in the story. Loading their world, you stay where you are..."));
                 LoadHostWorld(data);
             }
             break;
@@ -453,12 +464,14 @@ void OnHostInPrologue() {
     g_pendingWorld.clear();  // the old game's progress is no world to load any more
     g_hasSpot = false;
     g_phaseTime = NowMs();
-    ui::TheChat().AddSystem("Хост проходит пролог. Вы появитесь рядом с ним, когда CJ сядет на велосипед.");
+    ui::TheChat().AddSystem(TR("Хост проходит пролог. Вы появитесь рядом с ним, когда CJ сядет на велосипед.",
+                               "The host plays the prologue. You will appear next to them when CJ gets on the bike."));
 }
 
 void OnNewGameFromHost() {
     if (Net().IsHost()) return;
-    ui::TheChat().AddSystem("Хост прошёл пролог. Загружаемся, вы появитесь рядом с ним...");
+    ui::TheChat().AddSystem(TR("Хост прошёл пролог. Загружаемся, вы появитесь рядом с ним...",
+                               "The host finished the prologue. Loading, you will appear next to them..."));
     g_follower = true;
     g_prologueWait = false;
     core::StartNewGame();
@@ -490,13 +503,15 @@ void LoadHostWorld(const std::vector<uint8_t>& data) {
     EnsureDirectory(Cfg().coopDir + L"world");
     std::wstring path = PartnerWorldPath();
     if (!WriteFileBytes(path, data.data(), data.size())) {
-        Fail("Не удалось записать сохранение мира на диск.");
+        Fail(TR("Не удалось записать сохранение мира на диск.", "Could not write the world save to disk."));
         return;
     }
-    ui::TheChat().AddSystem(g_follower ? "Пролог позади. Загружаем мир хоста..." : "Мир хоста получен. Загружаем...");
+    ui::TheChat().AddSystem(g_follower ? TR("Пролог позади. Загружаем мир хоста...", "The prologue is over. Loading the host's world...")
+                                       : TR("Мир хоста получен. Загружаем...", "Got the host's world. Loading..."));
     g_follower = g_prologueWait = false;
     if (!core::LoadSaveFile(path)) {
-        Fail("Мир хоста не загрузился. Скорее всего, у вас разные версии игры или модов.");
+        Fail(TR("Мир хоста не загрузился. Скорее всего, у вас разные версии игры или модов.",
+                "The host's world did not load. Most likely your game or mod versions differ."));
         return;
     }
     SetPhase(Phase::LoadingWorld);

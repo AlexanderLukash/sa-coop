@@ -53,7 +53,7 @@ void RefreshSlots() {
     flow::SaveSlotInfo fresh;
     fresh.slot = -1;
     fresh.exists = true;
-    fresh.title = "Новая игра";
+    fresh.title = TR("Новая игра", "New game");
     g_slots.push_back(fresh);
     g_slotsTime = NowMs();
 }
@@ -79,7 +79,8 @@ void LoadFields() {
 bool ApplyNick() {
     std::string nick = SanitizeNickname(Narrow(g_nick));
     if (nick.size() < 2) {
-        g_formError = "В нике должно быть от 2 до 20 символов (буквы, цифры, знаки _-.[]).";
+        g_formError = TR("В нике должно быть от 2 до 20 символов (буквы, цифры, знаки _-.[]).",
+                         "A nickname needs 2 to 20 characters (letters, digits, _-.[]).");
         w::SetFocus("nick");
         return false;
     }
@@ -135,7 +136,7 @@ void RenderConnectMenu() {
     float lh = g.LineHeight(FONT_NORMAL), sh = g.LineHeight(FONT_SMALL), mh = g.LineHeight(FONT_MENU),
           ch = g.LineHeight(FONT_MENU_SMALL), bh = g.LineHeight(FONT_BIG);
     float rowH = lh + 14 * s;
-    float W = 820 * s, H = 640 * s;
+    float W = 820 * s, H = 690 * s;
     float x = (g.Width() - W) * 0.5f, y = (g.Height() - H) * 0.5f;
     float cx = x + 52 * s, cw = W - 104 * s;
     float room = mh * 1.6f;  // space for the pointer left of a menu item
@@ -147,7 +148,21 @@ void RenderConnectMenu() {
     g.Rect(0, 0, g.Width(), g.Height(), 0x99000000);
     w::BeginFrame();
     float cy = w::Panel(x, y, W, H, "SA:COOP") + 8 * s;
-    g.Text(FONT_MENU_SMALL, x + W - 52 * s, y + 36 * s, "версия " COOP_VERSION_STR, kSaSlate, TEXT_RIGHT);
+    float vx = x + W - 52 * s;
+    g.Text(FONT_MENU_SMALL, vx, y + 36 * s, "v" COOP_VERSION_STR, kSaSlate, TEXT_RIGHT);
+    // the language switch left of the version, the pointer at the active one; the choice is saved at once
+    float lx = vx - g.TextWidth(FONT_MENU_SMALL, "v" COOP_VERSION_STR) - 34 * s;
+    for (int en = 1; en >= 0; --en) {
+        const char* label = en ? "EN" : "RU";
+        float tw = g.TextWidth(FONT_MENU_SMALL, label);
+        lx -= tw;
+        if (w::Tab(en ? "lang1" : "lang0", lx - 6 * s, y + 32 * s, tw + 12 * s, ch + 8 * s, label, Cfg().english == (en != 0), true)) {
+            Cfg().english = en != 0;
+            flow::SaveConnectSettings();
+            RefreshSlots();
+        }
+        lx -= 52 * s;  // room for the pointer of EN
+    }
 
     auto caption = [&](float px, const std::string& text) { g.Text(FONT_MENU_SMALL, px, cy, text, kSaMuted); };
     // wrapped paragraph, advances cy
@@ -165,42 +180,45 @@ void RenderConnectMenu() {
     if (online) {
         // ---- in a session: who we are, the code for the friend, the players
         bool host = net.IsHost();
-        g.Text(FONT_BIG, cx, cy, host ? "Сервер запущен" : "Вы в игре", kSaBlue, TEXT_SHADOW);
+        g.Text(FONT_BIG, cx, cy, host ? TR("Сервер запущен", "Server running") : TR("Вы в игре", "Connected"), kSaBlue,
+               TEXT_SHADOW);
         cy += bh + 2 * s;
-        if (!host) para("Сервер «" + net.ServerName() + "»", kSaMuted, FONT_NORMAL);
+        if (!host) para(Format(TR("Сервер «%s»", "Server \"%s\""), net.ServerName().c_str()), kSaMuted, FONT_NORMAL);
         cy += 22 * s;
         if (host) {
-            caption(cx, "Код для друга");
+            caption(cx, TR("Код для друга", "Code for your friend"));
             cy += ch + 6 * s;
             // our wide capitals, not the game's pricedown: translations swap letters in that font
             // (a Russian build drew 2QMY as "2qmy")
             const std::string& code = net.InviteCode();
             if (code.empty()) {
-                g.Text(FONT_NORMAL, cx, cy, "Узнаём внешний адрес...", kSaMuted, TEXT_SHADOW);
+                g.Text(FONT_NORMAL, cx, cy, TR("Узнаём внешний адрес...", "Finding out the external address..."), kSaMuted, TEXT_SHADOW);
                 cy += bh;
             } else {
                 g.Text(FONT_BIG, cx, cy, code, kGold, TEXT_OUTLINE);
                 cy += bh + 2 * s;
                 bool copied = NowMs() - g_copiedMs < 1500;
-                if (item("copy", cx, cy, copied ? "Скопировано" : "Скопировать", true, copied)) CopyToClipboard(code);
+                if (item("copy", cx, cy, copied ? TR("Скопировано", "Copied") : TR("Скопировать", "Copy"), true, copied))
+                    CopyToClipboard(code);
                 cy += rowH;
             }
             cy += 20 * s;
         }
-        caption(cx, Format("Игроки: %d", 1 + (int)net.Peers().size()));
+        caption(cx, Format(TR("Игроки: %d", "Players: %d"), 1 + (int)net.Peers().size()));
         cy += ch + 8 * s;
         auto row = [&](const std::string& name, bool isHost, uint32_t ping, bool me) {
             float rh = lh + 14 * s;
             g.Rect(cx, cy, cw, rh, 0xFF090C10);
-            g.Text(FONT_NORMAL, cx + 14 * s, cy + 7 * s, me ? name + " (вы)" : name, me ? 0xFFFFFFFF : kText, TEXT_SHADOW);
-            g.Text(FONT_MENU_SMALL, cx + cw * 0.55f, cy + (rh - ch) * 0.5f, isHost ? "хост" : "напарник",
+            g.Text(FONT_NORMAL, cx + 14 * s, cy + 7 * s, me ? name + TR(" (вы)", " (you)") : name, me ? 0xFFFFFFFF : kText,
+                   TEXT_SHADOW);
+            g.Text(FONT_MENU_SMALL, cx + cw * 0.55f, cy + (rh - ch) * 0.5f, isHost ? TR("хост", "host") : TR("напарник", "partner"),
                    isHost ? kSaBlue : kSaGreen);
-            g.Text(FONT_SMALL, cx + cw - 14 * s, cy + (rh - sh) * 0.5f, Format("%u мс", ping), kSaMuted, TEXT_RIGHT);
+            g.Text(FONT_SMALL, cx + cw - 14 * s, cy + (rh - sh) * 0.5f, Format(TR("%u мс", "%u ms"), ping), kSaMuted, TEXT_RIGHT);
             cy += rh + 4 * s;
         };
         row(Cfg().nickname, host, net.Rtt(), true);
         for (auto& [id, p] : net.Peers()) row(p.name, p.isHost, p.ping, false);
-        if (host && net.Peers().empty()) para("Ждём друга...", kSaMuted);
+        if (host && net.Peers().empty()) para(TR("Ждём друга...", "Waiting for your friend..."), kSaMuted);
     } else if (busy) {
         // ---- connecting / starting / loading, in the middle of the body
         float barH = 6 * s;
@@ -220,14 +238,16 @@ void RenderConnectMenu() {
         nat::Endpoint ep;
         uint8_t key = 0;
         if (phase == flow::Phase::Connecting && nat::ParseInviteCode(Trim(Narrow(g_addr)), ep, key))
-            para("Подключение по коду может занять до 20 секунд.", kSaMuted, FONT_SMALL, true);
+            para(TR("Подключение по коду может занять до 20 секунд.", "Connecting by code can take up to 20 seconds."), kSaMuted,
+                 FONT_SMALL, true);
         if (phase == flow::Phase::WaitingWorld && p < 0)
-            para("Хост сохраняет мир. Скоро он загрузится у вас.", kSaMuted, FONT_SMALL, true);
+            para(TR("Хост сохраняет мир. Скоро он загрузится у вас.", "The host is saving the world. It will load for you soon."),
+                 kSaMuted, FONT_SMALL, true);
     } else {
         // ---- the form: the tabs are menu items, the active one carries the pointer
         float tx = cx;
         for (int t = 0; t < 2; ++t) {
-            const char* label = t ? "Создать игру" : "Подключиться";
+            const char* label = t ? TR("Создать игру", "Host a game") : TR("Подключиться", "Join a game");
             float tw = g.TextWidth(FONT_MENU, label);
             if (w::Tab(t ? "tab1" : "tab0", tx - room, cy, tw + 2 * room, rowH, label, g_tab == t)) {
                 g_tab = t;
@@ -239,27 +259,29 @@ void RenderConnectMenu() {
         g.Rect(cx, cy, cw, std::max(1.0f, s), kSaLine);
         cy += 16 * s;
 
-        caption(cx, "Ник");
+        caption(cx, TR("Ник", "Nickname"));
         cy += ch + 6 * s;
         bool enter = w::TextBox("nick", cx, cy, 320 * s, rowH, g_nick, 20);
         cy += rowH + 14 * s;
 
         int hostSlot = 0;
         if (g_tab == 0) {
-            caption(cx, "Код приглашения или IP-адрес");
+            caption(cx, TR("Код приглашения или IP-адрес", "Invite code or IP address"));
             cy += ch + 6 * s;
-            float pw = g.TextWidth(FONT_MENU, "Вставить") + room * 1.9f;
-            enter |= w::TextBox("addr", cx, cy, cw - pw, rowH, g_addr, 64, false, false, "например, 2QMY-7KAP-JR8Y");
-            if (item("paste", cx + cw - g.TextWidth(FONT_MENU, "Вставить"), cy, "Вставить")) {
+            const char* paste = TR("Вставить", "Paste");
+            float pw = g.TextWidth(FONT_MENU, paste) + room * 1.9f;
+            enter |= w::TextBox("addr", cx, cy, cw - pw, rowH, g_addr, 64, false, false,
+                                TR("например, 2QMY-7KAP-JR8Y", "for example, 2QMY-7KAP-JR8Y"));
+            if (item("paste", cx + cw - g.TextWidth(FONT_MENU, paste), cy, paste)) {
                 std::wstring clip = Widen(Trim(Narrow(w::ClipboardText())));
                 if (!clip.empty()) g_addr = clip.substr(0, 64);
             }
         } else {
-            caption(cx, "Сохранение");
+            caption(cx, TR("Сохранение", "Save"));
             cy += ch + 6 * s;
             if (inGame) {
                 g.Rect(cx, cy, cw, rowH, 0xFF090C10);
-                g.Text(FONT_NORMAL, cx + 12 * s, cy + (rowH - lh) * 0.5f, "Текущая игра", kText, TEXT_SHADOW);
+                g.Text(FONT_NORMAL, cx + 12 * s, cy + (rowH - lh) * 0.5f, TR("Текущая игра", "Current game"), kText, TEXT_SHADOW);
             } else {
                 int d = w::Selector("slot", cx, cy, cw, rowH, g_slots[g_slotIndex].title);
                 if (d) g_slotIndex = (g_slotIndex + d + (int)g_slots.size()) % (int)g_slots.size();
@@ -268,16 +290,21 @@ void RenderConnectMenu() {
         }
         cy += rowH + 14 * s;
 
-        caption(cx, "Порт");
-        caption(cx + 170 * s, "Пароль");
+        caption(cx, TR("Порт", "Port"));
+        caption(cx + 170 * s, TR("Пароль", "Password"));
         cy += ch + 6 * s;
         enter |= w::TextBox("port", cx, cy, 150 * s, rowH, g_port, 5, false, true);
-        enter |= w::TextBox("pass", cx + 170 * s, cy, cw - 170 * s, rowH, g_password, 32, true, false, "необязательно");
+        enter |= w::TextBox("pass", cx + 170 * s, cy, cw - 170 * s, rowH, g_password, 32, true, false, TR("необязательно", "optional"));
         cy += rowH + 22 * s;
+        if (g_tab == 1) {  // the host decides for the whole game; saved with the other settings when the server starts
+            w::Checkbox("ff", cx, cy, TR("Урон по напарнику", "Friendly fire"), Cfg().friendlyFire);
+            cy += lh * 0.8f + 22 * s;
+        }
 
         // the main action: a big menu item in the middle, lit like the selected entry of the game's menus
         bool can = g_tab == 0 ? !Trim(Narrow(g_addr)).empty() : inGame || hostSlot != 0;
-        if ((w::Button("go", cx, cy, cw, bh + 10 * s, g_tab == 0 ? "Подключиться" : "Создать сервер", can, true, true) ||
+        if ((w::Button("go", cx, cy, cw, bh + 10 * s, g_tab == 0 ? TR("Подключиться", "Connect") : TR("Создать сервер", "Start the server"),
+                       can, true, true) ||
              (enter && can)) &&
             ApplyNick()) {
             if (g_tab == 0) flow::Join(Trim(Narrow(g_addr)), PortValue(), Narrow(g_password));
@@ -287,22 +314,30 @@ void RenderConnectMenu() {
 
         std::string error = !g_formError.empty() ? g_formError : flow::LastError();
         if (!error.empty()) para(error, kSaRed, FONT_NORMAL, true);
-        else if (g_tab == 0 && inGame) para("Текущая игра закроется. Вместо неё загрузится мир друга.", kSaMuted, FONT_SMALL, true);
-        else if (g_tab == 1 && !inGame && !hostSlot) para("В этом слоте нет сохранения.", kSaMuted, FONT_SMALL, true);
+        else if (g_tab == 0 && inGame)
+            para(TR("Текущая игра закроется. Вместо неё загрузится мир друга.",
+                    "Your current game will close, and your friend's world will load instead."),
+                 kSaMuted, FONT_SMALL, true);
+        else if (g_tab == 1 && !inGame && !hostSlot)
+            para(TR("В этом слоте нет сохранения.", "This slot has no save."), kSaMuted, FONT_SMALL, true);
         else if (g_tab == 1 && !inGame && hostSlot < 0)
-            para("Пролог вы пройдёте сами, а друг появится рядом, когда CJ сядет на велосипед.", kSaMuted, FONT_SMALL, true);
+            para(TR("Пролог вы пройдёте сами, а друг появится рядом, когда CJ сядет на велосипед.",
+                    "You play the prologue alone, and your friend appears next to you when CJ gets on the bike."),
+                 kSaMuted, FONT_SMALL, true);
     }
 
     // ---- footer: like "Back" on the game's pages
     g.Rect(cx, bodyBottom, cw, std::max(1.0f, s), kSaLine);
     if (online || busy) {
-        if (item("leave", cx, by, online ? "Отключиться" : "Отмена")) flow::Leave();
+        if (item("leave", cx, by, online ? TR("Отключиться", "Disconnect") : TR("Отмена", "Cancel"))) flow::Leave();
     }
-    std::string close = online || busy || inGame ? "Закрыть" : "Одиночная игра";
+    std::string close = online || busy || inGame ? TR("Закрыть", "Close") : TR("Одиночная игра", "Single player");
     if (item("close", cx + cw - g.TextWidth(FONT_MENU, close), by, close)) SetConnectMenuVisible(false);
     g.Text(FONT_SMALL, cx, fy,
-           "{ACCBF1}F9{8D9CAD}  окно     {ACCBF1}T{8D9CAD}  чат     {ACCBF1}B{8D9CAD}  голос     "
-           "{ACCBF1}G{8D9CAD}  сесть пассажиром     {ACCBF1}F2{8D9CAD}  игроки",
+           TR("{ACCBF1}F9{8D9CAD}  окно     {ACCBF1}T{8D9CAD}  чат     {ACCBF1}B{8D9CAD}  голос     "
+              "{ACCBF1}G{8D9CAD}  сесть пассажиром     {ACCBF1}F2{8D9CAD}  игроки",
+              "{ACCBF1}F9{8D9CAD}  window     {ACCBF1}T{8D9CAD}  chat     {ACCBF1}B{8D9CAD}  voice     "
+              "{ACCBF1}G{8D9CAD}  passenger     {ACCBF1}F2{8D9CAD}  players"),
            kSaMuted, TEXT_SHADOW);
     w::EndFrame();
     w::DrawCursor();

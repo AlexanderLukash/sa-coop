@@ -3,6 +3,7 @@
 #include "common/config/version/Version.h"
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
+#include "shared/config/Config.h"
 #include "shared/ui/chat/Chat.h"
 #include "shared/ui/renderer/Renderer.h"
 
@@ -28,7 +29,7 @@ void Session::Connect(const std::string& host, uint16_t port, const std::string&
     m_state = State::Connecting;
     if (!m_net.Start(host, port)) {
         m_state = State::Failed;
-        m_failReason = "Не удалось запустить сеть.";
+        m_failReason = TR("Не удалось запустить сеть.", "Could not start the network.");
     }
 }
 
@@ -52,7 +53,7 @@ const PeerInfo* Session::Peer(uint8_t id) const {
 std::string Session::PeerName(uint8_t id) const {
     if (id == m_myId) return m_nick;
     auto* p = Peer(id);
-    return p ? p->name : Format("игрок %d", id);
+    return p ? p->name : Format(TR("игрок %d", "player %d"), id);
 }
 
 void Session::SendChat(const std::string& text) {
@@ -95,10 +96,12 @@ void Session::Update() {
         bool wasOnline = m_state == State::Online;
         if (m_state == State::Connecting) {
             m_state = State::Failed;
-            if (m_failReason.empty()) m_failReason = "Сервер не отвечает. Проверьте адрес, порт и брандмауэр.";
+            if (m_failReason.empty())
+                m_failReason = TR("Сервер не отвечает. Проверьте адрес, порт и брандмауэр.",
+                                  "The server does not answer. Check the address, the port and the firewall.");
         } else if (m_state == State::Online) {
             m_state = State::Failed;
-            if (m_failReason.empty()) m_failReason = "Соединение с сервером потеряно.";
+            if (m_failReason.empty()) m_failReason = TR("Соединение с сервером потеряно.", "Lost connection to the server.");
         }
         m_net.Stop();
         m_peers.clear();
@@ -115,20 +118,28 @@ void Session::HandleService(uint8_t id, Reader& r) {
             m_myId = w.yourId;
             m_hostId = w.hostId;
             m_serverName = w.serverName;
+            m_friendlyFire = w.friendlyFire;
             m_peers.clear();
             for (auto& p : w.players) m_peers[p.id] = PeerInfo{p.id, p.name, p.isHost, 0};
             m_state = State::Online;
             LOGI("Вошли на сервер \"%s\" как игрок %d, хост: %d", m_serverName.c_str(), m_myId, m_hostId);
-            chat.AddSystem(IsHost() ? "Сервер запущен. Вы хост." : Format("Вы подключились к серверу «%s».", m_serverName.c_str()));
-            if (!w.motd.empty()) chat.Add(w.motd, 0xFFA0C8FF);
+            chat.AddSystem(IsHost() ? TR("Сервер запущен. Вы хост.", "The server is up. You are the host.")
+                                    : Format(TR("Вы подключились к серверу «%s».", "You joined the server \"%s\"."),
+                                             m_serverName.c_str()));
+            if (!w.motd.empty()) chat.Add(Cfg().english && !w.motdEn.empty() ? w.motdEn : w.motd, 0xFFA0C8FF);
+            if (m_friendlyFire)
+                chat.AddSystem(TR("Урон по напарнику включён: вы можете ранить и убить друг друга.",
+                                  "Friendly fire is on: you can hurt and kill each other."));
             if (onOnline) onOnline();
             break;
         }
         case S_REJECT:
         case S_KICKED: {
-            std::string reason = r.Str();
-            if (id == S_REJECT) m_failReason = "Не удалось войти: " + reason + ".";
-            else m_failReason = reason.empty() ? "Вас выгнали с сервера." : "Вас выгнали с сервера: " + reason + ".";
+            std::string reason = r.Str(), en = r.Str();
+            if (Cfg().english && !en.empty()) reason = en;
+            if (id == S_REJECT) m_failReason = Format(TR("Не удалось войти: %s.", "Could not join: %s."), reason.c_str());
+            else if (reason.empty()) m_failReason = TR("Вас выгнали с сервера.", "You were kicked from the server.");
+            else m_failReason = Format(TR("Вас выгнали с сервера: %s.", "You were kicked from the server: %s."), reason.c_str());
             LOGW("%s", m_failReason.c_str());
             // shown once: a failed connect by the flow, a kick by onOffline when the connection closes
             break;
@@ -159,10 +170,10 @@ void Session::HandleService(uint8_t id, Reader& r) {
         case S_CHAT: {
             uint8_t from = r.U8();
             uint32_t rgba = r.U32();
-            std::string text = r.Str();
+            std::string text = r.Str(), en = r.Str();
             if (!r.Ok()) break;
             if (from == kServerId) {
-                chat.Add(text, ui::RgbaToArgb(rgba));
+                chat.Add(Cfg().english && !en.empty() ? en : text, ui::RgbaToArgb(rgba));
             } else {
                 uint32_t nameColor = from == m_hostId ? 0xFF64B4FF : 0xFF78DC78;
                 char hex[16];
@@ -207,7 +218,7 @@ void Session::HandleService(uint8_t id, Reader& r) {
             uint32_t crc = Crc32(m_world.data(), m_world.size());
             if (crc != m_worldCrc) {
                 LOGE("Сохранение мира повреждено при передаче (crc %08X != %08X)", crc, m_worldCrc);
-                chat.AddError("Мир пришёл с ошибкой. Запрашиваем ещё раз...");
+                chat.AddError(TR("Мир пришёл с ошибкой. Запрашиваем ещё раз...", "The world arrived damaged. Asking for it again..."));
                 Writer w(C_WORLD_REQUEST);
                 Send(CH_BULK, w);
             } else if (onWorld) {

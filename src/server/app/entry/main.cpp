@@ -1,7 +1,7 @@
 // coop-server.exe — SA:COOP relay server.
 //
 //   coop-server.exe [--port N] [--name "..."] [--password X] [--world <save file> | --new-game] [--host <nick>]
-//                   [--config server.ini] [--data <dir>]
+//                   [--friendly-fire 0|1] [--config server.ini] [--data <dir>]
 #include <windows.h>
 
 #include <cstdio>
@@ -40,6 +40,8 @@ static void WriteDefaultConfig(const std::wstring& path) {
         "; Ник игрока, который всегда будет хостом. Если пусто, хостом становится тот, кто зашёл первым.\r\n"
         "host =\r\n"
         "motd = Добро пожаловать! Чтобы увидеть список команд, напишите /help.\r\n"
+        "; Поставьте 1, чтобы игроки могли ранить и убивать друг друга.\r\n"
+        "friendly_fire = 0\r\n"
         "; Игра через интернет (UPnP, код приглашения, пробивка NAT). Если поставить 0, останется только локальная сеть.\r\n"
         "internet = 1\r\n"
         "; Ретранслятор на случай, если друг не может подключиться по коду.\r\n"
@@ -78,6 +80,7 @@ int wmain(int argc, wchar_t** argv) {
     cfg.maxPlayers = ini.GetInt("server", "max_players", 2);
     cfg.hostName = ini.Get("server", "host", "");
     cfg.motd = ini.Get("server", "motd", cfg.motd);
+    cfg.friendlyFire = ini.GetBool("server", "friendly_fire", false);
     cfg.internet = ini.GetBool("server", "internet", true);
     cfg.turn = Trim(ini.Get("server", "turn", ""));
     cfg.dataDir = dataDir;
@@ -92,6 +95,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--max") cfg.maxPlayers = atoi(next().c_str());
         else if (a == L"--world" && i + 1 < argc) cfg.worldFile = argv[++i];
         else if (a == L"--new-game") cfg.newGame = true;
+        else if (a == L"--friendly-fire") cfg.friendlyFire = next() == "1";
         else if (a == L"--config" || a == L"--data") ++i;
     }
 

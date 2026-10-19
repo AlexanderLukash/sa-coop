@@ -157,11 +157,12 @@ void HandleChatSubmit(const std::string& text) {
         for (auto* m : Modules())
             if (m->OnCommand(cmd, args)) return;
         if (Net().Online()) Net().SendChat(text);
-        else ui::TheChat().AddError("Вы не подключены к серверу.");
+        else ui::TheChat().AddError(TR("Вы не подключены к серверу.", "You are not connected to a server."));
         return;
     }
     if (Net().Online()) Net().SendChat(text);
-    else ui::TheChat().AddError("Вы не подключены. Окно SA:COOP открывается клавишей F9.");
+    else ui::TheChat().AddError(TR("Вы не подключены. Окно SA:COOP открывается клавишей F9.",
+                                   "You are not connected. Press F9 to open the SA:COOP window."));
 }
 
 void CommonFrame() {
@@ -214,12 +215,15 @@ std::wstring CoopDirFromModule(void* hModule) {
 }
 
 void WriteDefaultConfig(const std::wstring& path) {
-    const char* text =
-        "; Настройки SA:COOP (файл в кодировке UTF-8). Ник, адрес и пароль проще менять в игре, в окне F9.\r\n"
-        "\r\n"
-        "[player]\r\n"
-        "; Ник: до 20 символов (буквы, цифры, знаки _-.[])\r\n"
-        "name = Игрок\r\n"
+    bool ru = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_RUSSIAN;  // a new install speaks the language of Windows
+    std::string text =
+        std::string("; Настройки SA:COOP (файл в кодировке UTF-8). Ник, адрес и пароль проще менять в игре, в окне F9.\r\n"
+                    "\r\n"
+                    "[player]\r\n"
+                    "; Ник: до 20 символов (буквы, цифры, знаки _-.[])\r\n") +
+        (ru ? "name = Игрок\r\n" : "name = Player\r\n") +
+        "; Язык окна F9, чата и подсказок: ru или en. Переключается и в окне F9.\r\n"
+        "language = " + (ru ? "ru" : "en") + "\r\n"
         "\r\n"
         "[connect]\r\n"
         "; Поставьте 1, чтобы подключаться сразу при запуске игры, без окна F9.\r\n"
@@ -232,6 +236,8 @@ void WriteDefaultConfig(const std::wstring& path) {
         "password =\r\n"
         "; Для хоста: номер сохранения (1–8), которое загрузится при автозапуске. Если 0, сохранение выбирается в меню.\r\n"
         "load_slot = 0\r\n"
+        "; Для хоста: поставьте 1, чтобы игроки могли ранить и убивать друг друга. Это галочка в окне F9.\r\n"
+        "friendly_fire = 0\r\n"
         "\r\n"
         "[game]\r\n"
         "; Поставьте 1, чтобы играть в окне.\r\n"
@@ -264,7 +270,7 @@ void WriteDefaultConfig(const std::wstring& path) {
         "; Отладочная информация на экране и подробный лог. Включайте, если вас попросили прислать лог.\r\n"
         "overlay = 0\r\n"
         "verbose_log = 0\r\n";
-    WriteFileBytes(path, text, strlen(text));
+    WriteFileBytes(path, text.data(), text.size());
 }
 
 }  // namespace
@@ -470,10 +476,14 @@ void Init(void* hModule) {
     if (*(uint32_t*)0x82457C != 0x94BF) {
         LOGE("Unsupported gta_sa.exe (size %u). SA:COOP requires GTA SA 1.0 US.", (unsigned)fad.nFileSizeLow);
         MessageBoxW(nullptr,
-                    L"SA:COOP работает только с GTA San Andreas версии 1.0 US.\n"
-                    L"Если игра из Steam или Rockstar Games Launcher, откатите её до 1.0 US\n"
-                    L"программой GTA SA Downgrader.\n\n"
-                    L"Пока мод выключен.",
+                    TR(L"SA:COOP работает только с GTA San Andreas версии 1.0 US.\n"
+                       L"Если игра из Steam или Rockstar Games Launcher, откатите её до 1.0 US\n"
+                       L"программой GTA SA Downgrader.\n\n"
+                       L"Пока мод выключен.",
+                       L"SA:COOP works only with GTA San Andreas 1.0 US.\n"
+                       L"If your game comes from Steam or the Rockstar Games Launcher, downgrade it to 1.0 US\n"
+                       L"with GTA SA Downgrader.\n\n"
+                       L"The mod stays off for now."),
                     L"SA:COOP", MB_ICONWARNING);
         return;
     }
@@ -507,7 +517,7 @@ void Init(void* hModule) {
         for (auto* m : Modules()) m->OnSessionEnd();
     };
     net.onPeerJoin = [](uint8_t id) {
-        ui::TheChat().AddSystem(Net().PeerName(id) + " подключается...");
+        ui::TheChat().AddSystem(Format(TR("%s подключается...", "%s is connecting..."), Net().PeerName(id).c_str()));
         for (auto* m : Modules()) m->OnPeerJoin(id);
     };
     net.onPeerLeave = [](uint8_t id) {
@@ -521,7 +531,10 @@ void Init(void* hModule) {
     net.onWorldNewGame = [] { flow::OnNewGameFromHost(); };
     net.onWorldWait = [] { flow::OnHostInPrologue(); };
     net.onInvite = [](const std::string& code) {
-        if (Net().IsHost()) ui::TheChat().AddSystem("Код для друга: " + code + ". Скопировать его можно в окне F9.");
+        if (Net().IsHost())
+            ui::TheChat().AddSystem(Format(TR("Код для друга: %s. Скопировать его можно в окне F9.",
+                                              "Code for your friend: %s. You can copy it in the F9 window."),
+                                           code.c_str()));
     };
 
     // auto-connect (launcher / test setups) is performed on the first main-menu frame:

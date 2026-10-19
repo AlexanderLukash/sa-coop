@@ -17,6 +17,7 @@
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
 #include "shared/api/net-session/Session.h"
+#include "shared/config/Config.h"
 #include "shared/game/Game.h"
 #include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
@@ -139,7 +140,10 @@ public:
                 continue;
             }  // a story purchase of the host comes to the partner with the host's world
             LOGI("Property %d bought by player %d: %s", k, from, applied ? "applied" : "not applied here");
-            if (applied) ui::TheChat().AddSystem("Недвижимость, купленная " + Net().PeerName(from) + ", теперь есть и у вас.");
+            if (applied)
+                ui::TheChat().AddSystem(Format(TR("Недвижимость, купленная %s, теперь есть и у вас.",
+                                                  "The property %s bought is yours too now."),
+                                               Net().PeerName(from).c_str()));
             it = g_pending.erase(it);
         }
     }

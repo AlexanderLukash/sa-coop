@@ -37,6 +37,7 @@ public:
     uint8_t HostId() const { return m_hostId; }
     const std::string& FailReason() const { return m_failReason; }
     const std::string& ServerName() const { return m_serverName; }
+    bool FriendlyFire() const { return Online() && m_friendlyFire; }  // the host let the players hurt each other
     const std::map<uint8_t, PeerInfo>& Peers() const { return m_peers; }
     const PeerInfo* Peer(uint8_t id) const;
     std::string PeerName(uint8_t id) const;
@@ -76,6 +77,7 @@ private:
     bool m_wantsHost = false;
     uint8_t m_myId = 255, m_hostId = 255;
     std::string m_serverName;
+    bool m_friendlyFire = false;
     std::string m_inviteCode;
     std::map<uint8_t, PeerInfo> m_peers;
     Handler m_handlers[256] = {};
