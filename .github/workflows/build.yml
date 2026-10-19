@@ -1,5 +1,5 @@
 # Builds SA:COOP on every push and pull request and keeps the archive as an artifact.
-# A tag like v0.2.0 also publishes the archive as a GitHub release.
+# A tag like v0.2.0 also publishes the archive as a GitHub release, with the text of .github/release-notes.md.
 name: build
 
 on:
@@ -37,6 +37,8 @@ jobs:
 
       - name: Check that every text of the game has its English one
         run: python tools/i18n_check.py
+        env:
+          PYTHONIOENCODING: utf-8  # it prints the Russian texts it finds
 
       - name: Build the archive
         run: python tools/build.py dist
@@ -52,11 +54,4 @@ jobs:
         with:
           name: SA:COOP ${{ github.ref_name }}
           files: dist/SA-COOP.zip
-          body: |
-            Мод для GTA San Andreas 1.0 US, с которым сюжет можно пройти вдвоём по сети.
-
-            Распакуйте `SA-COOP.zip` в папку игры, чтобы `coop.asi`, `install.bat` и папка `coop` оказались рядом
-            с `gta_sa.exe`, и запустите `install.bat`. Подробная инструкция лежит в архиве в файле `Инструкция.txt`,
-            а описание мода в README репозитория.
-
-            Хосту и напарнику нужна одна и та же версия мода.
+          body_path: .github/release-notes.md
