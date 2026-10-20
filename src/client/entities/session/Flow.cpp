@@ -2,8 +2,10 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 
 #include "common/api/nat-traversal/NatTraversal.h"
 #include "common/api/protocol/Protocol.h"
@@ -499,7 +501,55 @@ bool TakeSavedSpot(SavedSpot& out) {
 
 
 namespace {
+#pragma pack(push, 1)
+struct ScmSizes {  // the story's sizes in main.scm's header and in a save (CTheScripts::Save), in this order
+    uint32_t main, largestMission;
+    uint16_t missions, exclusiveMissions;
+    uint32_t largestMissionLocals;
+};
+#pragma pack(pop)
+
+// The game puts a save's running scripts at their places in main.scm and never checks that the save comes from the same
+// main.scm (CTheScripts::Load reads the sizes and drops them): a save of another main.scm crashes it in the first
+// scripts it runs. The save must have this game's sizes: those of its loaded main.scm, or of one it may load.
+bool SameMainScm(const std::vector<uint8_t>& save) {
+    auto inSave = [&](const ScmSizes& s) {
+        auto b = (const uint8_t*)&s;
+        return std::search(save.begin(), save.end(), b, b + sizeof s) != save.end();
+    };
+    if (game::Ref<uint32_t>(0xA444C4))  // CTheScripts::MainScriptSize: the game has loaded its main.scm
+        return inSave({game::Ref<uint32_t>(0xA444C4), game::Ref<uint32_t>(0xA444C0), game::Ref<uint16_t>(0xA444BC),
+                       game::Ref<uint16_t>(0xA444B8), game::Ref<uint32_t>(0xA444B4)});
+    std::vector<std::wstring> files = {Cfg().gameDir + L"data\\script\\main.scm"};
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(Cfg().gameDir + L"modloader", ec), end; !ec && it != end; it.increment(ec))
+        if (!_wcsicmp(it->path().filename().c_str(), L"main.scm")) files.push_back(it->path().wstring());
+    bool known = false;
+    for (const auto& f : files) {
+        std::vector<uint8_t> scm;
+        size_t pos = 0;  // main.scm opens with GOTOs over its variables and its models, to the missions' segment
+        bool ok = ReadFileBytes(f, scm);
+        for (int i = 0; i < 2 && ok; ++i) {
+            ok = pos + 7 <= scm.size() && !memcmp(&scm[pos], "\x02\x00\x01", 3);
+            if (ok) pos = *(const uint32_t*)&scm[pos + 3];
+        }
+        ScmSizes s;
+        if (!ok || pos + 8 + sizeof s > scm.size()) continue;
+        memcpy(&s, &scm[pos + 8], sizeof s);  // past the segment's GOTO and its number
+        if (inSave(s)) return true;
+        known = true;
+    }
+    return !known;
+}
+
 void LoadHostWorld(const std::vector<uint8_t>& data) {
+    if (!SameMainScm(data)) {
+        Fail(TR("Мир хоста не загрузится, потому что ваш файл data\\script\\main.scm не такой, как у хоста. Нужны "
+                "одинаковые версия игры и моды, которые меняют сюжет.",
+                "The host's world cannot load because your data\\script\\main.scm differs from the host's. You both "
+                "need the same game version and the same mods that change the story."));
+        return;
+    }
     EnsureDirectory(Cfg().coopDir + L"world");
     std::wstring path = PartnerWorldPath();
     if (!WriteFileBytes(path, data.data(), data.size())) {

@@ -65,6 +65,16 @@ void __cdecl HookStartUserPause() {
     g_origStartUserPause();
 }
 
+// The menu stops the radio as it closes and as it leaves the audio page, counting on the pause: under it
+// CAERadioTrackManager::StopRadio keeps the car's radio playing. Unpaused it stopped it, and the radio stayed silent
+// until the player got in again. With the car's radio on the stop is skipped; on foot it still ends the page's preview.
+using StopRadioFn = void(__fastcall*)(void*, void*, void*, bool);
+StopRadioFn g_origMenuStopRadio = nullptr;
+void __fastcall HookMenuStopRadio(void* audio, void* edx, void* settings, bool duringPause) {
+    if (Cfg().noPauseMenu && core::IsInCoopSession() && game::Call<0x4E9800, bool>()) return;  // IsVehicleRadioActive
+    g_origMenuStopRadio(audio, edx, settings, duringPause);
+}
+
 // ---------------------------------------------------------------- video mode / windowed / intro
 struct RwVideoMode {
     int width, height, depth, flags, refRate, format;
@@ -508,6 +518,8 @@ void Apply() {
     mem::RedirectCallFn(0x53E9F1, &HookIdleMouseSetPos, &g_origIdleMouseSetPos);  // Idle -> RsMouseSetPos
     mem::HookFn(0x53F3C0, &HookUpdateMouse, &g_origUpdateMouse, "CPad::UpdateMouse");
     mem::HookFn(0x561AF0, &HookStartUserPause, &g_origStartUserPause, "CTimer::StartUserPause");
+    mem::RedirectCallFn(0x576C55, &HookMenuStopRadio, &g_origMenuStopRadio);  // CMenuManager::CheckForMenuClosing
+    mem::RedirectCallFn(0x5737A5, &HookMenuStopRadio, &g_origMenuStopRadio);  // CMenuManager::SwitchToNewScreen
     mem::HookFn(0x746190, &HookSelectDevice, &g_origSelectDevice, "psSelectDevice");
     if (cfg.windowed) {
         InstallWindowedMode();

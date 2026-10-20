@@ -1,9 +1,10 @@
-// Fires both games share. Fires on the ground from explosions and molotovs start in each game by themselves (those
-// are synced), so only these travel: a fire on a player, a ped or a vehicle this game owns (shot with a molotov,
+// Fires, explosions, projectiles and water cannons both games share. Fires on the ground from explosions and molotovs start in each
+// game by themselves (those are synced, see below), so only these travel: a fire on a player, a ped or a vehicle this game owns (shot with a molotov,
 // a flamethrower, a burning car), and the host's mission fires (START_SCRIPT_FIRE). The other game lights the same
 // fire on its copy of the entity, or at the spot: such a fire never spreads, never burns the copy (copies are
 // fireproof, the proof is lifted only to light it) and goes out when the owner's fire does. A copy this game's player
 // puts out (water, an extinguisher) puts the owner's fire out too: the partner helps with the host's firefighting.
+#include <cmath>
 #include <map>
 
 #include "common/api/protocol/Protocol.h"
@@ -16,6 +17,7 @@
 #include "shared/api/net-session/Session.h"
 #include "shared/game/Game.h"
 #include "shared/lib/core/Core.h"
+#include "shared/lib/memory/Memory.h"
 
 namespace coop {
 
@@ -176,11 +178,224 @@ void PutOutOwn(uint16_t id) {
         }
 }
 
+// ---------------------------------------------------------------- explosions
+// A blast (a grenade, a rocket, a Rhino's shell, a bomb, a mission's explosion) goes off in the game of whoever set it
+// off, and the other game sets off the same one in the name of its copy of the creator: its damage there falls on
+// what that game owns (Damage.cpp). A blast here of the other side's copy (a rocket or a grenade its copy of the other
+// player fired) is left out, the real one comes. Cars, boats, planes and objects blow up in each game by their own
+// sync, and a molotov's burst lights the fires each game has.
+bool IsBlast(int type) {  // eExplosionType: GRENADE, ROCKET, WEAK_ROCKET, MINE, TANK_FIRE, SMALL
+    return type == 0 || type == 2 || type == 3 || type == 8 || type == 10 || type == 11;
+}
+
+// the other player, its car, or a ped or a car of the other game (a copy here)
+bool OtherSide(CEntity* e) {
+    if (!e) return false;
+    if (e->IsPed()) {
+        NetPed* np = Peds::Instance().Find((CPed*)e);
+        return Players::Instance().FindByPed((CPed*)e) || (np && np->owner != Net().MyId());
+    }
+    NetVehicle* nv = e->Type() == ENTITY_TYPE_VEHICLE ? Vehicles::Instance().Find((CVehicle*)e) : nullptr;
+    return nv && Vehicles::Instance().IsMirror(*nv);
+}
+
+using AddExplosionFn = void(__cdecl*)(CEntity*, CEntity*, int, CVector, uint32_t, uint8_t, float, uint8_t);
+AddExplosionFn g_origAddExplosion = nullptr;
+bool g_settingOff = false;  // a blast of the other game
+
+// CExplosion::AddExplosion(victim, creator, type, position, lifetime, sound, camera shake, visible)
+void __cdecl HookAddExplosion(CEntity* victim, CEntity* creator, int type, CVector pos, uint32_t lifetime, uint8_t sound,
+                              float shake, uint8_t visible) {
+    if (Net().Online() && core::IsPlayerReady() && IsBlast(type) && !g_settingOff) {
+        if (OtherSide(creator)) return;
+        uint8_t kind = ON_SPOT;
+        uint16_t id = 0;
+        if (!Describe(creator, kind, id)) kind = ON_SPOT, id = 0;  // nobody's, a SAM site's: on the spot
+        Writer w(proto::G_EXPLOSION);
+        w.U8(kind);
+        w.U16(id);
+        w.U8((uint8_t)type);
+        w.Vec({pos.x, pos.y, pos.z});
+        w.U32(lifetime);
+        w.U8(sound);
+        w.F32(shake);
+        w.U8(visible);
+        Net().Send(proto::CH_RELIABLE, w);
+    }
+    g_origAddExplosion(victim, creator, type, pos, lifetime, sound, shake, visible);
+}
+
+void HandleExplosion(uint8_t from, Reader& r) {
+    uint8_t kind = r.U8();
+    uint16_t id = r.U16();
+    int type = r.U8();
+    Vec3 p = r.Vec();
+    uint32_t lifetime = r.U32();
+    uint8_t sound = r.U8();
+    float shake = r.F32();
+    uint8_t visible = r.U8();
+    if (!r.Ok() || !core::IsPlayerReady() || !IsBlast(type)) return;
+    CEntity* creator = Resolve(kind, id);
+    if (kind != ON_SPOT && !creator) return;  // its creator is not here: far away, in another interior
+    g_settingOff = true;
+    g_origAddExplosion(nullptr, creator, type, CVector{p.x, p.y, p.z}, lifetime, sound, shake, visible);
+    g_settingOff = false;
+    LOGD("Explosion of player %d set off (type %d, by %d %04X)", from, type, kind, id);
+}
+
+// ---------------------------------------------------------------- projectiles
+// A grenade, a molotov, tear gas, a rocket, a bomb or a flare flies in the game that threw or fired it, and the other
+// game throws the same one from the same spot at the same speed in the name of its copy of the thrower, to be seen:
+// it goes off there without harm (a blast of the other side is left out, above) and the real blast comes. A projectile
+// here of the other side's copy (its copy of the other player throwing) is left out the same way. Satchel charges
+// stay in the game that planted them, the other one gets their blasts.
+constexpr uintptr_t kProjectileInfos = 0xC891A8;  // gaProjectileInfo[32], 0x24 bytes each, m_bActive at +0x10
+constexpr uintptr_t kProjectiles = 0xC89110;      // CProjectileInfo::ms_apProjectile[32]
+bool Thrown(int weapon) { return (weapon >= 16 && weapon <= 21) || weapon == 58; }  // GRENADE..FREEFALL_BOMB, FLARE
+
+uint32_t ActiveProjectiles() {
+    uint32_t mask = 0;
+    for (int i = 0; i < 32; ++i)
+        if (Ref<uint8_t>(kProjectileInfos + (uintptr_t)i * 0x24 + 0x10)) mask |= 1u << i;
+    return mask;
+}
+CPhysical* NewProjectile(uint32_t before) {
+    uint32_t added = ActiveProjectiles() & ~before;
+    for (int i = 0; i < 32; ++i)
+        if (added & (1u << i)) return Ref<CPhysical*>(kProjectiles + (uintptr_t)i * 4);
+    return nullptr;
+}
+
+// a target both games know (the other player, a copy), unlike Describe: a heat-seeking rocket's
+bool DescribeAny(CEntity* e, uint8_t& kind, uint16_t& id) {
+    if (!e || Describe(e, kind, id)) return e != nullptr;
+    if (e->IsPed()) {
+        if (RemotePlayer* rp = Players::Instance().FindByPed((CPed*)e)) return kind = ON_PLAYER, id = rp->id, true;
+        NetPed* np = Peds::Instance().Find((CPed*)e);
+        return np && (kind = ON_PED, id = np->netId, true);
+    }
+    NetVehicle* nv = e->Type() == ENTITY_TYPE_VEHICLE ? Vehicles::Instance().Find((CVehicle*)e) : nullptr;
+    return nv && (kind = ON_VEHICLE, id = nv->netId, true);
+}
+
+using AddProjectileFn = bool(__cdecl*)(CEntity*, int, CVector, float, const CVector*, CEntity*);
+AddProjectileFn g_origAddProjectile = nullptr;
+bool g_throwing = false;  // a projectile of the other game
+
+// CProjectileInfo::AddProjectile(creator, weapon, position, force, direction, target)
+bool __cdecl HookAddProjectile(CEntity* creator, int weapon, CVector pos, float force, const CVector* dir, CEntity* target) {
+    bool shared = Net().Online() && core::IsPlayerReady() && !g_throwing;
+    if (shared && OtherSide(creator)) return false;
+    uint32_t before = ActiveProjectiles();
+    bool ok = g_origAddProjectile(creator, weapon, pos, force, dir, target);
+    CPhysical* obj = ok && shared && Thrown(weapon) ? NewProjectile(before) : nullptr;
+    if (!obj) return ok;
+    uint8_t kind = ON_SPOT, targetKind = ON_SPOT;
+    uint16_t id = 0, targetId = 0;
+    if (!Describe(creator, kind, id)) kind = ON_SPOT, id = 0;
+    if (!DescribeAny(target, targetKind, targetId)) targetKind = ON_SPOT, targetId = 0;
+    CVector at = obj->GetPosition(), speed = obj->MoveSpeed();
+    Writer w(proto::G_PROJECTILE);
+    w.U8(kind);
+    w.U16(id);
+    w.U8((uint8_t)weapon);
+    w.F32(force);
+    w.Vec({at.x, at.y, at.z});
+    w.Vec({speed.x, speed.y, speed.z});
+    w.U8(targetKind);
+    w.U16(targetId);
+    Net().Send(proto::CH_RELIABLE, w);
+    return ok;
+}
+
+void HandleProjectile(uint8_t from, Reader& r) {
+    uint8_t kind = r.U8();
+    uint16_t id = r.U16();
+    int weapon = r.U8();
+    float force = r.F32();
+    Vec3 p = r.Vec(), v = r.Vec();
+    uint8_t targetKind = r.U8();
+    uint16_t targetId = r.U16();
+    if (!r.Ok() || !core::IsPlayerReady() || !Thrown(weapon)) return;
+    CEntity* creator = Resolve(kind, id);
+    if (kind == ON_SPOT) {  // a SAM site's: in the sender's name, so that it goes off here without harm
+        RemotePlayer* rp = Players::Instance().Get(from);
+        creator = rp ? (CEntity*)rp->ped : nullptr;
+    }
+    if (!creator) return;  // far away, in another interior
+    CEntity* target = targetKind == ON_PLAYER && targetId == Net().MyId() ? (CEntity*)FindPlayerPed(0)
+                      : targetKind == ON_SPOT                             ? nullptr
+                                                                          : Resolve(targetKind, targetId);
+    CVector at{p.x, p.y, p.z}, speed{v.x, v.y, v.z}, dir = speed;
+    float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    if (len > 0.001f) dir = {dir.x / len, dir.y / len, dir.z / len};
+    uint32_t before = ActiveProjectiles();
+    g_throwing = true;
+    bool ok = g_origAddProjectile(creator, weapon, at, force, &dir, target);
+    g_throwing = false;
+    CPhysical* obj = ok ? NewProjectile(before) : nullptr;
+    if (!obj) return;
+    obj->SetPositionRaw(at);  // where and how fast it left the other game, whatever the copy's aim here
+    obj->MoveSpeed() = speed;
+    LOGD("Projectile of player %d thrown (weapon %d, by %d %04X)", from, weapon, kind, id);
+}
+
+// ---------------------------------------------------------------- water cannons
+// A fire truck's or a SWAT van's water jet (CWaterCannons::UpdateOne each frame it shoots) shoots from the other game's
+// copy of the vehicle too, and puts out and knocks down there what it reaches.
+struct Jet {
+    CVector offset, speed;  // where it leaves the vehicle, how fast
+    uint64_t ms;
+};
+std::map<uint16_t, Jet> g_jets;          // the other game's, by vehicle
+std::map<uint16_t, uint64_t> g_jetSent;  // ours: when each was sent
+
+using WaterCannonFn = void(__cdecl*)(uint32_t, CVector*, CVector*);
+WaterCannonFn g_origWaterCannon = nullptr;
+void __cdecl HookWaterCannon(uint32_t vehicle, CVector* start, CVector* speed) {
+    g_origWaterCannon(vehicle, start, speed);
+    if (!Net().Online() || !core::IsPlayerReady()) return;
+    NetVehicle* nv = Vehicles::Instance().Find((CVehicle*)(uintptr_t)vehicle);
+    if (!nv || Vehicles::Instance().IsMirror(*nv) || !IsVehicleValid(nv->veh) || NowMs() - g_jetSent[nv->netId] < 66) return;
+    g_jetSent[nv->netId] = NowMs();
+    CVector at = *start - nv->veh->GetPosition();
+    Writer w(proto::G_WATER_CANNON);
+    w.U16(nv->netId);
+    w.Vec({at.x, at.y, at.z});
+    w.Vec({speed->x, speed->y, speed->z});
+    Net().Send(proto::CH_STATE, w);
+}
+
+void ShootJets() {
+    for (auto it = g_jets.begin(); it != g_jets.end();) {
+        NetVehicle* nv = Vehicles::Instance().Find(it->first);
+        if (NowMs() - it->second.ms > 200 || !nv || !IsVehicleValid(nv->veh)) {  // it stopped shooting
+            it = g_jets.erase(it);
+            continue;
+        }
+        CVector start = nv->veh->GetPosition() + it->second.offset, speed = it->second.speed;
+        g_origWaterCannon((uint32_t)(uintptr_t)nv->veh, &start, &speed);
+        ++it;
+    }
+}
+
 class Fires : public Module {
 public:
     const char* Name() const override { return "Fires"; }
 
     void OnInstallHooks() override {
+        mem::HookFn(0x736A50, &HookAddExplosion, &g_origAddExplosion, "CExplosion::AddExplosion");
+        Net().SetHandler(proto::G_EXPLOSION, &HandleExplosion);
+        mem::HookFn(0x737C80, &HookAddProjectile, &g_origAddProjectile, "CProjectileInfo::AddProjectile");
+        Net().SetHandler(proto::G_PROJECTILE, &HandleProjectile);
+        mem::HookFn(0x728CB0, &HookWaterCannon, &g_origWaterCannon, "CWaterCannons::UpdateOne");
+        Net().SetHandler(proto::G_WATER_CANNON, [](uint8_t, Reader& r) {
+            uint16_t id = r.U16();
+            Vec3 at = r.Vec(), v = r.Vec();
+            if (!r.Ok() || !core::IsPlayerReady()) return;
+            if (!g_jets.count(id)) LOGD("Water cannon of vehicle %04X shoots here", id);
+            g_jets[id] = {{at.x, at.y, at.z}, {v.x, v.y, v.z}, NowMs()};
+        });
         Net().SetHandler(proto::G_FIRE, [](uint8_t from, Reader& r) {
             uint8_t op = r.U8();
             uint16_t id = r.U16();
@@ -198,6 +413,9 @@ public:
     }
     void OnSessionEnd() override { Forget(); }
     void OnGameStarted() override { Forget(); }
+    void OnPreProcess() override {
+        if (Net().Online() && core::IsPlayerReady()) ShootJets();
+    }
     void OnPeerResync(uint8_t) override { g_sent.clear(); }  // sent again by the next scan
 
     void OnPostProcess() override {
@@ -231,6 +449,8 @@ private:
     static void Forget() {
         g_sent.clear();
         g_copies.clear();
+        g_jets.clear();
+        g_jetSent.clear();
     }
 };
 

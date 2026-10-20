@@ -72,8 +72,8 @@ enum MsgId : uint8_t {
     G_PLAYER_WEAPONS = 72,    // reliable: weapon inventory
     G_BULLET = 73,            // visual bullet replay
     G_DAMAGE = 74,            // damage event addressed to the owner of the victim
-    G_EXPLOSION = 75,
-    G_PROJECTILE = 76,
+    G_EXPLOSION = 75,         // reliable: a blast went off (creator kind and id, type, position...), see Fire.cpp
+    G_PROJECTILE = 76,        // reliable: a grenade, a rocket... was thrown (creator, weapon, position, speed, target)
     G_PLAYER_ENTER_CAR = 77,
     G_PLAYER_EXIT_CAR = 78,
     G_PLAYER_ANIM = 79,       // reliable: one-shot animations (eating, drinking, gestures)
@@ -121,12 +121,18 @@ enum MsgId : uint8_t {
     G_WAYPOINT = 133,         // reliable: the player's map waypoint (set or cleared)
     G_PROPERTY = 134,         // reliable: the player bought a property (its index in main.scm)
     G_HOST_SAVED = 135,       // reliable: the host saved its game, the partners save their profiles
-    G_MISSION_WEAPON = 136,   // reliable: u8 op (1 give, 2 take), u8 weapon, i32 ammo: the host's mission armed its CJ
+    G_MISSION_WEAPON = 136,   // reliable: u8 op (1 give, 2 take), u8 weapon, i32 ammo (CJ's count after the change):
+                              // the host's mission armed its CJ
     G_CHECKPOINTS = 137,      // reliable: the host's script checkpoints and spheres (u8 n, records)
     G_WORLD_OBJ = 138,        // a map object broke or moved (u16 model, origin, stage, flags, weapon[, pose, speeds]);
                               // reliable for changes, unreliable while it moves
     G_GARAGE = 139,           // reliable: u8 op, u8 garage: the partner's cars into the host's safe house store
                               // (u8 n, u16 net ids), the host has them (same), bring the stored ones out
+    G_VEH_CLEAR = 140,        // reliable: u8 n, u16 net ids: the host's mission cleared an area (CLEAR_AREA), the
+                              // owners delete these empty cars of theirs there
+    G_WATER_CANNON = 141,     // unreliable: u16 vehicle, the jet's offset from it and speed (a fire truck shoots water)
+    G_TRAIN = 142,            // a train of the sender's game (u8 op, u16 id; state: kind, track, direction, rails, speed,
+                              // pos), unreliable; gone: reliable
 
     G_VOICE = 200,            // unreliable: voice frame
     G_LAST = 255,

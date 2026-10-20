@@ -6,15 +6,22 @@
 //    shooter's game reports its hits itself. Vehicle collisions are the exception: they are simulated
 //    by the victim's owner anyway, so they are never forwarded;
 //  * everything else (NPC shots, explosions, fire) hurts whatever this game owns, the local player too;
+//  * the other player's blasts go off here as well (Fire.cpp) and hurt the peds this game owns: its copies of them are
+//    proof against blasts in the shooter's game. Cars take a blast there and the hit is forwarded, as a bullet's;
 //  * an NPC's punch or blade on the remote player is sent to that player's game: the remote ped here has every proof,
 //    and the NPC's mirror there only plays the animation (its gunfire needs nothing: the mirror there shoots for real);
 //  * a ped killed by the other player drops its money and weapon in the killer's game, where the killer is;
 //  * a crime is charged by the game of whoever committed it: the owner keeps its own player's wanted level when it
 //    applies the other player's hit, and the hitter's game reports the crime itself;
+//  * a kill counts (stats, respect, rampages, gang war provocation) in the killer's game: the owner of the ped tells it.
+//    The gang wars run in the host's game only, so the partner's kills of the enemy gangs near the host provoke them there;
 //  * the players hurt each other only with friendly fire (the host's choice). The shooter's game reports its bullets
 //    and blows on the other player (it sees them hit), the victim's game lets the other player's explosions, fire and
-//    car hurt its player (the copy here is proof against them, so they never reach the shooter's game).
+//    car hurt its player (the copy here is proof against them, so they never reach the shooter's game);
+//  * during a scripted scene (the camera's wide screen) the other player's side hurts nothing here: its player keeps
+//    playing while this one watches, and a mission failed when its people got hurt in the scene.
 #include <algorithm>
+#include <cmath>
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
@@ -36,9 +43,11 @@ using game::script::Cmd;
 
 constexpr int WEAPON_LAST_MELEE = 15, WEAPON_PISTOL = 22, WEAPON_SNIPERRIFLE = 34, WEAPON_MINIGUN = 38,
               WEAPON_SPRAYCAN = 41, WEAPON_EXTINGUISHER = 42, WEAPON_RAMMEDBYCAR = 49, WEAPON_RUNOVERBYCAR = 50,
-              WEAPON_UZI_DRIVEBY = 52;
-// TARGET_PLAYER: an NPC hit the player (netId is the NPC), TARGET_PLAYER_BY_PLAYER: the sender hit the player itself
-enum : uint8_t { TARGET_PED = 1, TARGET_VEHICLE = 2, TARGET_PLAYER = 3, TARGET_PLAYER_BY_PLAYER = 4 };
+              WEAPON_EXPLOSION = 51, WEAPON_UZI_DRIVEBY = 52;
+// TARGET_PLAYER: an NPC hit the player (netId is the NPC), TARGET_PLAYER_BY_PLAYER: the sender hit the player itself,
+// KILLED_BY_YOU: the receiver's hit killed the sender's ped (piece is the headshot), GANG_KILL: the partner killed an
+// enemy gang member (weapon is its ped type) for the host's gang wars
+enum : uint8_t { TARGET_PED = 1, TARGET_VEHICLE = 2, TARGET_PLAYER = 3, TARGET_PLAYER_BY_PLAYER = 4, KILLED_BY_YOU = 5, GANG_KILL = 6 };
 constexpr int CRIME_DAMAGED_PED = 2, CRIME_DAMAGED_COP = 3;
 
 // The engine charges a crime to the player in focus (CEventGroup::Add -> ReportCriminalEvent -> FindPlayerWanted):
@@ -80,6 +89,18 @@ bool IsRemotePlayerEntity(CEntity* e) {
     return ped && Players::Instance().FindByPed(ped);
 }
 
+// the other player, its car, or a car or ped its game owns (a copy here)
+bool FromOtherSide(CEntity* e) {
+    if (!e) return false;
+    if (IsRemotePlayerEntity(e)) return true;
+    if (e->IsVehicle()) {
+        NetVehicle* nv = Vehicles::Instance().Find((CVehicle*)e);
+        return nv && Vehicles::Instance().IsMirror(*nv);
+    }
+    NetPed* np = e->IsPed() ? Peds::Instance().Find((CPed*)e) : nullptr;
+    return np && np->owner != Net().MyId();
+}
+
 void SendDamage(uint8_t kind, uint8_t owner, uint16_t netId, int weapon, float damage, int piece, int dir, const CVector& pos) {
     Writer w(proto::G_DAMAGE);
     w.U8(kind);
@@ -101,9 +122,16 @@ GenerateDamageFn g_origGenerateDamage = nullptr;
 // hit): one decided in the other game still does here.
 bool __cdecl HookGenerateDamageEvent(CPed* victim, CEntity* creator, int weapon, int damage, int piece, int dir) {
     if (Net().Online() && victim && core::IsPlayerReady()) {
+        if (cam::WideScreenOn() && FromOtherSide(creator)) return true;  // see the top of the file
         bool fromRemote = IsRemotePlayerEntity(creator);
         if (fromRemote && victim == FindPlayerPed(0))  // see the top of the file
             return Net().FriendlyFire() && !IsDirect(weapon) ? g_origGenerateDamage(victim, creator, weapon, damage, piece, dir) : true;
+        if (fromRemote && weapon == WEAPON_EXPLOSION) {  // see the top of the file
+            NetPed* np = Peds::Instance().Find(victim);
+            if ((np && np->owner != Net().MyId()) || Players::Instance().FindByPed(victim)) return true;
+            KeepWanted keep;
+            return g_origGenerateDamage(victim, creator, weapon, damage, piece, dir);
+        }
         if (!IsCollision(weapon) && fromRemote && !IsSpray(weapon)) return true;
         if (RemotePlayer* rp = Players::Instance().FindByPed(victim)) {
             if (weapon <= WEAPON_LAST_MELEE && creator && creator->IsPed() && !IsLocalPlayerEntity(creator)) {
@@ -140,6 +168,7 @@ using KillWithCarFn = void(__fastcall*)(CPed*, void*, CVehicle*, float, int);
 KillWithCarFn g_origKillWithCar = nullptr;
 void __fastcall HookKillPedWithCar(CPed* ped, void* edx, CVehicle* car, float impulse, int flag) {
     if (Net().Online() && car && core::IsPlayerReady()) {
+        if (cam::WideScreenOn() && FromOtherSide(car)) return;
         CPed* driver = car->Driver();
         if (driver && Players::Instance().FindByPed(driver)) {
             if (Net().FriendlyFire() && ped == FindPlayerPed(0)) g_origKillWithCar(ped, edx, car, impulse, flag);
@@ -166,6 +195,7 @@ InflictDamageFn g_origInflictDamage = nullptr;
 void __fastcall HookInflictDamage(CVehicle* v, void* edx, CEntity* damager, int weapon, float damage, CVector pos) {
     if (Net().Online() && v && core::IsPlayerReady()) {
         if (!IsCollision(weapon) && IsRemotePlayerEntity(damager)) return;
+        if (cam::WideScreenOn() && FromOtherSide(damager)) return;
         if (NetVehicle* nv = Vehicles::Instance().Find(v); nv && Vehicles::Instance().IsMirror(*nv)) {
             if (!IsCollision(weapon) && IsLocalPlayerEntity(damager))
                 SendDamage(TARGET_VEHICLE, nv->owner, nv->netId, weapon, damage, 0, 0, pos);
@@ -173,6 +203,26 @@ void __fastcall HookInflictDamage(CVehicle* v, void* edx, CEntity* damager, int 
         }
     }
     g_origInflictDamage(v, edx, damager, weapon, damage, pos);
+}
+
+using RegisterKillFn = void(__cdecl*)(CPed*, CEntity*, int, bool);
+RegisterKillFn g_origRegisterKill = nullptr;
+
+// CEventHandler::RegisterKill(ped, killer, weapon, headshot): a ped died of a hit. This game's ped killed by the other
+// player is credited to that player's game and counts here as killed by somebody else (see the top of the file).
+void __cdecl HookRegisterKill(CPed* ped, CEntity* killer, int weapon, bool headshot) {
+    CPlayerPed* me = FindPlayerPed(0);
+    if (Net().Online() && ped && killer && killer->IsPed() && core::IsPlayerReady()) {
+        if (RemotePlayer* rp = Players::Instance().FindByPed((CPed*)killer)) {
+            if (NetPed* np = Peds::Instance().Find(ped); np && np->owner == Net().MyId())
+                SendDamage(KILLED_BY_YOU, rp->id, np->netId, weapon, 1.0f, headshot, 0, ped->GetPosition());
+            killer = nullptr;
+        } else if (killer == me && !Net().IsHost() && !me->InVehicle() &&
+                   (ped->PedType() == PED_TYPE_GANG1 || ped->PedType() == PED_TYPE_GANG3)) {
+            SendDamage(GANG_KILL, Net().HostId(), 0, ped->PedType(), 1.0f, 0, 0, ped->GetPosition());
+        }
+    }
+    g_origRegisterKill(ped, killer, weapon, headshot);
 }
 
 void HandleDamage(uint8_t from, Reader& r) {
@@ -183,6 +233,7 @@ void HandleDamage(uint8_t from, Reader& r) {
     int piece = r.U8(), dir = r.U8();
     Vec3 p = r.Vec();
     if (!r.Ok() || owner != Net().MyId() || !core::IsPlayerReady() || damage <= 0.0f || damage > 10000.0f) return;
+    if (cam::WideScreenOn()) return;  // a scripted scene: the other game's hits are dropped (see the top of the file)
     const RemotePlayer* rp = Players::Instance().Get(from);
     CEntity* attacker = rp ? rp->ped : nullptr;
     if (kind == TARGET_PED) {
@@ -216,6 +267,20 @@ void HandleDamage(uint8_t from, Reader& r) {
             KeepWanted keep;
             g_origInflictDamage(nv->veh, nullptr, attacker, weapon, damage, CVector{p.x, p.y, p.z});
         }
+    } else if (kind == KILLED_BY_YOU) {
+        int h = Peds::Instance().HandleOf(netId);  // its copy here: a civilian, it counts as what its owner has
+        if (CPed* ped = h >= 0 ? GetPed(h) : nullptr) {
+            NetPed* np = Peds::Instance().Find(ped);
+            int32_t type = ped->PedType();
+            if (np) ped->PedType() = np->pedType;
+            HookRegisterKill(ped, FindPlayerPed(0), weapon, piece != 0);
+            ped->PedType() = type;
+        }
+        LOGI("We killed ped %04X of player %d: weapon %d", netId, from, weapon);
+    } else if (kind == GANG_KILL && Net().IsHost()) {
+        const CVector& me = FindPlayerPed(0)->GetPosition();
+        if ((weapon == PED_TYPE_GANG1 || weapon == PED_TYPE_GANG3) && std::hypot(me.x - p.x, me.y - p.y) < 100.0f)
+            Call<0x443950>(weapon);  // CGangWars::AddKillToProvocation
     }
 }
 
@@ -226,6 +291,7 @@ public:
         mem::HookFn(0x73A530, &HookGenerateDamageEvent, &g_origGenerateDamage, "CWeapon::GenerateDamageEvent");
         mem::HookFn(0x6D7C90, &HookInflictDamage, &g_origInflictDamage, "CVehicle::InflictDamage");
         mem::HookFn(0x5F0360, &HookKillPedWithCar, &g_origKillWithCar, "CPed::KillPedWithCar");
+        mem::HookFn(0x4B9340, &HookRegisterKill, &g_origRegisterKill, "CEventHandler::RegisterKill");
         Net().SetHandler(proto::G_DAMAGE, &HandleDamage);
     }
 };

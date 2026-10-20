@@ -195,13 +195,14 @@ void SendMissionWeapon(uint8_t op, int weapon, int ammo, bool inHand) {
     Net().Send(proto::CH_RELIABLE, w);
     LOGI("Mission weapon %d %s (%d)", weapon, op == WEAPON_GIVE ? "given" : "taken", ammo);
 }
+// The count goes as it is now, not what was added: missions lower it too (Emmet's pistol 30000 for the practice and 10
+// after it, the spray can given again with 1000 at the end), and the partner kept the big one (no number on the HUD).
 void SendWeaponChanges(const WeaponSlots& was, CPed* cj) {
     for (int i = 0; i < NUM_WEAPON_SLOTS; ++i) {
         const CWeapon& now = cj->Weapons()[i];
         if (was.type[i] > 0 && now.type != was.type[i]) SendMissionWeapon(WEAPON_TAKE, was.type[i], 0, false);
-        if (now.type > 0 && (now.type != was.type[i] || now.ammoTotal > was.ammo[i]))
-            SendMissionWeapon(WEAPON_GIVE, now.type, now.type != was.type[i] ? now.ammoTotal : now.ammoTotal - was.ammo[i],
-                              cj->ActiveWeapon().type == now.type);
+        if (now.type > 0 && (now.type != was.type[i] || now.ammoTotal != was.ammo[i]))
+            SendMissionWeapon(WEAPON_GIVE, now.type, now.ammoTotal, cj->ActiveWeapon().type == now.type);
     }
 }
 
@@ -228,6 +229,24 @@ void __fastcall HookScriptProcess(void* script, void* edx) {
     if (Fading() && (!fading || FadeDirection() != dir || FadeDuration() != seconds)) ScriptFaded(FadeDirection(), FadeDuration());
 }
 
+// CLEAR_AREA of the host's mission: alone, the game removes the empty ordinary cars from the place where the mission
+// puts its own next, but a car the partner left there stayed (its copy is a mission car here): "Ryder" put Ryder's car
+// on it at the pizza place, the car was wrecked and the mission failed. Those copies go now, their owners delete them.
+using ClearAreaFn = void(__cdecl*)(CVector*, float, uint8_t);
+ClearAreaFn g_origClearArea = nullptr;
+void __cdecl HookScriptClearArea(CVector* at, float radius, uint8_t flag) {  // CWorld::ClearExcitingStuffFromArea
+    g_origClearArea(at, radius, flag);
+    if (!g_currentScript || !Field<uint8_t>(g_currentScript, 0xDC) || !Net().IsHost() || !Replicating()) return;
+    std::vector<uint16_t> ids = Vehicles::Instance().ClearMirrors(*at, radius);
+    if (ids.empty()) return;
+    if (ids.size() > 255) ids.resize(255);
+    Writer w(proto::G_VEH_CLEAR);
+    w.U8((uint8_t)ids.size());
+    for (uint16_t id : ids) w.U16(id);
+    Net().Send(proto::CH_RELIABLE, w);
+    LOGI("CLEAR_AREA at %.0f %.0f, radius %.0f: %zu cars of the other players cleared", at->x, at->y, radius, ids.size());
+}
+
 std::set<int> g_missionWeapons;  // partner: what the host's mission gave (only those it takes back)
 std::map<int, std::pair<int, int>> g_replaced;  // partner: its own weapon a given one pushed out of the slot (type, ammo)
 void HandleMissionWeapon(uint8_t from, Reader& r) {
@@ -248,6 +267,7 @@ void HandleMissionWeapon(uint8_t from, Reader& r) {
         WeaponSlots was;
         was.Take(me);
         give(weapon, ammo);
+        Cmd(0x017B).I(h).I(weapon).I(std::clamp(ammo, 1, 99999)).Run();  // SET_CHAR_AMMO: the host's count, not ours + it
         if (inHand) Cmd(0x01B9).I(h).I(weapon).Run();  // SET_CURRENT_CHAR_WEAPON
         for (int i = 0; i < NUM_WEAPON_SLOTS; ++i)     // a slot holds one weapon: the partner's own one is put back later
             if (was.type[i] > 0 && was.type[i] != weapon && me->Weapons()[i].type == weapon && !g_replaced.count(weapon))
@@ -467,8 +487,14 @@ void __cdecl HookMsgQNum(const char* t, uint32_t time, uint16_t flag, int a, int
     SendText(TXT_MSG_Q, t, time, flag, n, brief);
     g_origMsgQNum(t, time, flag, a, b, c, d, e, f, brief);
 }
+// The host's own WASTED and BUSTED (CPlayerInfo::KillPlayer, CGameLogic) are not the mission's: the partner's HUD keeps
+// that style's text until its own player respawns (CHud::ResetWastedText), so it stayed on the partner's screen.
+bool HostDeathText(const char* t) {
+    return t && (t == CallMethod<0x6A0050, const char*>((void*)kTheText, "DEAD") ||  // CText::Get
+                 t == CallMethod<0x6A0050, const char*>((void*)kTheText, "BUSTED"));
+}
 void __cdecl HookBig(const char* t, uint32_t time, uint16_t style) {
-    SendText(TXT_BIG, t, time, style, nullptr, 0);
+    if (!HostDeathText(t)) SendText(TXT_BIG, t, time, style, nullptr, 0);
     g_origBig(t, time, style);
 }
 void __cdecl HookBigQ(const char* t, uint32_t time, uint16_t style) {
@@ -1323,6 +1349,7 @@ public:
 
     void OnInstallHooks() override {
         mem::HookFn(0x469F00, &HookScriptProcess, &g_origScriptProcess, "CRunningScript::Process");
+        mem::RedirectCallFn(0x484361, &HookScriptClearArea, &g_origClearArea);  // CLEAR_AREA (opcode 0395)
         mem::HookFn(0x609590, &HookCanPlayerStartMission, &g_origCanStart, "CPlayerPed::CanPlayerStartMission");
         mem::HookFn(0x464C20, &HookStartNewScript, &g_origStartScript, "CTheScripts::StartNewScript");
         mem::HookFn(0x69F0B0, &HookMsg, &g_origMsg, "CMessages::AddMessage");
@@ -1493,8 +1520,14 @@ private:
         float at;
         if (scene::TakeDecision(spot, at)) SendSpot(spot, at);
         if (cs && scene::CurrentSpot(spot)) {  // the partner joins the scene (and its game takes the same spot)
+            CEntity* cj = CutsceneCj();
             for (auto& [id, rp] : Players::Instance().All())
-                if (rp.ped) scene::Hold(rp.ped, spot);
+                if (rp.ped) {
+                    // the scene's interior, not the one its game reports: before its cutscene starts there and after
+                    // it ends it is elsewhere, and a ped of another area is not drawn (it vanished from the scene)
+                    if (cj) rp.ped->AreaCode() = cj->AreaCode();
+                    scene::Hold(rp.ped, spot);
+                }
             g_sceneHeld = true;
         } else if (!cs && g_sceneHeld) {
             g_sceneHeld = false;

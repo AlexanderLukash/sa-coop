@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <map>
 #include <cmath>
 
 #include "common/api/protocol/Protocol.h"
@@ -176,6 +177,36 @@ void DriveBy(CPlayerPed* ped) {
     if (ped->ActiveWeapon().ammoInClip != clip) LOGD("Remote player drive-by: a shot");
 }
 
+// A passenger's drive-by is the game's split-screen mode's (CTaskSimpleCarDrive::ProcessPed 0x6449AB: a player in a
+// passenger seat leans out of the window, CTaskSimpleGangDriveBy). In co-op it starts for a passenger holding the right
+// mouse button (R1 on a pad) with any gun in hand, not only an SMG (the task takes any instant-hit weapon), and ends
+// when the button is let go. The checks of the SMG slot and of the split-screen camera after the call are dropped.
+// The player processed is the one in focus: the other player's copy is processed under its own pad, so its drive-by
+// shows here too (its game folds the mouse button into R1, FillCommon).
+std::map<CPed*, bool> g_ourDriveBy;  // passengers whose drive-by this started (a mission's is left alone)
+bool AimFromSeat(const CPad* pad) { return pad->NewState.RightShoulder1 || pad->NewState.m_bVehicleMouseLook; }
+
+bool __cdecl PassengerDriveBy() {
+    const CPad* pad = GetPad(0);
+    CPlayerPed* ped = FindPlayerPed(-1);
+    if (!Net().Online() || !ped || pad->DisablePlayerControls || !AimFromSeat(pad) || cam::Mode() == 0x37) return false;  // MODE_AIMWEAPON_FROMCAR
+    const CWeapon& w = ped->ActiveWeapon();
+    void* info = w.type ? Call<0x743C60, void*>(w.type, (uint8_t)1) : nullptr;  // CWeaponInfo::GetWeaponInfo
+    if (!info || Field<int32_t>(info, 0) != 1 || w.ammoTotal <= 0) return false;  // m_nWeaponFire: FIRE_INSTANT_HIT
+    g_ourDriveBy[ped] = true;
+    return true;
+}
+
+using GangDriveByFn = bool(__fastcall*)(void*, void*, CPed*);
+GangDriveByFn g_origGangDriveBy = nullptr;
+bool __fastcall HookGangDriveByProcess(void* task, void* edx, CPed* ped) {
+    auto ours = g_ourDriveBy.find(ped);
+    if (ours != g_ourDriveBy.end() && !AimFromSeat(GetPad(0))) Field<uint8_t>(task, 8) = 1;  // m_bIsFinished: let go
+    bool done = g_origGangDriveBy(task, edx, ped);
+    if (done && ours != g_ourDriveBy.end()) g_ourDriveBy.erase(ours);
+    return done;
+}
+
 using ProcessControlFn = void(__fastcall*)(CPlayerPed*, void*);
 ProcessControlFn g_origProcessControl = nullptr;
 bool g_inRemoteContext = false;
@@ -271,6 +302,27 @@ void DrawWeaponIcon(int weapon, float x, float y, float w, float h, uint8_t alph
     float rect[4] = {x, y + h, x + w, y};  // CRect: left, bottom, right, top
     CRGBA color{255, 255, 255, alpha};
     CallMethod<0x728350>(&sprite, rect, &color);  // CSprite2d::Draw(const CRect&, const CRGBA&)
+}
+
+// and its wanted level left of the health bar: the HUD's own stars (CHud::DrawWanted: "]" of FONT_GOTHIC in gold),
+// smaller. CFont::DrawFonts prints them right after the HUD.
+void DrawWantedStars(int level, float right, float midY, uint8_t alpha) {
+    if (level <= 0) return;
+    float scaleX = ScreenWidth() / 640.0f * 0.605f * 0.6f, scaleY = ScreenHeight() / 448.0f * 1.21f * 0.6f;
+    CRGBA gold = Ref<CRGBA>(0xBAB22C + 6 * 4);  // CHudColours HudColour: HUD_COLOUR_GOLD
+    gold.a = alpha;
+    Call<0x7195C0>(false, false);          // CFont::SetBackground
+    Call<0x719380>(scaleX, scaleY);        // CFont::SetScale
+    Call<0x719610>(2);                     // CFont::SetAlignment: right
+    Call<0x7195B0>(true);                  // CFont::SetProportional
+    Call<0x719490>(0);                     // CFont::SetFontStyle: FONT_GOTHIC
+    Call<0x719590>(1);                     // CFont::SetOutlinePosition
+    Call<0x719510>(CRGBA{0, 0, 0, alpha});  // CFont::SetDropColor
+    Call<0x719430>(gold);                  // CFont::SetColor
+    char text[8] = {}, gxt[8] = {};
+    memset(text, ']', (size_t)std::min(level, 6));
+    Call<0x718600>((const char*)text, gxt);              // AsciiToGxtChar
+    Call<0x71A700>(right, midY - 8.0f * scaleY, (const char*)gxt);  // CFont::PrintString
 }
 
 using HudDrawFn = void(__cdecl*)();
@@ -369,8 +421,14 @@ bool EnteringCar(CPed* ped) {
 }
 constexpr uint64_t kEnterGraceMs = 4000;  // let the enter animation finish before warping
 
+uint8_t WantedLevel(CPlayerPed* me) {
+    void* wanted = me->PlayerData() ? me->Wanted() : nullptr;
+    return wanted ? (uint8_t)std::clamp(Field<int32_t>(wanted, 0x2C), 0, 6) : 0;  // CWanted::m_nWantedLevel
+}
+
 void FillCommon(OnFootState& st, CPlayerPed* me) {
     st.health = ClampByte(me->Health());
+    st.wanted = WantedLevel(me);
     st.armour = ClampByte(me->Armour());
     CWeapon& w = me->ActiveWeapon();
     st.weapon = (uint8_t)w.type;
@@ -378,6 +436,9 @@ void FillCommon(OnFootState& st, CPlayerPed* me) {
     st.area = me->AreaCode();
     CPad* pad = GetPad(0);
     if (pad->DisablePlayerControls == 0 && !game::MenuActive()) st.pad = PadState::From(pad->NewState);
+    // a passenger aims out of the window with the mouse's look button, which the pad state has not: R1 (PassengerDriveBy)
+    if (me->InVehicle() && me->Vehicle() && me->Vehicle()->Driver() != me && pad->NewState.m_bVehicleMouseLook)
+        st.pad.buttons |= PadState::B_RS1;
     CameraState& c = st.cam;
     c.mode = cam::Mode();
     c.weaponMode = cam::WeaponMode();
@@ -402,6 +463,7 @@ void WriteCommon(Writer& w, const OnFootState& st) {
     w.U8(st.weapon);
     w.U16(st.ammo);
     w.I8(st.area);
+    w.U8(st.wanted);
 }
 
 void ReadCommon(Reader& r, OnFootState& st) {
@@ -412,6 +474,7 @@ void ReadCommon(Reader& r, OnFootState& st) {
     st.weapon = r.U8();
     st.ammo = r.U16();
     st.area = r.I8();
+    st.wanted = r.U8();
 }
 }  // namespace
 
@@ -459,6 +522,11 @@ float RemoteDistance(const CVector& p, int8_t area, uint8_t* who) {
 // ------------------------------------------------------------------ module
 void Players::OnInstallHooks() {
     mem::HookFn(0x60EA90, &HookPlayerProcessControl, &g_origProcessControl, "CPlayerPed::ProcessControl");
+    void* coopGame = nullptr;  // CGameLogic::IsCoopGameGoingOn, always false (Patches)
+    mem::RedirectCall(0x644A1A, (const void*)&PassengerDriveBy, &coopGame);
+    mem::Nop(0x644A27, 28);  // the SMG slot holds a weapon with ammo (PassengerDriveBy checks the gun in hand)
+    mem::Nop(0x644A69, 6);   // jne: the camera is MODE_TWOPLAYER_IN_CAR_AND_SHOOTING
+    mem::HookFn(0x62D3B0, &HookGangDriveByProcess, &g_origGangDriveBy, "CTaskSimpleGangDriveBy::ProcessPed");
     mem::HookFn(0x609FF0, &HookGetPlayerInfoForThisPlayerPed, &g_origGetPlayerInfo,
                 "CPlayerPed::GetPlayerInfoForThisPlayerPed");
     mem::HookFn(0x706970, &HookGetRealTimeShadow, &g_origGetShadow, "CRealTimeShadowManager::GetRealTimeShadow");
@@ -495,6 +563,7 @@ void Players::OnSessionStart() { m_lastSend = 0; }
 void Players::OnSessionEnd() {
     for (auto& [id, rp] : m_remote) DestroyRemote(rp);
     m_remote.clear();
+    g_ourDriveBy.clear();
 }
 
 void Players::OnPeerLeave(uint8_t id) {
@@ -506,6 +575,7 @@ void Players::OnPeerLeave(uint8_t id) {
 
 void Players::OnGameStarted() {
     Cmd(0x0501).I(0).I(1).Run();  // SET_PLAYER_CAN_DO_DRIVE_BY: passengers may shoot from the window
+    g_ourDriveBy.clear();
     m_enterReported = nullptr;
     m_lastCar = -1;  // another world
     m_exitReported = false;
@@ -620,6 +690,7 @@ void Players::DestroyRemote(RemotePlayer& rp) {
     if (rp.ped && IsPedValid(rp.ped)) {
         CPed* ped = rp.ped;
         if (PlayerInfo(kRemoteSlot)->ped == ped) PlayerInfo(kRemoteSlot)->ped = nullptr;
+        if (CPlayerPed* me = FindPlayerPed(0); me && Field<CEntity*>(me, 0x128) == ped) Field<CEntity*>(me, 0x128) = nullptr;  // KeepApart
         WorldRemove(ped);
         CallVirtual<0, void>(ped, 1u);  // scalar deleting destructor (returns the slot to the ped pool)
         LOGI("Remote player %d removed", rp.id);
@@ -636,7 +707,9 @@ void Players::HandleOnFoot(uint8_t from, Reader& r) {
     // unreliable channel: ignore states older than the newest applied one
     if (rp.hasState && (int32_t)(st.time - rp.lastStateTime) < 0) return;
     rp.lastStateTime = st.time;
-    st.pad.buttons &= ~PadState::B_TRIANGLE;  // enter/exit are replicated as events
+    // enter/exit are replicated as events; with the target held the button is the fight's second attack (a kick,
+    // CTaskSimplePlayerOnFoot: MeleeAttackJustDown 4), which only the pad replay shows
+    if (!(st.pad.buttons & PadState::B_RS1)) st.pad.buttons &= ~PadState::B_TRIANGLE;
     rp.state = st;
     rp.hasState = true;
     rp.stateRecvMs = NowMs();
@@ -768,7 +841,7 @@ void Players::ApplyState(RemotePlayer& rp) {
 
     ped->Health() = (float)st.health;
     ped->Armour() = (float)st.armour;
-    ped->AreaCode() = st.area;
+    if (!Ref<uint8_t>(0xB5F851)) ped->AreaCode() = st.area;  // CCutsceneMgr::ms_running: the scene sets it (Missions)
 
     // the jetpack flies by the player's buttons, which this ped gets: it only needs one. Dropping it (the enter key)
     // happens here as there; whatever is left over goes with the flag
@@ -802,6 +875,10 @@ void Players::ApplyState(RemotePlayer& rp) {
 
     if (rp.mode != RemotePlayer::Mode::OnFoot) {
         ApplyVehicleSeat(rp);
+        return;
+    }
+    if (st.flags & OnFootState::F_IN_TRAIN) {
+        RideTrain(rp);
         return;
     }
     // on foot but still sitting in a vehicle here: the exit animation gets a few seconds, then warp out
@@ -848,6 +925,25 @@ void Players::ApplyState(RemotePlayer& rp) {
     }
 }
 
+// Trains are not networked (Trains.cpp shows the host's in the other games): the player riding one sits in the cab of
+// the train here nearest to its place.
+void Players::RideTrain(RemotePlayer& rp) {
+    CVehicle* train = Call<0x6F7090, CVehicle*>(rp.state.pos, true);  // CTrain::FindNearestTrain(position, an engine)
+    CPlayerPed* ped = rp.ped;
+    if (!train || (train->GetPosition() - rp.state.pos).Length() > 25.0f || (ped->InVehicle() && ped->Vehicle() == train) ||
+        NowMs() - rp.enterTaskMs < 1500)
+        return;
+    rp.enterTaskMs = NowMs();
+    CVector p = ped->GetPosition();
+    if (ped->InVehicle()) {
+        Cmd(0x0362).I(rp.pedHandle).F(p.x).F(p.y).F(p.z).Run();  // WARP_CHAR_FROM_CAR_TO_COORD
+        return;
+    }
+    if (CPed* d = train->Driver(); d && d->IsPlayer()) return;          // taken here
+    else if (d) Cmd(0x009B).I(GetPedRef(d)).Run();                       // DELETE_CHAR: the copy's own driver
+    Cmd(0x036A).I(rp.pedHandle).I(GetVehicleRef(train)).Run();          // WARP_CHAR_INTO_CAR
+}
+
 void Players::ApplyVehicleSeat(RemotePlayer& rp) {
     NetVehicle* nv = Vehicles::Instance().Find(rp.vehNetId);
     if (!nv || !nv->veh) return;  // the vehicle announcement has not arrived yet
@@ -885,7 +981,7 @@ void Players::TryEnterAsPassenger() {
         if (pool->byteMap[i] < 0) continue;
         auto* v = (CVehicle*)(pool->objects + (size_t)i * kVehiclePoolElemSize);
         float d = (v->GetPosition() - mp).Length();
-        if (d > 10.0f || v->Status() == 5 /* wrecked */) continue;
+        if (d > 10.0f || v->Status() == 5 /* wrecked */ || v->IsTrain()) continue;  // a train's copy is locked (Trains)
         int freeSeat = -1;
         for (int s = 0; s < v->MaxPassengers() && s < 8; ++s)
             if (!v->Passengers()[s]) {
@@ -986,15 +1082,30 @@ void Players::OnPreProcess() {
             rp.ped = nullptr;
             rp.blip = 0;
         }
-        // states older than 5 s mean the player is loading / in the menu
-        bool active = rp.hasState && NowMs() - rp.stateRecvMs < 5000;
+        // states older than 5 s mean the player is loading / in the menu; a cutscene here keeps its ped in the scene
+        // (its game loads the same cutscene and can be silent that long)
+        bool active = rp.hasState && (NowMs() - rp.stateRecvMs < 5000 || (rp.ped && Ref<uint8_t>(0xB5F851)));
         if (!active) {
             if (rp.ped) DestroyRemote(rp);
             continue;
         }
         if (!rp.ped) SpawnRemote(rp);
         if (rp.ped) ApplyState(rp);
+        if (rp.ped) KeepApart(rp.ped);
     }
+}
+
+// A script that puts this game's player on a spot (a changing room, a mission's) puts it inside the other player's
+// ped when that one stands there: the two peds got stuck in each other and the player's next scripted task never
+// started (the shop waits for it with the controls taken). Two players inside each other ignore each other's collision
+// until they part (CPhysical::m_pEntityIgnoredCollision, the game clears it once they stop touching).
+void Players::KeepApart(CPed* other) {
+    CPlayerPed* me = FindPlayerPed(0);
+    if (!me || me->InVehicle() || other->InVehicle()) return;
+    CVector d = other->GetPosition() - me->GetPosition();
+    if (d.x * d.x + d.y * d.y > 0.4f * 0.4f || std::fabs(d.z) > 1.5f) return;
+    Field<CEntity*>(me, 0x128) = other;
+    Field<CEntity*>(other, 0x128) = me;
 }
 
 void Players::SendLocalState() {
@@ -1013,9 +1124,11 @@ void Players::SendLocalState() {
     st.ammo = (uint16_t)std::clamp(w.ammoTotal, 0, 65535);
     st.flags = (me->IsDucking() ? OnFootState::F_DUCKING : 0) | (me->IsInTheAir() ? OnFootState::F_IN_AIR : 0) |
                (HasJetpack(me) ? OnFootState::F_JETPACK : 0) |
-               (me->Health() <= 0.0f ? OnFootState::F_DEAD : 0);
+               (me->Health() <= 0.0f ? OnFootState::F_DEAD : 0) |
+               (me->InVehicle() && me->Vehicle() && me->Vehicle()->IsTrain() ? OnFootState::F_IN_TRAIN : 0);
     st.area = me->AreaCode();
     st.moveState = (uint8_t)me->MoveState();
+    st.wanted = WantedLevel(me);
     CPad* pad = GetPad(0);
     if (pad->DisablePlayerControls == 0 && !game::MenuActive()) st.pad = PadState::From(pad->NewState);
     CameraState& c = st.cam;
@@ -1050,8 +1163,8 @@ void Players::OnPostProcess() {
     DetectCarTasks();
     FollowHost();
     if (me->InVehicle() && me->Vehicle() && me->Vehicle()->Driver() == me) m_lastCar = GetVehicleRef(me->Vehicle());
-    if (me->InVehicle() && me->Vehicle()) SendVehicleState(me->Vehicle());
-    else SendLocalState();
+    if (me->InVehicle() && me->Vehicle() && !me->Vehicle()->IsTrain()) SendVehicleState(me->Vehicle());
+    else SendLocalState();  // a train is not networked: the other game seats this player in its copy (RideTrain)
 }
 
 // Where the story moves the host by script, the partner keeps up: joining after a new game's prologue (in a new game of
@@ -1127,6 +1240,7 @@ void Players::DrawWeaponIcons() {
         float s = g.Scale(), h = 26 * s, w = h * 47.0f / 58.0f;
         float x = sx + 32 * s + 4 * s, y = sy - 3 * s - h / 2;
         DrawWeaponIcon(rp.state.weapon, x * kx, y * ky, w * kx, h * ky, (uint8_t)(alpha * 255));
+        DrawWantedStars(rp.state.wanted, (sx - 32 * s - 4 * s) * kx, (sy - 3 * s) * ky, (uint8_t)(alpha * 255));
     }
 }
 

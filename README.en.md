@@ -58,9 +58,11 @@ world.
 
 ### Cars
 
-Each player drives on their own or rides as a passenger with the other. Tuning and damage are visible to the other
-player. Plane landing gear and nozzles, tank and fire truck turrets, hydraulics, trailers and the tow truck all
-work. Either player can leave a car in the garage at a safe house, and the host's world keeps it.
+Each player drives on their own or rides as a passenger with the other. A passenger can shoot from the window: the
+right mouse button leans out with the gun, the left one fires. Tuning and damage are visible to the other player.
+Plane landing gear and nozzles, tank and fire truck turrets, hydraulics, trailers and the tow truck all work.
+Explosions, rockets, grenades, tank shells, fire truck water, trains and RC toys are seen by both players. Either
+player can leave a car in the garage at a safe house, and the host's world keeps it.
 
 ![The partner rides as a passenger in the host's car](docs/images/car.jpg)
 
@@ -99,8 +101,10 @@ F9 window, and each player picks their own: the host can play in Russian while t
 Side jobs (taxi, paramedic, firefighter, vigilante, pimp), races, schools, the shooting range, trucking and the
 quarry are played by each player in their own game. There is text chat and voice chat, and the farther away the
 partner is, the quieter they sound. A waypoint one player sets on the map shows up on the other player's radar,
-and a house one player buys appears for both. Cheats for the weather, traffic, pedestrians and game speed work for
-both players, while weapon, money and health cheats only work for the player who typed them.
+and a house one player buys appears for both. Above the partner's head you see their health, armour, weapon and
+wanted stars. Only the host starts turf wars, but both players' kills of rival gang members provoke them. Cheats
+for the weather, traffic, pedestrians and game speed work for both players, while weapon, money and health cheats
+only work for the player who typed them.
 
 ![Chat, voice and the player list on the partner's screen](docs/images/en/chat-voice.jpg)
 
@@ -147,6 +151,7 @@ guide describes.
 | T | chat: Enter sends a message, Esc closes the chat |
 | B | voice chat while the key is held |
 | G | get into the nearest car as a passenger |
+| Right mouse button | as a passenger: lean out of the window with the gun, fire with the left button |
 | F2 | the player list |
 | Enter / Esc | in a cutscene: offer to skip it, agree / refuse |
 
@@ -155,7 +160,9 @@ The chat supports the `/help`, `/players` and `/tp` (go to your partner) command
 
 ## Limitations
 
-- Only the host can start story missions, Cesar's races and turf wars.
+- Only the host can start story missions, Cesar's races and turf wars. When a mission has CJ carry something, like
+  the crates in the house robbery with Ryder, the host does it.
+- You see the other player's train but cannot get into it: it is driven by the player whose game made it.
 - The partner gets story progress (new areas, gyms, mission markers) by loading the host's world after every
   mission the host passes. Loading takes a few seconds, and the partner keeps their position, weapons and
   progress.
@@ -166,7 +173,8 @@ The chat supports the `/help`, `/players` and `/tp` (go to your partner) command
 - If both players are behind a "symmetric" NAT (common with mobile internet), the invite code cannot connect them
   without a relay. Then you need `turn` or port 7788/UDP forwarded to the host's computer.
 - Only `gta_sa.exe` version 1.0 US is supported. The players' builds may differ, but mods that change the story or
-  the saves are needed on both sides.
+  the saves are needed on both sides. If the partner's `data\script\main.scm` differs from the host's, the host's
+  world does not load for them, and the mod says so in the chat.
 - Mods installed through modloader work. Each player sees their own models, textures and effects. A car that a mod
   adds under a new ID is only visible to the player who has that mod.
 

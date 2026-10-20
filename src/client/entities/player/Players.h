@@ -81,6 +81,8 @@ private:
     void ApplyState(RemotePlayer& rp);
     void ApplyVehicleSeat(RemotePlayer& rp);
     void DrawNameTag(RemotePlayer& rp);
+    void KeepApart(game::CPed* other);
+    void RideTrain(RemotePlayer& rp);
     bool TagAnchor(RemotePlayer& rp, float& sx, float& sy, float& alpha);
     RemotePlayer& Touch(uint8_t from);
 

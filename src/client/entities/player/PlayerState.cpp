@@ -125,6 +125,7 @@ void OnFootState::Write(Writer& w) const {
     w.U8(flags);
     w.I8(area);
     w.U8(moveState);
+    w.U8(wanted);
     pad.Write(w);
     cam.Write(w);
 }
@@ -142,6 +143,7 @@ bool OnFootState::Read(Reader& r) {
     flags = r.U8();
     area = r.I8();
     moveState = r.U8();
+    wanted = r.U8();
     pad.Read(r);
     cam.Read(r);
     return r.Ok();

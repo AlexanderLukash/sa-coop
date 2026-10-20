@@ -17,6 +17,7 @@ struct VehicleLook {
     // the 2 tyres of a bike
     uint8_t damage[20] = {};
     uint8_t bikeTyres[2] = {};
+    uint8_t lock = 0;  // CVehicle::m_nDoorLock: a mission locks and unlocks its cars after they are known to both
     VehicleLook() {
         for (int16_t& u : upgrades) u = -1;
     }
@@ -77,6 +78,9 @@ public:
     void Reannounce();
     // this game would drop the car, the other player is nearer: it goes to that player's game (false: not ours to give)
     bool QueueGiveAway(game::CVehicle* v, uint8_t to);
+    // The host's mission cleared an area: the other players' empty cars there go from this game at once (their copies
+    // are mission cars here, CLEAR_AREA left them). Returns their ids for the owners (G_VEH_CLEAR).
+    std::vector<uint16_t> ClearMirrors(const game::CVector& at, float radius);
 
 private:
     void Announce(const NetVehicle& nv);
@@ -98,6 +102,9 @@ private:
     void GiveAway(NetVehicle& nv, uint8_t to);
     void HandleHandover(uint8_t from, Reader& r);
     void HandleScriptFree(uint8_t from, Reader& r);
+    void HandleClear(uint8_t from, Reader& r);
+    void KeepCarWhileInside(game::CPlayerPed* me);
+    void ReleaseKeptCar();
     game::CVehicle* SpawnMirror(const VehicleSpawn& sp);
     game::CVehicle* FindAdoptable(uint16_t model, const game::CVector& pos);
 
@@ -107,9 +114,13 @@ private:
     std::map<game::CVehicle*, uint8_t> m_giveAway;  // to hand over after the population code (vehicle -> player)
     uint16_t m_nextId = 1;
     uint64_t m_lastScan = 0;
+    int m_lastDriven = -1, m_kept = -1;  // handles: the car the local player last drove, and it kept while inside
+    uint8_t m_keptBy = 0;               // what it was created by before
+    int8_t m_lastArea = 0;
 };
 
-// Vehicles that are synchronised at all (trains and RC toys are left to each game).
+// Vehicles that are synchronised at all (trains are left to each game). An RC toy is its player's game's car with
+// nobody in it: that player stays on foot in it (CPed::bInVehicle), and the other game sees the toy fly or drive.
 bool IsSyncableVehicle(game::CVehicle* v);
 
 }  // namespace coop

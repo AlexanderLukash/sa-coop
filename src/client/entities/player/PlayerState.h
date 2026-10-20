@@ -68,10 +68,11 @@ struct OnFootState {
     uint8_t flags = 0;  // F_*
     int8_t area = 0;
     uint8_t moveState = 0;
+    uint8_t wanted = 0;  // stars, shown on the name tag
     PadState pad;
     CameraState cam;
 
-    enum : uint8_t { F_DUCKING = 1, F_IN_AIR = 2, F_DEAD = 4, F_SWIMMING = 8, F_JETPACK = 16 };
+    enum : uint8_t { F_DUCKING = 1, F_IN_AIR = 2, F_DEAD = 4, F_SWIMMING = 8, F_JETPACK = 16, F_IN_TRAIN = 32 };
 
     void Write(Writer& w) const;
     bool Read(Reader& r);

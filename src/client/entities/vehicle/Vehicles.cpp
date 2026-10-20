@@ -92,6 +92,7 @@ VehicleLook CaptureLook(CVehicle* v) {
     if (v->VehicleSubClass() == VEHICLE_TYPE_BIKE) memcpy(l.bikeTyres, (uint8_t*)v + kBikeTyres, 2);
     memcpy(l.colors, v->Colors(), 4);
     memcpy(l.upgrades, v->Upgrades(), sizeof(l.upgrades));
+    l.lock = (uint8_t)v->DoorLock();
     int pj = -1;
     Cmd(0x0988).I(GetVehicleRef(v)).Out(&pj).Run();  // GET_CURRENT_VEHICLE_PAINTJOB
     l.paintjob = (int8_t)pj;
@@ -101,15 +102,10 @@ VehicleLook CaptureLook(CVehicle* v) {
 
 bool VehicleLook::operator==(const VehicleLook& o) const {
     return !memcmp(colors, o.colors, 4) && !memcmp(upgrades, o.upgrades, sizeof(upgrades)) && paintjob == o.paintjob &&
-           !memcmp(damage, o.damage, sizeof(damage)) && !memcmp(bikeTyres, o.bikeTyres, 2);
+           !memcmp(damage, o.damage, sizeof(damage)) && !memcmp(bikeTyres, o.bikeTyres, 2) && lock == o.lock;
 }
 
-bool IsSyncableVehicle(CVehicle* v) {
-    switch (v->ModelIndex()) {
-    case 441: case 464: case 465: case 501: case 564: case 594: return false;  // RC toys
-    }
-    return !v->IsTrain();
-}
+bool IsSyncableVehicle(CVehicle* v) { return !v->IsTrain(); }
 
 // A mirror has the AI-driven status (STATUS_PHYSICS), so every physics step ran its AI steering
 // (CCarCtrl::SteerAICarWithPhysics): with no mission it brakes and pulls the handbrake, and the next frame's
@@ -131,6 +127,7 @@ void Vehicles::OnInstallHooks() {
     Net().SetHandler(proto::G_VEH_STATUS, [](uint8_t from, Reader& r) { Instance().HandleStatus(from, r); });
     Net().SetHandler(proto::G_VEH_HANDOVER, [](uint8_t from, Reader& r) { Instance().HandleHandover(from, r); });
     Net().SetHandler(proto::G_VEH_SCRIPT_FREE, [](uint8_t from, Reader& r) { Instance().HandleScriptFree(from, r); });
+    Net().SetHandler(proto::G_VEH_CLEAR, [](uint8_t from, Reader& r) { Instance().HandleClear(from, r); });
 }
 
 NetVehicle* Vehicles::Find(uint16_t netId) {
@@ -202,6 +199,7 @@ void Vehicles::SendLook(NetVehicle& nv) {
     w.I8(nv.look.paintjob);
     w.Raw(nv.look.damage, sizeof(nv.look.damage));
     w.Raw(nv.look.bikeTyres, 2);
+    w.U8(nv.look.lock);
     Net().Send(proto::CH_RELIABLE, w);
 }
 
@@ -213,6 +211,7 @@ void Vehicles::HandleStatus(uint8_t from, Reader& r) {
     l.paintjob = r.I8();
     r.Raw(l.damage, sizeof(l.damage));
     r.Raw(l.bikeTyres, 2);
+    l.lock = r.U8();
     NetVehicle* nv = Find(id);
     if (!r.Ok() || !nv || nv->owner != from) return;
     nv->look = l;
@@ -239,6 +238,9 @@ void Vehicles::ApplyLook(NetVehicle& nv) {
     if (nv.look.paintjob >= 0 && pj != nv.look.paintjob) Cmd(0x06ED).I(h).I(nv.look.paintjob).Run();  // GIVE_VEHICLE_PAINTJOB
     if (HasDamageManager(v)) ApplyDamage(v, nv.look.damage);
     else if (v->VehicleSubClass() == VEHICLE_TYPE_BIKE) memcpy((uint8_t*)v + kBikeTyres, nv.look.bikeTyres, 2);
+    // the lock it had when it became known stayed: a mission car locked then held the partner who got in, after the
+    // mission it was opened only in the owner's game (the Savanna of "Cesar Vialpando"); same rule as at the spawn
+    v->DoorLock() = nv.look.lock == 2 && !nv.script ? 1 : nv.look.lock;
 }
 
 void Vehicles::TakeOwnership(NetVehicle& nv) {
@@ -382,6 +384,36 @@ void Vehicles::Drop(uint16_t netId) {
     bool gone = nv->createdByUs && !inside;
     if (!gone) Release(*nv);
     Forget(netId, gone);
+}
+
+std::vector<uint16_t> Vehicles::ClearMirrors(const CVector& at, float radius) {
+    std::vector<uint16_t> ids;
+    for (auto& [id, nv] : m_byId) {
+        CVehicle* v = nv.veh;
+        if (!IsMirror(nv) || nv.script || !IsVehicleValid(v) || v->Driver()) continue;
+        bool empty = true;
+        for (int i = 0; i < 8; ++i) empty = empty && !v->Passengers()[i];
+        CVector d = v->GetPosition() - at;
+        if (empty && d.x * d.x + d.y * d.y < radius * radius) ids.push_back(id);
+    }
+    for (uint16_t id : ids) Forget(id, true);
+    return ids;
+}
+
+// the owner's side of ClearMirrors: what the host's copy no longer has goes here too, as the area's ordinary cars went
+void Vehicles::HandleClear(uint8_t from, Reader& r) {
+    uint8_t n = r.U8();
+    for (uint8_t i = 0; i < n && r.Ok() && from == Net().HostId(); ++i) {
+        uint16_t id = r.U16();
+        NetVehicle* nv = r.Ok() ? Find(id) : nullptr;
+        if (!nv || IsMirror(*nv) || !IsVehicleValid(nv->veh)) continue;
+        if (nv->veh->Driver() || HasPlayerInside(nv->veh)) {  // got in meanwhile: the host gets its copy back
+            Announce(*nv);
+            continue;
+        }
+        LOGI("Vehicle %04X (model %d) cleared away by the host's mission", id, nv->model);
+        Cmd(0x00A6).I(nv->handle).Run();  // DELETE_CAR: its removal goes out with the other vanished ones (Update)
+    }
 }
 
 void Vehicles::ForgetOwnedBy(uint8_t owner) {
@@ -679,7 +711,8 @@ void Vehicles::ScanTraffic() {
         Net().Send(proto::CH_RELIABLE, w);
         // a copy of the other game's car this player took: off the network an ordinary car (a mission one stayed forever)
         if (NetVehicle* nv = Find(id); nv && nv->createdByUs && IsVehicleValid(nv->veh) &&
-                                       nv->veh->CreatedBy() == VEHICLE_CREATED_MISSION && !ScriptHolds(nv->veh))
+                                       nv->veh->CreatedBy() == VEHICLE_CREATED_MISSION && !ScriptHolds(nv->veh) &&
+                                       GetVehicleRef(nv->veh) != m_kept)
             SetVehicleCreatedBy(nv->veh, VEHICLE_CREATED_RANDOM);
         Forget(id, false);
     }
@@ -691,10 +724,38 @@ void Vehicles::ScanTraffic() {
     }
 }
 
+// The car the player came in waits outside while the player is in an interior. An interior lies kilometres from its
+// door (CCarCtrl::PossiblyRemoveVehicle measures on the map), so the game dropped the car, or handed it to the other
+// player's game as an ordinary car that went as soon as that player got far too: both found nothing outside.
+void Vehicles::KeepCarWhileInside(CPlayerPed* me) {
+    if (me->InVehicle() && me->Vehicle() && me->Vehicle()->Driver() == me) m_lastDriven = GetVehicleRef(me->Vehicle());
+    int8_t area = me->AreaCode();
+    if (area != 0 && m_lastArea == 0 && m_kept < 0) {
+        CVehicle* v = GetVehicle(m_lastDriven);
+        uint8_t by = v ? v->CreatedBy() : 0;
+        if (v && v->AreaCode() == 0 && (by == VEHICLE_CREATED_RANDOM || by == VEHICLE_CREATED_PARKED)) {
+            m_kept = m_lastDriven;
+            m_keptBy = by;
+            SetVehicleCreatedBy(v, VEHICLE_CREATED_MISSION);
+            LOGI("The player's car (model %d) is kept outside while the player is in interior %d", v->ModelIndex(), area);
+        }
+    } else if (area == 0 && m_lastArea != 0) {
+        ReleaseKeptCar();
+    }
+    m_lastArea = area;
+}
+
+void Vehicles::ReleaseKeptCar() {
+    CVehicle* v = m_kept >= 0 ? GetVehicle(m_kept) : nullptr;
+    if (v && v->CreatedBy() == VEHICLE_CREATED_MISSION && !ScriptHolds(v)) SetVehicleCreatedBy(v, m_keptBy);
+    m_kept = -1;
+}
+
 void Vehicles::OnPostProcess() {
     if (!Net().Online() || !core::IsPlayerReady()) return;
     CPlayerPed* me = FindPlayerPed(0);
     uint64_t now = NowMs();
+    KeepCarWhileInside(me);
     for (auto& [v, to] : m_giveAway)  // still ours and still free to go
         if (NetVehicle* nv = IsVehicleValid(v) ? Find(v) : nullptr; nv && !IsMirror(*nv) && CanGiveAway(v)) GiveAway(*nv, to);
     m_giveAway.clear();
@@ -741,6 +802,7 @@ void Vehicles::OnPostProcess() {
 }
 
 void Vehicles::OnSessionEnd() {
+    ReleaseKeptCar();
     // mirrors stay in the world as this game's cars (the other game's scripts hold nothing here any more)
     for (auto& [id, nv] : m_byId)
         if (IsMirror(nv)) {
@@ -766,6 +828,8 @@ void Vehicles::OnPeerLeave(uint8_t id) {
 }
 
 void Vehicles::OnGameStarted() {
+    m_lastDriven = m_kept = -1;  // a new world: the old handles mean other cars
+    m_lastArea = 0;
     m_byId.clear();
     m_byPtr.clear();
     m_pending.clear();
