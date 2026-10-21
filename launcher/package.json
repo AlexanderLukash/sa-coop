@@ -1,6 +1,6 @@
 {
   "name": "sa-coop-launcher",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "LAN co-op launcher for GTA San Andreas",
   "author": "AlexanderLukash",
   "license": "MIT",
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "7zip-bin": "5.2.0",
+    "node-unrar-js": "2.0.2",
     "ws": "^8.18.0",
     "yauzl": "^3.2.0"
   },

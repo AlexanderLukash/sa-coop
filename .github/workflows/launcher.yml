@@ -90,6 +90,11 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
+          pattern: launcher-Linux
+          path: release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
           name: release-SA-COOP
           path: release-assets
           merge-multiple: true
@@ -103,5 +108,7 @@ jobs:
           tag_name: ${{ steps.release.outputs.tag }}
           files: |
             release-assets/*.exe
+            release-assets/*.AppImage
+            release-assets/*.deb
             release-assets/SA-COOP.zip
           fail_on_unmatched_files: true

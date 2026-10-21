@@ -107,14 +107,21 @@ async function launch(mode, connection = {}) {
   const configFile = await writeGameConfig(active, { mode, password: mode === 'host' ? settings.password : '', ...connection, session });
   const statusFile = configFile + '.status.json';
   const spec = launchSpec(active);
+  if (process.platform === 'linux' && window && !window.isDestroyed()) window.minimize();
   const child = spawn(spec.command, spec.args, spec.options);
-  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+  try {
+    await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+  } catch (error) {
+    if (window && !window.isDestroyed()) window.restore();
+    throw error;
+  }
   gameProcess = child; notify('game', { playing: true });
   let monitor;
   child.on('error', error => notify('notice', { message: error.message }));
   child.once('exit', () => {
     clearInterval(monitor);
     if (gameProcess === child) gameProcess = null;
+    if (process.platform === 'linux' && window && !window.isDestroyed()) { window.restore(); window.focus(); }
     notify('game', { playing: false });
     if (ownerClient === lobbyClient && ownerClient?.ws?.readyState === 1) {
       if (mode === 'host') ownerClient.send({ type: 'game-ended' });
@@ -210,15 +217,18 @@ app.whenReady().then(async () => {
         busy = true; operation = 'comfort-mods'; installation = new AbortController();
         notify('busy', { busy, operation });
         try {
-          let sources = {};
-          try { sources = JSON.parse(await readText(path.join(app.getPath('userData'), 'mod-sources.json')) || '{}'); } catch {}
-          const modSources = {
-            framerateVigilanteUrl: process.env.SACOOP_FRAMERATE_VIGILANTE_URL || sources.framerateVigilanteUrl || '',
-          };
-          const result = await installComfortMods(settings.gameDir, modSources,
+          const result = await installComfortMods(settings.gameDir, {},
             progress => notify('progress', progress), installation.signal);
-          if (result.skipped.length) notify('notice', { message: `Гру налаштовано. Не вдалося отримати джерело: ${result.skipped.join(', ')}. Перевірте посилання в mod-sources.json.` });
-          else notify('notice', { message: 'Гру налаштовано: моди комфорту встановлено.' });
+          const skipped = [...result.skipped];
+          try {
+            const localization = require('./core/localization.cjs');
+            const localized = await localization.installUkrainian(settings.gameDir, settings,
+              progress => notify('progress', progress), installation.signal);
+            skipped.push(...localized.skipped);
+          } catch (error) { if (installation.signal?.aborted) throw error; skipped.push(`Українська локалізація: ${error.message}`); }
+          notify('notice', { message: skipped.length
+            ? `Налаштування завершено. Пропущено: ${skipped.join('; ')}`
+            : 'Гру налаштовано: моди та українська локалізація встановлені.' });
         } catch (error) { notify('notice', { message: `Папку GTA збережено, але встановлення модів не завершилось: ${error.message}` }); }
         finally { busy = false; operation = null; installation = null; notify('busy', { busy, operation }); }
       }

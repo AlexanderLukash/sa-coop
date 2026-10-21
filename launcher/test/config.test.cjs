@@ -29,6 +29,7 @@ test('Windows and Linux launch without shell interpolation and use the selected 
   assert.match(linux.options.env.WINEDLLOVERRIDES, /^vorbisFile=n,b/);
   assert.match(linux.options.env.WINEDLLOVERRIDES, /dinput8=n,b/);
   assert.equal(linux.options.shell, undefined);
+  assert.equal(linux.options.detached, true);
   assert.equal(launchSpec(s, 'win32').command, path.join(s.gameDir, 'gta_sa.exe'));
 });
 test('game integration writes LAN server and client configs without changing coop.ini', async () => {

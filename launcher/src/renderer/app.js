@@ -290,12 +290,12 @@ api.onEvent(event => {
   else if (event.type === 'game') state.playing = event.playing;
   else if (event.type === 'notice') toast(event.message, true);
   else if (event.type === 'progress') {
-    const labels = { download: 'Завантаження мода', extract: 'Перевіряємо й розпаковуємо', install: 'Встановлюємо SA COOP', done: 'Мод готовий', 'mod-download': 'Завантаження', 'mod-extract': 'Розпакування', 'mod-install': 'Встановлення', 'mod-skip': 'Пропущено', 'mod-done': 'Моди готові' };
+    const labels = { download: 'Завантаження мода', extract: 'Перевіряємо й розпаковуємо', install: 'Встановлюємо SA COOP', done: 'Мод готовий', 'mod-download': 'Завантаження', 'mod-extract': 'Розпакування', 'mod-install': 'Встановлення', 'mod-skip': 'Пропущено', 'mod-done': 'Моди готові', 'translation-download': 'Завантаження перекладу', 'translation-install': 'Встановлення перекладу', 'translation-done': 'Переклад встановлено', 'translation-skip': 'Переклад пропущено' };
     const pct = event.total ? Math.round(event.received / event.total * 100) : Number.isFinite(event.percent) ? event.percent : null;
     const overall = pct === null ? null : event.count ? Math.round(((event.index - 1) + pct / 100) / event.count * 100) : pct;
     const size = value => value < 1048576 ? `${Math.round(value / 1024)} КБ` : `${(value / 1048576).toFixed(1)} МБ`;
     let detail = overall === null ? '…' : `${overall}%`;
-    if (event.stage === 'mod-download') detail += ` · ${size(event.received || 0)} / ${event.total ? size(event.total) : '—'} · ${size(event.speed || 0)}/с`;
+    if (['mod-download', 'translation-download'].includes(event.stage)) detail += ` · ${size(event.received || 0)} / ${event.total ? size(event.total) : '—'} · ${size(event.speed || 0)}/с`;
     $('#progress-text').textContent = `${labels[event.stage] || 'Підготовка'}${event.mod ? ` · ${event.mod}` : ''} · ${detail}`;
     if (overall !== null) $('#progress-bar').value = overall;
     else if (event.stage === 'mod-done') $('#progress-bar').value = 100;

@@ -4,6 +4,7 @@ const os = require('node:os');
 const { constants: fsConstants } = require('node:fs');
 const { spawn } = require('node:child_process');
 const { path7za } = require('7zip-bin');
+const { createExtractorFromFile } = require('node-unrar-js');
 const { download, exists, regularPath } = require('./install.cjs');
 
 const GITHUB = 'https://api.github.com/repos';
@@ -81,10 +82,54 @@ async function sourceList(sourceConfig) {
     { id: 'modloader', title: 'ModLoader', archive: modloader, rootPlugin: true },
     { id: 'silentpatch', title: 'SilentPatch', archive: silent },
     { id: 'widescreen-fix', title: 'Widescreen Fix', archive: { name: 'GTASA.WidescreenFix.zip', url: 'https://github.com/ThirteenAG/WidescreenFixesPack/releases/download/gtasa/GTASA.WidescreenFix.zip', digest: 'sha256:563078bfae5ad93be548d9378d4a97809762fb3a8dfdf0ef65e6023beadeb3ae' } },
-    { id: 'framerate-vigilante', title: 'Framerate Vigilante', archive: { name: 'FramerateVigilante.zip', url: sourceConfig.framerateVigilanteUrl || 'https://www.moddb.com/downloads/start/252055?referer=https%3A%2F%2Fwww.google.com%2F' } },
     { id: 'skygfx', title: 'SkyGfx', archive: { name: 'SkyGfx_SA_4.2b.zip', url: 'https://github.com/aap/skygfx/releases/download/v4.2b/SkyGfx_SA_4.2b.zip' } },
     { id: 'open-limit-adjuster', title: 'Open Limit Adjuster', archive: ola },
+    { id: 'ukrainian-audio', title: 'Українська озвучка', archive: { name: 'GTA-SA-Ukrainian-Audio.rar', url: 'https://drive.usercontent.google.com/download?id=180iMsjuemneiSiJD3Teouoqjjq-fj9AG&export=download&confirm=t', digest: 'sha256:c60102632f16384df04fa6e00b17331ee03c2e6123453cd26c070edaaf90d222' }, rar: true },
   ];
+}
+
+function validateRarEntries(headers) {
+  const files = [], seen = new Set(); let total = 0;
+  for (const header of headers) {
+    const relative = header.name.replaceAll('\\', '/').replace(/\/$/, '');
+    if (!relative || relative.startsWith('/') || relative.includes(':') || path.win32.isAbsolute(header.name) ||
+        relative.split('/').some(part => !part || part === '.' || part === '..' || /[. ]$/.test(part)) || /[\0-\x1f]/.test(relative))
+      throw new Error('Архів озвучення містить небезпечний шлях.');
+    if (header.flags.encrypted) throw new Error('Архів озвучення зашифрований.');
+    const key = relative.toLocaleLowerCase('en-US');
+    if (seen.has(key)) throw new Error('Архів озвучення містить однакові шляхи.');
+    seen.add(key);
+    if (!header.flags.directory) {
+      if (!Number.isSafeInteger(header.unpSize) || header.unpSize < 0) throw new Error('Некоректний розмір файлу в архіві озвучення.');
+      total += header.unpSize;
+      if (total > 2 * 1024 * 1024 * 1024) throw new Error('Озвучення перевищує обмеження 2 ГБ.');
+      files.push(relative);
+    }
+    if (seen.size > 10000) throw new Error('Архів озвучення містить надто багато записів.');
+  }
+  if (!files.length) throw new Error('Архів озвучення порожній.');
+  return files;
+}
+async function extractRar(archive, stage, signal, progress) {
+  signal?.throwIfAborted();
+  const extractor = await createExtractorFromFile({ filepath: archive, targetPath: stage,
+    filenameTransform: name => name.replaceAll('\\', '/') });
+  const headers = [...extractor.getFileList().fileHeaders];
+  const files = validateRarEntries(headers);
+  signal?.throwIfAborted();
+  progress?.({ percent: 0 });
+  const allowed = new Set(files);
+  const result = extractor.extract({ files: header => !header.flags.directory &&
+    allowed.has(header.name.replaceAll('\\', '/').replace(/\/$/, '')) });
+  let extracted = 0;
+  for (const item of result.files) {
+    signal?.throwIfAborted();
+    if (item.fileHeader.flags.encrypted || item.fileHeader.unpSize > 0 && !item.fileHeader.name)
+      throw new Error('Не вдалося повністю розпакувати архів озвучення.');
+    progress?.({ percent: Math.round(++extracted / files.length * 100) });
+  }
+  if (extracted !== files.length) throw new Error('Не вдалося повністю розпакувати архів озвучення.');
+  signal?.throwIfAborted();
 }
 
 async function installComfortMods(gameDir, sourceConfig = {}, progress = () => {}, signal) {
@@ -106,13 +151,16 @@ async function installComfortMods(gameDir, sourceConfig = {}, progress = () => {
       try {
       await fs.mkdir(stage);
       progress({ stage: 'mod-download', mod: source.title, index: i + 1, count: pending.length });
-      if (source.id === 'framerate-vigilante' && !/^https:\/\//i.test(source.archive.url)) throw new Error(`Для ${source.title} потрібне HTTPS-посилання.`);
-      await download(source.archive, archive, event => progress({ ...event, stage: 'mod-download', mod: source.title, index: i + 1, count: pending.length }), signal, 1536 * 1024 * 1024);
-      const listing = await run7z(['l', '-slt', archive], signal);
-      const entries = archiveEntries(listing);
-      if (!entries.length) throw new Error(`${source.title}: архів порожній.`);
-      progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, percent: 0 });
-      await run7z(['x', archive, `-o${stage}`, '-y', '-bsp1'], signal, event => progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, ...event }));
+      await download(source.archive, archive, event => progress({ ...event, stage: 'mod-download', mod: source.title, index: i + 1, count: pending.length }), signal, 1024 * 1024 * 1024);
+      if (source.rar) {
+        await extractRar(archive, stage, signal, event => progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, ...event }));
+      } else {
+        const listing = await run7z(['l', '-slt', archive], signal);
+        const entries = archiveEntries(listing);
+        if (!entries.length) throw new Error(`${source.title}: архів порожній.`);
+        progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, percent: 0 });
+        await run7z(['x', archive, `-o${stage}`, '-y', '-bsp1'], signal, event => progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, ...event }));
+      }
       const actual = await fs.readdir(stage, { recursive: true, withFileTypes: true });
       const files = actual.filter(entry => entry.isFile()).map(entry => path.relative(stage, path.join(entry.parentPath, entry.name)));
       if (!files.length) throw new Error(`${source.title}: немає файлів для встановлення.`);
@@ -181,4 +229,4 @@ async function installComfortMods(gameDir, sourceConfig = {}, progress = () => {
   } finally { await fs.rm(work, { recursive: true, force: true }); }
 }
 
-module.exports = { installComfortMods };
+module.exports = { installComfortMods, validateRarEntries, extractRar };

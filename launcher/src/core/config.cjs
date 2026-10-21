@@ -129,7 +129,7 @@ function launchSpec(settings, platform = process.platform) {
   if (settings.winePrefix) env.WINEPREFIX = path.resolve(settings.winePrefix);
   // Force Wine to load the game's ASI loader rather than its builtin vorbis module.
   env.WINEDLLOVERRIDES = (env.WINEDLLOVERRIDES ? `${env.WINEDLLOVERRIDES};` : '') + 'vorbisFile=n,b;dinput8=n,b;dsound=n,b';
-  return { command: settings.wineCommand, args: [executable], options: { cwd: settings.gameDir, env, stdio: 'ignore' } };
+  return { command: settings.wineCommand, args: [executable], options: { cwd: settings.gameDir, env, stdio: 'ignore', detached: true } };
 }
 function lanAddresses() {
   return Object.values(os.networkInterfaces()).flat().filter(i => i && i.family === 'IPv4' && !i.internal)
