@@ -8,6 +8,7 @@ const { randomUUID } = require('node:crypto');
 const { readStatus, waitForStatus } = require('./core/session-status.cjs');
 const { defaults, validate, atomicWrite, readText, writeGameConfig, launchSpec, lanAddresses } = require('./core/config.cjs');
 const { inspectGame, installedBuild, latestRelease, download, installArchive, checkInstallAccess } = require('./core/install.cjs');
+const { installComfortMods } = require('./core/comfort-mods.cjs');
 const { LanLobbyServer, LobbyClient, discover, serverSettings } = require('./core/lobby.cjs');
 const skins = require('./skins.json');
 
@@ -15,7 +16,7 @@ if (process.env.SACOOP_LAUNCHER_DATA) app.setPath('userData', process.env.SACOOP
 const locked = app.requestSingleInstanceLock();
 if (!locked) app.quit();
 let window, settings = { ...defaults }, gameProcess, lobbyServer, lobbyClient, release, installation;
-let room = null, selfId = null, busy = false, launching = false, connectionBusy = false;
+let room = null, selfId = null, busy = false, operation = null, launching = false, connectionBusy = false;
 const rendererURL = pathToFileURL(path.join(__dirname, 'renderer/index.html')).href;
 const notify = (type, data) => { if (window && !window.isDestroyed()) window.webContents.send('launcher:event', { type, ...data }); };
 const configPath = () => path.join(app.getPath('userData'), 'settings.json');
@@ -27,7 +28,7 @@ function requireIdle() {
 }
 async function snapshot() {
   return { settings, platform: process.platform, version: app.getVersion(), game: await inspectGame(settings.gameDir),
-    addresses: lanAddresses().map(a => a.address), skins, room, selfId, playing: !!gameProcess, launching, busy, release };
+    addresses: lanAddresses().map(a => a.address), skins, room, selfId, playing: !!gameProcess, launching, busy, operation, release };
 }
 async function save(input) {
   if (connectionBusy) throw new Error('Дочекайтесь підключення до лобі.');
@@ -144,29 +145,19 @@ async function launch(mode, connection = {}) {
   return snapshot();
   } finally { launching = false; }
 }
-async function install(local) {
+async function install() {
   requireIdle();
   if (lobbyClient) throw new Error('Вийдіть із лоббі перед оновленням мода.');
-  let archive;
-  if (local) {
-    const result = await dialog.showOpenDialog(window, { title: 'Оберіть SA-COOP.zip', filters: [{ name: 'SA-COOP ZIP', extensions: ['zip'] }], properties: ['openFile'] });
-    if (result.canceled) return snapshot();
-    archive = result.filePaths[0];
-  }
   requireIdle();
   busy = true; installation = new AbortController(); notify('busy', { busy });
   let temp;
   try {
     await checkInstallAccess(settings.gameDir);
-    let version = 'local';
-    if (!local) {
-      release = await latestRelease(settings.releaseRepo);
-      version = release.version;
-      temp = await fs.mkdtemp(path.join(os.tmpdir(), 'sacoop-download-'));
-      archive = path.join(temp, 'SA-COOP.zip');
-      await download(release, archive, progress => notify('progress', progress), installation.signal);
-    }
-    await installArchive(archive, settings.gameDir, version, progress => notify('progress', progress), installation.signal);
+    release = await latestRelease(settings.releaseRepo);
+    temp = await fs.mkdtemp(path.join(os.tmpdir(), 'sacoop-download-'));
+    const archive = path.join(temp, 'SA-COOP.zip');
+    await download(release, archive, progress => notify('progress', progress), installation.signal);
+    await installArchive(archive, settings.gameDir, release.version, progress => notify('progress', progress), installation.signal);
   } finally {
     try { if (temp) await fs.rm(temp, { recursive: true, force: true }); }
     finally { busy = false; installation = null; notify('busy', { busy }); }
@@ -215,6 +206,22 @@ app.whenReady().then(async () => {
       const game = await inspectGame(result.filePaths[0]);
       if (!game.found) throw new Error('У цій папці немає gta_sa.exe.');
       await save({ ...settings, gameDir: result.filePaths[0] });
+      if (game.supported) {
+        busy = true; operation = 'comfort-mods'; installation = new AbortController();
+        notify('busy', { busy, operation });
+        try {
+          let sources = {};
+          try { sources = JSON.parse(await readText(path.join(app.getPath('userData'), 'mod-sources.json')) || '{}'); } catch {}
+          const modSources = {
+            framerateVigilanteUrl: process.env.SACOOP_FRAMERATE_VIGILANTE_URL || sources.framerateVigilanteUrl || '',
+          };
+          const result = await installComfortMods(settings.gameDir, modSources,
+            progress => notify('progress', progress), installation.signal);
+          if (result.skipped.length) notify('notice', { message: `Гру налаштовано. Не вдалося отримати джерело: ${result.skipped.join(', ')}. Перевірте посилання в mod-sources.json.` });
+          else notify('notice', { message: 'Гру налаштовано: моди комфорту встановлено.' });
+        } catch (error) { notify('notice', { message: `Папку GTA збережено, але встановлення модів не завершилось: ${error.message}` }); }
+        finally { busy = false; operation = null; installation = null; notify('busy', { busy, operation }); }
+      }
     }
     return snapshot();
   });

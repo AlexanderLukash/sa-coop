@@ -60,16 +60,19 @@ async function latestRelease(repo, fetcher = fetch) {
     size: asset.size, digest: asset.digest || '', publishedAt: release.published_at };
 }
 
-async function download(release, file, progress, signal) {
+async function download(release, file, progress, signal, maxBytes = 512 * 1024 * 1024) {
   const response = await fetch(release.url, { signal });
   if (!response.ok || !response.body) throw new Error(`Не вдалося завантажити архів: HTTP ${response.status}`);
   const total = Number(response.headers.get('content-length')) || release.size;
   const hash = crypto.createHash('sha256');
-  let received = 0;
+  let received = 0, lastAt = Date.now(), lastReceived = 0;
   const counter = new Transform({ transform(chunk, _encoding, callback) {
     received += chunk.length;
-    if (received > 512 * 1024 * 1024) return callback(new Error('Архів перевищує 512 МБ.'));
-    hash.update(chunk); progress({ stage: 'download', received, total }); callback(null, chunk);
+    if (received > maxBytes) return callback(new Error(`Архів перевищує обмеження ${Math.floor(maxBytes / 1048576)} МБ.`));
+    hash.update(chunk);
+    const now = Date.now(), elapsed = Math.max(1, now - lastAt);
+    progress({ stage: 'download', received, total, speed: Math.max(0, Math.floor((received - lastReceived) * 1000 / elapsed)) });
+    lastAt = now; lastReceived = received; callback(null, chunk);
   } });
   await pipeline(Readable.fromWeb(response.body), counter, createWriteStream(file), { signal });
   const digest = 'sha256:' + hash.digest('hex');

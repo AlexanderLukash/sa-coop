@@ -1,6 +1,6 @@
 {
   "name": "sa-coop-launcher",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "LAN co-op launcher for GTA San Andreas",
   "author": "AlexanderLukash",
   "license": "MIT",
@@ -16,6 +16,7 @@
     "dist:linux": "electron-builder --linux AppImage deb --x64"
   },
   "dependencies": {
+    "7zip-bin": "5.2.0",
     "ws": "^8.18.0",
     "yauzl": "^3.2.0"
   },
@@ -30,6 +31,7 @@
     "directories": { "output": "out" },
     "files": ["src/**/*", "assets/**/*", "package.json"],
     "asar": true,
+    "asarUnpack": ["node_modules/7zip-bin/**/*"],
     "win": { "target": ["nsis", "portable"], "signExecutable": false, "icon": "assets/icon.ico" },
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
     "linux": { "target": ["AppImage", "deb"], "icon": "assets/icon.png", "category": "Game", "maintainer": "AlexanderLukash" }

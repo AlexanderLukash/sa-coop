@@ -73,8 +73,8 @@ function render() {
   const status = $('#game-status');
   status.textContent = state.playing ? 'Гра запущена' : game.installed && game.supported ? 'Готова до гри' : game.found ? game.supported ? 'Потрібен мод' : 'Інша версія GTA' : 'Не налаштовано';
   status.classList.toggle('good', game.installed && game.supported);
-  $('#compatibility').textContent = !game.found ? 'Очікуємо на папку з gta_sa.exe.' : game.supported ? '✓ GTA 1.0 US знайдено. Можна встановлювати мод.' : 'Версія gta_sa.exe не підтримується. Потрібна GTA 1.0 US, 14 383 616 байтів.';
-  for (const id of ['install-mod', 'install-local']) $( '#' + id).disabled = !game.supported || state.busy || state.playing;
+  $('#compatibility').textContent = !game.found ? 'Очікуємо на папку з gta_sa.exe.' : game.supported ? '✓ GTA 1.0 US знайдено. Моди комфорту встановлюються автоматично.' : 'Версія gta_sa.exe не підтримується. Потрібна GTA 1.0 US, 14 383 616 байтів.';
+  $('#install-mod').disabled = !game.supported || state.busy || state.playing;
   $('#choose-game').disabled = state.busy || state.playing || !!state.room;
   $('#install-progress').hidden = !state.busy;
   if (state.release) showRelease(state.release);
@@ -245,8 +245,7 @@ $('#choose-game').addEventListener('click', e => action(e.currentTarget, async (
 $('#open-folder').addEventListener('click', e => action(e.currentTarget, () => api.openFolder()));
 $('#open-releases').addEventListener('click', () => action(null, () => api.openReleases()));
 $('#check-release').addEventListener('click', e => action(e.currentTarget, async () => { state.release = await api.release(); }));
-for (const [id, local] of [['install-mod', false], ['install-local', true]])
-  $('#' + id).addEventListener('click', e => action(e.currentTarget, async () => { state = await api.install(local); toast('Мод встановлено. Час збирати друзів!'); }));
+$('#install-mod').addEventListener('click', e => action(e.currentTarget, async () => { state = await api.install(); toast('Мод встановлено. Час збирати друзів!'); }));
 $('#cancel-install').addEventListener('click', () => api.cancelInstall());
 $('#join-form').addEventListener('submit', e => {
   e.preventDefault(); action($('#join-form button'), async () => {
@@ -287,16 +286,21 @@ $('#settings-form').addEventListener('submit', e => {
 api.onEvent(event => {
   if (!state) return;
   if (event.type === 'lobby') { state.room = event.room; state.selfId = event.selfId; }
-  else if (event.type === 'busy') state.busy = event.busy;
+  else if (event.type === 'busy') { state.busy = event.busy; state.operation = event.operation; }
   else if (event.type === 'game') state.playing = event.playing;
   else if (event.type === 'notice') toast(event.message, true);
   else if (event.type === 'progress') {
-    const text = { download: 'Завантаження мода', extract: 'Перевіряємо та розпаковуємо', install: 'Встановлюємо файли', done: 'Мод готовий до гри' }[event.stage];
-    const percent = event.total ? Math.round(event.received / event.total * 100) : null;
-    $('#progress-text').textContent = text + (percent === null ? '…' : ` · ${percent}%`);
-    if (percent !== null) $('#progress-bar').value = percent;
-    else if (event.stage === 'done') $('#progress-bar').value = 100;
+    const labels = { download: 'Завантаження мода', extract: 'Перевіряємо й розпаковуємо', install: 'Встановлюємо SA COOP', done: 'Мод готовий', 'mod-download': 'Завантаження', 'mod-extract': 'Розпакування', 'mod-install': 'Встановлення', 'mod-skip': 'Пропущено', 'mod-done': 'Моди готові' };
+    const pct = event.total ? Math.round(event.received / event.total * 100) : Number.isFinite(event.percent) ? event.percent : null;
+    const overall = pct === null ? null : event.count ? Math.round(((event.index - 1) + pct / 100) / event.count * 100) : pct;
+    const size = value => value < 1048576 ? `${Math.round(value / 1024)} КБ` : `${(value / 1048576).toFixed(1)} МБ`;
+    let detail = overall === null ? '…' : `${overall}%`;
+    if (event.stage === 'mod-download') detail += ` · ${size(event.received || 0)} / ${event.total ? size(event.total) : '—'} · ${size(event.speed || 0)}/с`;
+    $('#progress-text').textContent = `${labels[event.stage] || 'Підготовка'}${event.mod ? ` · ${event.mod}` : ''} · ${detail}`;
+    if (overall !== null) $('#progress-bar').value = overall;
+    else if (event.stage === 'mod-done') $('#progress-bar').value = 100;
     else $('#progress-bar').removeAttribute('value');
+    if (event.stage === 'mod-done' && event.skipped?.length) toast(`Пропущено: ${event.skipped.join(', ')}`, true);
   }
   render();
 });
