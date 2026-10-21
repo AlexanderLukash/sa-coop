@@ -48,5 +48,9 @@ test('game integration writes LAN server and client configs without changing coo
     const joined = await fs.readFile(path.join(dir, 'coop/launcher.ini'), 'utf8');
     assert.match(joined, /host = 192.168.1.8/); assert.match(joined, /port = 7799/); assert.match(joined, /mode = join/);
     assert.match(joined, /skin = 271/);
+    for (const loadSlot of [0, 1, 8, -1]) {
+      await writeGameConfig({ ...defaults, gameDir: dir, loadSlot }, { mode: 'host' });
+      assert.match(await fs.readFile(path.join(dir, 'coop/launcher.ini'), 'utf8'), new RegExp(`load_slot = ${loadSlot}\\r?\\n`));
+    }
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });

@@ -50,6 +50,34 @@ new game and save slots, friendly fire, voice volume/microphone, joining during 
 and restoring skin after death/world reload. Use `coop/launcher.log`, `launcher-crash.log`,
 `launcher.ini.status.json` and `launcher-server-data/server.log` to investigate failures.
 
+Skin reset regression: choose a non-CJ skin in the launcher, start a new hosted game and finish or skip
+the prologue. After CJ gets on the bike, exit the vehicle and verify the selected skin on both screens.
+Join with a different skin and an existing saved profile; the launcher choice must apply after the profile.
+Repeat after death, a world reload, disconnect/rejoin and a story script restoring CJ on the same ped.
+Vehicle/cutscene changes must wait until on foot and outside the cutscene. An unchanged skin must not
+rebuild each frame. Include CJ (0), a regular ped (105) and a special character (65); inspect
+`Selected skin ... applied` in the client log. These engine scenarios require a real GTA session.
+
+Story/appearance fixes (0.2.6-mp12, protocol 20): the launcher immediately saves a changed story-start
+selection and waits for acknowledgement before starting. Explicit new-game/save-slot choices also apply
+when GTA already has a world loaded. Vanilla clothes rebuilding is restricted to model 0, so CJ's clothes
+builder cannot replace another skin's mesh or attach animations to the wrong skeleton.
+
+Cutscenes use a separate clone of the host's selected skin for the story's player actor. GTA binds the scene's
+animation to the cloned rig through its normal cutscene/model loading path; a live player's skeleton and
+matrix array are never borrowed. The source model/TXD is pinned until cleanup. The host sends individual
+collision-checked crew spots with the shot's clock; clients place their local player and other crew members
+at those spots. Upgrade both server and clients:
+the cutscene integer field now carries the host skin on LOAD and player ID + 1 on SPOT (0 is the shared shot).
+
+Regression checks: `node --test launcher/test/*.test.cjs` includes immediate story selection, waiting for
+acknowledgement and blocking launch on a failed save. The 22 launcher tests and the release client/server/
+loader build pass. Completed Linux/Wine runs exercised skins 105 and 65 in PROLOG1/PROLOG3 and a switch
+from 105 back to CJ before the following cutscene, including restoring the original cutscene template.
+Screenshots and logs are in `build/validation/`. The release archive excludes the temporary probe module.
+Real-game acceptance still needs all eight players, late joining and coordinated skipping; eight-player
+launcher/lobby tests do not cover those engine scenarios.
+
 Executable compatibility (launcher 0.2.3): PE32/x86, image base and the same
 0x82457C / 0x94BF signature as native Core::Init are checked, replacing the
 14,383,616-byte size restriction. This accepts matching 1.0 US variants of

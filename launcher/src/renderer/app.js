@@ -1,6 +1,7 @@
 const api = window.launcher;
 const $ = selector => document.querySelector(selector);
 let state, page = 'welcome', toastTimer, scanning = false, selectedSkin = 0, skinPage = 0;
+let storySelection = Promise.resolve();
 const names = { welcome: 'Почати гру', host: 'Створення лобі', home: 'Головна', lobby: 'Локальне лобі', files: 'Файли гри', settings: 'Налаштування' };
 const navIcons = {
   welcome: ['M7 7h10a4 4 0 0 1 4 4l1 6a2 2 0 0 1-3 2l-4-3H9l-4 3a2 2 0 0 1-3-2l1-6a4 4 0 0 1 4-4Z', 'M7 10v4M5 12h4M16 11h.01M19 13h.01'],
@@ -222,6 +223,7 @@ $('#choose-host').addEventListener('click', () => state.room ? go('lobby') : go(
 $('#choose-join').addEventListener('click', () => go('lobby'));
 $('#host-form').addEventListener('submit', event => {
   event.preventDefault(); action($('#host-form [type="submit"]'), async () => {
+    await storySelection;
     state = await api.save({ ...state.settings, serverName: $('#host-name').value, networkAddress: $('#host-network').value });
     state = await api.host(); populate(); go('lobby');
   });
@@ -261,11 +263,19 @@ $('#leave-room').addEventListener('click', e => action(e.currentTarget, async ()
 $('#ready-button').addEventListener('click', e => action(e.currentTarget, () => {
   const me = state.room.members.find(m => m.id === state.selfId); return api.ready(!me?.ready);
 }));
-$('#start-session').addEventListener('click', e => action(e.currentTarget, () => api.start()));
+$('#start-session').addEventListener('click', e => action(e.currentTarget, async () => { await storySelection; return api.start(); }));
 $('#copy-invite').addEventListener('click', e => action(e.currentTarget, async () => { const invite = await api.copyInvite(); toast('Запрошення скопійовано: ' + invite); }));
 $('#settings-form').addEventListener('input', updateRanges);
+// Choosing a story start takes effect immediately, including in an existing lobby.
+$('#settings-form [name="loadSlot"]').addEventListener('change', e => {
+  const input = e.currentTarget, loadSlot = Number(input.value);
+  storySelection = api.save({ ...state.settings, loadSlot }).then(value => { state = value; render(); })
+    .catch(error => { input.value = state.settings.loadSlot; throw error; });
+  action(input, () => storySelection);
+});
 $('#settings-form').addEventListener('submit', e => {
   e.preventDefault(); action(document.querySelector('[form="settings-form"]'), async () => {
+    await storySelection.catch(() => {});
     const values = { ...state.settings };
     for (const input of e.target.elements) {
       if (!input.name) continue;

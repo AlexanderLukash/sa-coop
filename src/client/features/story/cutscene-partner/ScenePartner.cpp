@@ -633,7 +633,9 @@ float g_shotFrom = 0, g_shotTo = 0;  // the camera's clock (ms) at the next cut:
 struct Decision {
     Spot spot;
     float at;
+    int player = -1;
 };
+std::map<int, Spot> g_playerSpots;
 std::deque<Decision> g_follow;  // partner: the host's choices still to come
 bool g_decided = false;         // host: a choice not sent yet
 float g_decidedAt = 0;
@@ -1658,7 +1660,7 @@ bool TakeDecision(Spot& s, float& at) {
     return true;
 }
 
-void FollowSpot(const Spot& s, float at) { g_follow.push_back({s, at}); }
+void FollowSpot(const Spot& s, float at, int player) { g_follow.push_back({s, at, player}); }
 
 void Follow() {
     UpdateTalk();
@@ -1666,17 +1668,58 @@ void Follow() {
     if (!g_live || cam::Mode() != kModeFlyBy) return;
     float clock = Ref<float>(cam::Active() + 0x90);
     bool due = false;
-    for (; !g_follow.empty() && g_follow.front().at <= clock + 30.0f; g_follow.pop_front()) g_spot = g_follow.front().spot, due = true;
+    for (; !g_follow.empty() && g_follow.front().at <= clock + 30.0f; g_follow.pop_front()) {
+        const auto& d = g_follow.front();
+        if (d.player < 0) g_spot = d.spot, due = true;
+        else g_playerSpots[d.player] = d.spot;
+    }
     if (!due) return;
     g_haveSpot = true;
     ++g_shot;
     LOGD("Cutscene shot %d from the host: %s", g_shot, Describe(g_spot));
 }
 
-bool CurrentSpot(Spot& out) {
+bool CurrentSpot(Spot& out, int player) {
     if (!g_live || !g_haveSpot) return false;
+    if (player >= 0) {
+        auto it = g_playerSpots.find(player);
+        if (it == g_playerSpots.end()) return false;
+        out = it->second;
+        return true;
+    }
     out = g_spot;
     return true;
+}
+
+void SetPlayerSpot(uint8_t player, const Spot& spot) { g_playerSpots[player] = spot; }
+
+Spot GroupSpot(const std::vector<Spot>& occupied) {
+    auto separated = [&](const Spot& s) {
+        for (const Spot& other : occupied)
+            if (other.pose != POSE_HIDDEN && (BodyOf(s) - BodyOf(other)).Length2D() < 1.2f) return false;
+        return true;
+    };
+    if (occupied.empty() && g_spot.pose != POSE_HIDDEN) return g_spot;
+    // Reuse candidates already checked against this shot's props, actors and
+    // future camera path. A seat or leaning animation keeps its original spot.
+    const Tried* best = nullptr;
+    for (const Tried& t : g_tried)
+        if (t.reject < 0 && t.spot.pose != POSE_HIDDEN && t.spot.pose != POSE_WALK && separated(t.spot) &&
+            (!best || t.score > best->score)) best = &t;
+    if (best) return best->spot;
+    // Additional crew can stand outside the camera frame, but never in a wall,
+    // another actor, a car, or on top of another crew member.
+    const Scene& sc = g_lastScene;
+    if (!sc.cjInCar) for (float radius : {2.0f, 3.2f, 4.5f}) for (int i = 0; i < 16; ++i) {
+        float angle = i * 6.2831853f / 16.0f;
+        Spot s{{sc.cj.x + radius * std::cos(angle), sc.cj.y + radius * std::sin(angle), sc.floor},
+               HeadingOf(CVector{-std::cos(angle), -std::sin(angle), 0}), POSE_STAND, 0};
+        float clearance;
+        if (separated(s) && Crowded(sc, s, clearance) < 0 && NoRoom(sc, s) < 0) return s;
+    }
+    Spot hidden = g_spot;
+    hidden.pose = POSE_HIDDEN;
+    return hidden;
 }
 
 int ShotNumber() { return g_shot; }
@@ -1840,6 +1883,7 @@ void ReleaseAll() {
     g_live = false;
     g_cutscene[0] = 0;
     g_follow.clear();
+    g_playerSpots.clear();
     g_decided = false;
 }
 

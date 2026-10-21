@@ -114,7 +114,7 @@ enum MsgId : uint8_t {
     G_MARKER = 124,           // 3d markers, checkpoints, script spheres
     G_ONSCREEN = 125,         // timers and counters
     G_FADE = 126,
-    G_CUTSCENE = 127,         // load/start/finish/skip
+    G_CUTSCENE = 127,         // load/start/finish/skip; LOAD integer: host skin; SPOT integer: player ID + 1 (0: shot)
     G_SCRIPT_VARS = 128,      // story progress (script global variables)
     G_MISSION_REWARD = 129,
     G_TELEPORT = 130,         // teleport request/command

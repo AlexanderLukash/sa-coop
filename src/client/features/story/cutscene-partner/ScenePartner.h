@@ -7,6 +7,7 @@
 // spline and the animation tracks tell how the shot goes on.
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "shared/game/Game.h"
 
@@ -31,10 +32,13 @@ void Analyse();
 // host: the spot just chosen and the moment (the camera's clock, ms) its shot begins, once per shot
 bool TakeDecision(Spot& s, float& at);
 // partner: the host's choices; Follow (instead of Analyse) takes each on when this game's cutscene gets there
-void FollowSpot(const Spot& s, float at);
+void FollowSpot(const Spot& s, float at, int player = -1);
 void Follow();
 // The spot for the current shot. False: no cutscene with CJ (yet) to place the partner in.
-bool CurrentSpot(Spot& out);
+bool CurrentSpot(Spot& out, int player = -1);
+// Host allocates separate collision-checked spots and sends each player's result.
+Spot GroupSpot(const std::vector<Spot>& occupied);
+void SetPlayerSpot(uint8_t player, const Spot& spot);
 int ShotNumber();                     // grows with every new shot
 float ShotLeftMs();                   // until the current shot's cut, by the camera's spline; -1 unknown
 const char* Describe(const Spot& s);  // "lean GANGS/leanIDLE", for logs

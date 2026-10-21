@@ -33,6 +33,8 @@
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
+#include "shared/game/Appearance.h"
+#include "shared/game/SkinCatalog.h"
 #include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
@@ -749,6 +751,54 @@ using LoadCutsceneFn = void(__cdecl*)(const char*);
 LoadCutsceneFn g_origLoadCutscene = nullptr;
 VoidFn g_origStartCutscene = nullptr;
 
+// The cutscene owns its own clone of the host model. Let GTA bind the
+// cutscene animation to that clone's bone IDs and build its matrices normally.
+// Reusing another live ped's matrix array corrupts both rig orientation and pose.
+void* g_sceneAvatarInfo = nullptr;
+void* g_sceneModelInfo = nullptr;
+void* g_originalSceneClump = nullptr;
+int g_sceneSkin = -1;
+
+void ClearSceneAvatar() {
+    if (g_sceneModelInfo) {
+        CallVirtual<8>(g_sceneModelInfo); // destroy the temporary template, not the scene's instances
+        CallVirtual<16>(g_sceneModelInfo, g_originalSceneClump);
+        CallMethod<0x4C4BB0>(g_sceneModelInfo);
+    }
+    if (g_sceneAvatarInfo) CallMethod<0x4C4BB0>(g_sceneAvatarInfo); // RemoveRef
+    g_sceneAvatarInfo = nullptr;
+    g_sceneModelInfo = g_originalSceneClump = nullptr;
+    g_sceneSkin = -1;
+}
+
+bool BuildSceneAvatar(int skin, int sceneModel) {
+    if (sceneModel != 1 || g_sceneModelInfo) return false;
+    int model = appearance::ResolveSkin(skin);
+    if (model <= 0 || !IsPedModel(model) || !LoadModelNow(model)) return false;
+    void* info = Ref<void*>(addr::ModelInfoPtrs + (uintptr_t)model * 4);
+    void* target = Ref<void*>(addr::ModelInfoPtrs + (uintptr_t)sceneModel * 4);
+    void* clump = info ? Field<void*>(info, 0x1C) : nullptr;
+    if (!clump || !target || info == target || !Field<void*>(target, 0x1C)) return false;
+    void* clone = Call<0x749F70, void*>(clump); // RpClumpClone
+    if (!clone) return false;
+    CallMethod<0x4C4BA0>(info); // pin the model/TXD until the cutscene ends
+    if (g_sceneAvatarInfo) CallMethod<0x4C4BB0>(g_sceneAvatarInfo);
+    g_sceneAvatarInfo = info;
+    // Keep the pristine csplay template for the next scene (or a switch to CJ).
+    // Pin it while detached so streaming cannot clear the model behind us.
+    g_originalSceneClump = Field<void*>(target, 0x1C);
+    g_sceneModelInfo = target;
+    CallMethod<0x4C4BA0>(target);
+    Field<void*>(target, 0x1C) = nullptr;
+    CallVirtual<16>(target, clone); // CPedModelInfo::SetClump; the scene owns this clone
+    LOGI("Cutscene host avatar: skin %d, model %d, native animation binding", skin, model);
+    return true;
+}
+
+int HostSceneSkin() {
+    return skins::Find(Cfg().skin) ? Cfg().skin : appearance::LogicalSkin(FindPlayerPed(0)->ModelIndex());
+}
+
 void SendCutscene(uint8_t op, const char* name = "", int32_t area = 0) {
     Writer w(proto::G_CUTSCENE);
     w.U8(op);
@@ -757,17 +807,28 @@ void SendCutscene(uint8_t op, const char* name = "", int32_t area = 0) {
     Net().Send(proto::CH_RELIABLE, w);
 }
 // the host's choice of the partner's spot for a shot, and when (the camera's clock) the shot begins
-void SendSpot(const scene::Spot& s, float at) {
+void SendSpot(const scene::Spot& s, float at, int player = -1) {
     Writer w(proto::G_CUTSCENE);
     w.U8(CS_SPOT);
     w.Str("", 32);
-    w.I32(0);
+    w.I32(player + 1); // 0: shared shot; otherwise player ID + 1
     w.F32(at);
     w.Vec({s.ground.x, s.ground.y, s.ground.z});
     w.F32(s.heading);
     w.U8(s.pose);
     w.U8(s.act);
     Net().Send(proto::CH_RELIABLE, w);
+}
+
+void SendGroupSpots(float at) {
+    std::vector<scene::Spot> occupied;
+    for (const auto& [id, peer] : Net().Peers()) {
+        if (id == Net().HostId()) continue;
+        auto spot = scene::GroupSpot(occupied);
+        scene::SetPlayerSpot(id, spot);
+        occupied.push_back(spot);
+        SendSpot(spot, at, id);
+    }
 }
 
 // The cutscene CJ (model 1) takes its textures by name from the "player" TXD it shares with model 0, and that TXD
@@ -787,6 +848,7 @@ using CutscenePlayerFn = void(__cdecl*)(CPlayerPed*, int);
 CutscenePlayerFn g_origCutscenePlayer = nullptr;
 CPlayerPed* g_cutsceneCj = nullptr;
 void __cdecl HookRebuildCutscenePlayer(CPlayerPed* ped, int model) {
+    if (Net().Online() && g_sceneSkin > 0 && BuildSceneAvatar(g_sceneSkin, model)) return;
     if (!g_cutsceneCj) return g_origCutscenePlayer(ped, model);
     // the host's body as its look came: the original writes this game's fat and muscle stats into the description first
     MuscleFrom muscle(g_cutsceneCj->ClothesDesc());
@@ -803,10 +865,15 @@ void __cdecl HookLoadCutscene(const char* name) {
             LOGI("Cutscene ended (replicated before the next one)");
         }
         strncpy(g_cutsceneName, name, sizeof(g_cutsceneName) - 1);
-        SendCutscene(CS_LOAD, name);
+        // CS_LOAD uses the existing integer field for the logical host skin;
+        // CS_START continues to use it for the interior.
+        SendCutscene(CS_LOAD, name, HostSceneSkin());
         LOGI("Cutscene %s loading (replicated)", name);
     }
     if (Net().Online() && Net().IsHost()) {
+        scene::ReleaseAll(); // consecutive cutscenes can load without a non-scene frame
+        ClearSceneAvatar();
+        g_sceneSkin = HostSceneSkin();
         scene::Prepare();  // before the cutscene's own streaming requests
         DressCutsceneCj(FindPlayerPed(0));
     }
@@ -820,7 +887,7 @@ void __cdecl HookStartCutscene() {
 }
 
 // ---- the partner in cutscenes (ScenePartner.cpp picks the spot and the animation in each shot);
-// on the partner's screen the cutscene CJ wears the host's clothes and the host's own ped is hidden
+// on the partner's screen the story actor uses the host's appearance and the host's gameplay ped is hidden
 constexpr uintptr_t kCutsceneObjects = 0xBC3F18, kNumCutsceneObjects = 0xBC3FE4;  // CCutsceneMgr::ms_pCutsceneObjects
 bool g_inScene = false, g_sceneHeld = false;
 std::string g_lastPassed;      // host: CStats::LastMissionPassedName as last seen
@@ -854,15 +921,20 @@ void EnterCutsceneScene(const CVector& at, int32_t area) {
 }
 
 void StandNextToCutsceneCj() {
+    if (const RemotePlayer* host = Players::Instance().Get(Net().HostId()); host && host->ped) {
+        host->ped->Flags() &= ~0x80u;  // the cutscene avatar is the host
+        Cmd(0x04D7).I(host->pedHandle).I(1).Run();
+    }
     scene::Spot spot;
-    if (!scene::CurrentSpot(spot)) return;
+    if (!scene::CurrentSpot(spot, Net().MyId())) return;
     CPlayerPed* me = FindPlayerPed(0);
     if (CEntity* cj = CutsceneCj()) me->AreaCode() = cj->AreaCode();
     scene::Hold(me, spot);
-    if (const RemotePlayer* host = Players::Instance().Get(Net().HostId()); host && host->ped) {
-        host->ped->Flags() &= ~0x80u;  // the cutscene CJ is the host
-        Cmd(0x04D7).I(host->pedHandle).I(1).Run();  // FREEZE_CHAR_POSITION: no collision around it now
-    }
+    for (auto& [id, rp] : Players::Instance().All())
+        if (id != Net().HostId() && rp.ped && scene::CurrentSpot(spot, id)) {
+            rp.ped->AreaCode() = me->AreaCode();
+            scene::Hold(rp.ped, spot);
+        }
 }
 
 void LeaveCutsceneScene() {
@@ -903,6 +975,7 @@ void PartnerEndCutscene() {
 
 // what the mission script does after a cutscene: CLEAR_CUTSCENE resets ms_running
 void PartnerClearCutscene() {
+    ClearSceneAvatar();
     Cmd(0x02EA).Run();  // CLEAR_CUTSCENE
     LeaveCutsceneScene();
     ReturnToCutsceneCar();
@@ -1039,6 +1112,7 @@ void HandleCutscene(uint8_t from, Reader& r) {
             DressCutsceneCj(host->ped);  // the story's CJ is the host
             g_cutsceneCj = host->ped;
         }
+        g_sceneSkin = skins::Find(area) ? area : 0;
         g_origLoadCutscene(name.c_str());
         g_cutsceneCj = nullptr;
         g_csState = 1;
@@ -1054,7 +1128,7 @@ void HandleCutscene(uint8_t from, Reader& r) {
         s.heading = r.F32();
         s.pose = (scene::Pose)std::min<uint8_t>(r.U8(), scene::POSE_WALK);
         s.act = r.U8();
-        if (r.Ok()) scene::FollowSpot(s, at);
+        if (r.Ok() && area >= 0 && area <= proto::kMaxPlayers) scene::FollowSpot(s, at, area - 1);
     } else if (op == CS_END) {
         LOGI("Host cutscene ended (state %d, running %d)", g_csState, CutsceneRunning());
         if (g_csState == 2) PartnerEndCutscene();
@@ -1376,9 +1450,9 @@ void MissionsResync() {
     g_lastOnscreen.clear();
     HostSendScreen(true);  // the fade it joins into: a new game starts black until its prologue fades in
     if (CutsceneRunning() && g_cutsceneName[0]) {
-        SendCutscene(CS_LOAD, g_cutsceneName);
-        SendCutscene(CS_START);
-        if (scene::Spot s; scene::CurrentSpot(s)) SendSpot(s, 0);
+        SendCutscene(CS_LOAD, g_cutsceneName, g_sceneSkin >= 0 ? g_sceneSkin : HostSceneSkin());
+        SendCutscene(CS_START, "", CurrentArea());
+        if (scene::Spot s; scene::CurrentSpot(s)) { SendSpot(s, 0); SendGroupSpots(0); }
     }
 }
 
@@ -1457,6 +1531,7 @@ public:
 
 private:
     static void Reset() {
+        ClearSceneAvatar();
         g_active = g_hostCutscene = false;
         g_baseline.clear();
         g_sentBlips.clear();
@@ -1566,17 +1641,18 @@ private:
         // cutscene end
         bool cs = CutsceneRunning();
         if (g_hostCutscene && !cs) {
+            ClearSceneAvatar();
             SendCutscene(CS_END);
             LOGI("Cutscene ended (replicated)");
         }
         g_hostCutscene = cs;
         scene::Spot spot;
         float at;
-        if (scene::TakeDecision(spot, at)) SendSpot(spot, at);
+        if (scene::TakeDecision(spot, at)) { SendSpot(spot, at); SendGroupSpots(at); }
         if (cs && scene::CurrentSpot(spot)) {  // the partner joins the scene (and its game takes the same spot)
             CEntity* cj = CutsceneCj();
             for (auto& [id, rp] : Players::Instance().All())
-                if (rp.ped) {
+                if (rp.ped && scene::CurrentSpot(spot, id)) {
                     // the scene's interior, not the one its game reports: before its cutscene starts there and after
                     // it ends it is elsewhere, and a ped of another area is not drawn (it vanished from the scene)
                     if (cj) rp.ped->AreaCode() = cj->AreaCode();

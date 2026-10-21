@@ -136,14 +136,14 @@ void UploadWorld(const std::vector<uint8_t>& data, const std::string& label) {
 void OnOnline() {
     auto& net = Net();
     if (net.IsHost()) {
-        if (g_hostSlot > 0 && !core::IsInGame()) {
+        if (g_hostSlot > 0) {
             ui::TheChat().AddSystem(Format(TR("Загружаем сохранение из слота %d...", "Loading the save from slot %d..."), g_hostSlot));
             if (!core::LoadSaveFile(core::SlotPath(g_hostSlot))) {
                 Fail(Format(TR("Не удалось загрузить сохранение из слота %d.", "Could not load the save from slot %d."), g_hostSlot));
                 return;
             }
             SetPhase(Phase::LoadingWorld);
-        } else if (g_hostSlot < 0 && !core::IsInGame()) {
+        } else if (g_hostSlot < 0) {
             ui::TheChat().AddSystem(TR("Сервер создан. Начинаем новую игру...", "The server is up. Starting a new game..."));
             core::StartNewGame();
             SetPhase(Phase::LoadingWorld);

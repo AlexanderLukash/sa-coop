@@ -24,6 +24,7 @@
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
+#include "shared/game/Appearance.h"
 #include "shared/game/Script.h"
 #include "shared/game/SkinCatalog.h"
 #include "shared/lib/core/Core.h"
@@ -34,6 +35,8 @@ namespace coop {
 
 namespace {
 using namespace game;
+using appearance::ApplySkin;
+using appearance::LogicalSkin;
 using game::script::Cmd;
 
 constexpr uint32_t kProfileMagic = 0x46504353;  // "SCPF"
@@ -49,59 +52,6 @@ void RebuildPlayer(CPlayerPed* ped, bool keepDescFatMuscle) {
 
 bool AllowedSkin(int model) {
     return skins::Find(model) != nullptr;
-}
-
-// Logical skin IDs are independent of GTA's ten shared special-character slots.
-// Keep referenced models intact, including characters owned by story scripts.
-struct SpecialSkin { int skin = -1; uint32_t key = 0; };
-SpecialSkin g_specialSkins[10];
-void* SkinInfo(int model) { return Ref<void*>(addr::ModelInfoPtrs + (uintptr_t)model * 4); }
-int LogicalSkin(int model) {
-    if (model >= 290 && model < 300) {
-        auto& cached = g_specialSkins[model - 290];
-        void* info = SkinInfo(model);
-        return info && cached.skin >= 0 && Field<uint32_t>(info, 4) == cached.key ? cached.skin : 0;
-    }
-    const auto* skin = skins::Find(model);
-    return skin && !skin->special ? model : 0;
-}
-int ResolveSkin(int id) {
-    const auto* skin = skins::Find(id);
-    if (!skin) return -1;
-    if (!skin->special) return id;
-    for (int i = 0; i < 10; ++i) {
-        void* info = SkinInfo(290 + i);
-        if (info && g_specialSkins[i].skin == id && Field<uint32_t>(info, 4) == g_specialSkins[i].key && IsModelLoaded(290 + i)) return 290 + i;
-    }
-    for (int i = 0; i < 10; ++i) {
-        const int model = 290 + i;
-        void* info = SkinInfo(model);
-        if (!info || Field<uint16_t>(info, 8) != 0) continue;
-        // Do not take a loaded slot belonging to a story script or another mod.
-        const uint8_t streamingState = Ref<uint8_t>(addr::StreamingInfo + (uintptr_t)model * 0x14 + 0x10);
-        if (streamingState != 0 && (g_specialSkins[i].skin < 0 || Field<uint32_t>(info, 4) != g_specialSkins[i].key)) continue;
-        Call<0x409D10>(model, skin->model, 2 | 0x10); // CStreaming::RequestSpecialModel
-        LoadAllRequestedModels(false);
-        if (!IsModelLoaded(model)) return -1;
-        g_specialSkins[i] = {id, Field<uint32_t>(info, 4)};
-        return model;
-    }
-    return -1; // Try again later; never replace a live story/player clump.
-}
-
-bool ApplySkin(CPlayerPed* ped, int model) {
-    model = ResolveSkin(model);
-    if (model < 0 || !IsPedModel(model)) return false;
-    if (ped->ModelIndex() == model) return true;
-    if (!LoadModelNow(model)) return false;
-    // SET_PLAYER_MODEL performs the engine's clump/animation teardown. Remote peds
-    // borrow slot 1 for this synchronous command, just as their control processing does.
-    int slot = ped == FindPlayerPed(0) ? 0 : 1;
-    CPlayerPed* kept = PlayerInfo(slot)->ped;
-    PlayerInfo(slot)->ped = ped;
-    Cmd(0x09C7).I(slot).I(model).Run();
-    PlayerInfo(slot)->ped = kept;
-    return ped->ModelIndex() == model;
 }
 
 // The partner's look in the host's world is its own, or one it was given (the host's CJ the world came with, on a
@@ -306,6 +256,7 @@ public:
     const char* Name() const override { return "Progress"; }
 
     void OnInstallHooks() override {
+        appearance::InstallHooks();
         mem::RedirectCallFn(0x619081, &HookMenuSave, &g_origMenuSave);  // C_PcSave::SaveSlot -> GenericSave
         Net().onProfile = [](const std::vector<uint8_t>& blob) {
             Progress& p = Instance();
@@ -338,7 +289,6 @@ public:
     void OnPeerJoin(uint8_t) override { m_sentModel = -1; }
     void OnGameStarted() override {  // a new world: the partner's profile goes on top again
         m_applied = false;
-        m_skinAppliedTo = -1;
         g_foreignGame = Net().Online() && !Net().IsHost();
         if (m_resetPending && flow::InHostWorld()) m_reset = true, m_resetPending = false;  // the new game's world
     }
@@ -351,7 +301,6 @@ public:
         if (!Net().Online() || !core::IsPlayerReady()) return;
         CPlayerPed* me = FindPlayerPed(0);
         uint64_t now = NowMs();
-        if (me->Health() <= 0.0f) m_skinAppliedTo = -1;
 
         // only in the host's world: a game of its own (joined from single player, waiting) or an old world during a
         // new game's prologue is no profile, it would have gone to the server as one
@@ -377,17 +326,17 @@ public:
             if (!g_lookOwn) memcpy(g_givenKeys, me->ClothesDesc(), sizeof g_givenKeys);
             m_saved = m_profile;
             m_lastSaveMs = now;
-            m_skinAppliedTo = -1;
         }
 
-        // Apply once per playable world/respawn, after the partner's saved profile.
-        // Do not swap a clump while in a vehicle or a cutscene; story scripts may
-        // temporarily replace it themselves after this initial choice.
-        if (hostWorld && AllowedSkin(Cfg().skin) && (m_skinAppliedTo != GetPedRef(me) || m_appliedSkin != Cfg().skin) &&
+        // The prologue, saves and respawns can restore CJ on the same ped handle.
+        // Check the actual model instead of remembering a successful application.
+        // Wait for the partner's profile and the prologue before changing its clump;
+        // retry after vehicles/cutscenes and failed streaming requests as well.
+        if (hostWorld && (Net().IsHost() || m_applied) && !core::InPrologue() &&
+            AllowedSkin(Cfg().skin) && LogicalSkin(me->ModelIndex()) != Cfg().skin &&
             me->Health() > 0.0f && !me->InVehicle() && !Ref<uint8_t>(0xB5F851) && ApplySkin(me, Cfg().skin)) {
-            m_skinAppliedTo = GetPedRef(me);
-            m_appliedSkin = Cfg().skin;
             m_sentModel = -1;
+            LOGI("Selected skin %d applied (model %d)", Cfg().skin, me->ModelIndex());
         }
 
         if (m_quietUntil && Ref<uint8_t>(0xB5F851)) m_quietUntil = std::max(m_quietUntil, now + 3000);  // a cutscene: later
@@ -456,7 +405,7 @@ public:
     }
 
 private:
-    int m_skinAppliedTo = -1, m_sentModel = -1, m_appliedSkin = -1;
+    int m_sentModel = -1;
     std::vector<uint8_t> m_profile, m_saved, m_sentLook, m_sentStats;
     bool m_profileReceived = false, m_applied = false;
     bool m_resetPending = false, m_reset = false;  // a new game emptied the profile: applied in the next world
