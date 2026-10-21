@@ -58,6 +58,9 @@ jobs:
       - name: Package Linux
         if: runner.os == 'Linux'
         run: npm run dist:linux -- --publish never
+      - name: Linux AppImage startup smoke without FUSE
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum node tools/appimage-smoke.cjs ./out/SA.COOP.Launcher-*.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-${{ runner.os }}
@@ -65,6 +68,7 @@ jobs:
             launcher/out/*.exe
             launcher/out/*.AppImage
             launcher/out/*.deb
+            launcher/out/*.tar.gz
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows'
         with:
@@ -110,5 +114,6 @@ jobs:
             release-assets/*.exe
             release-assets/*.AppImage
             release-assets/*.deb
+            release-assets/*.tar.gz
             release-assets/SA-COOP.zip
           fail_on_unmatched_files: true

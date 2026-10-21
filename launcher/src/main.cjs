@@ -9,6 +9,7 @@ const { readStatus, waitForStatus } = require('./core/session-status.cjs');
 const { defaults, validate, atomicWrite, readText, writeGameConfig, launchSpec, lanAddresses } = require('./core/config.cjs');
 const { inspectGame, installedBuild, latestRelease, download, installArchive, checkInstallAccess } = require('./core/install.cjs');
 const { installComfortMods } = require('./core/comfort-mods.cjs');
+if (process.platform === 'linux') app.disableHardwareAcceleration();
 const { LanLobbyServer, LobbyClient, discover, serverSettings } = require('./core/lobby.cjs');
 const skins = require('./skins.json');
 
@@ -217,7 +218,7 @@ app.whenReady().then(async () => {
         busy = true; operation = 'comfort-mods'; installation = new AbortController();
         notify('busy', { busy, operation });
         try {
-          const result = await installComfortMods(settings.gameDir, {},
+          const result = await installComfortMods(settings.gameDir, settings,
             progress => notify('progress', progress), installation.signal);
           const skipped = [...result.skipped];
           try {

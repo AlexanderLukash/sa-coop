@@ -1,6 +1,6 @@
 {
   "name": "sa-coop-launcher",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "description": "LAN co-op launcher for GTA San Andreas",
   "author": "AlexanderLukash",
   "license": "MIT",
@@ -13,11 +13,10 @@
     "test:native": "node tools/native-integration.cjs",
     "pack": "electron-builder --dir",
     "dist:win": "electron-builder --win nsis portable --x64",
-    "dist:linux": "electron-builder --linux AppImage deb --x64"
+    "dist:linux": "electron-builder --linux AppImage deb tar.gz --x64"
   },
   "dependencies": {
     "7zip-bin": "5.2.0",
-    "node-unrar-js": "2.0.2",
     "ws": "^8.18.0",
     "yauzl": "^3.2.0"
   },
