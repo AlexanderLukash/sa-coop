@@ -7,6 +7,7 @@
 #include <tlhelp32.h>
 
 #include <algorithm>
+#include <cstring>
 
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
@@ -488,6 +489,23 @@ bool __cdecl HookStencilForObject(void* shadow, void* arg) {
     return g_origStencilForObject(shadow, arg);
 }
 
+// CAEStreamThread::Service starts a track at the asked position modulo the track's length (0x4F1464): a track whose
+// decoder opens but reports no length (a broken or emptied file of a game's audio) divided by zero in the audio
+// thread, in both players' games at once (Ryder's barber shop). Such a track starts from its beginning.
+// Here: eax = the length (GetStreamLengthMs), [esp+0x1C] = the asked position; on to 0x4F1466 with the cursor in edx.
+__attribute__((naked)) void StreamCursorStub() {
+    __asm__ volatile(
+        "movl %eax, %ecx\n\t"
+        "movl 0x1c(%esp), %eax\n\t"
+        "xorl %edx, %edx\n\t"
+        "testl %ecx, %ecx\n\t"
+        "jz 1f\n\t"
+        "divl %ecx\n\t"
+        "1:\n\t"
+        "pushl $0x4F1466\n\t"
+        "ret\n\t");
+}
+
 // A mission may create a car of a model it requested a while before without checking that it is still there: OG Loc's
 // chase asks for the Manana while loading its car recordings, lets it go later and creates three of them on a timer.
 // A model not in memory crashed CVehicleModelInfo::CreateInstance (0x4C9691) in a host's game. It is loaded first.
@@ -569,6 +587,12 @@ void Apply() {
     mem::HookFn(0x746190, &HookSelectDevice, &g_origSelectDevice, "psSelectDevice");
     mem::HookFn(0x710310, &HookStencilForObject, &g_origStencilForObject, "CStencilShadows::RenderForObject");
     mem::HookFn(0x431F80, &HookCreateCarForScript, &g_origCreateCarForScript, "CCarCtrl::CreateCarForScript");
+    if (!memcmp((void*)0x4F145C, "\x8B\xC8\x8B\x44\x24\x1C\x33\xD2\xF7\xF1", 10)) {  // CAEStreamThread::Service
+        mem::Jump(0x4F145C, (void*)&StreamCursorStub);
+        mem::Nop(0x4F1461, 5);
+    } else {
+        LOGW("Stream cursor guard skipped: unexpected bytes at 0x4F145C (another mod?)");
+    }
     if (cfg.windowed) {
         InstallWindowedMode();
         mem::HookFn(0x745C70, &HookSetVideoMode, &g_origSetVideoMode, "SetVideoMode");
