@@ -133,6 +133,10 @@ enum MsgId : uint8_t {
     G_WATER_CANNON = 141,     // unreliable: u16 vehicle, the jet's offset from it and speed (a fire truck shoots water)
     G_TRAIN = 142,            // a train of the sender's game (u8 op, u16 id; state: kind, track, direction, rails, speed,
                               // pos), unreliable; gone: reliable
+    G_MISSION_AUDIO = 143,    // reliable, host -> partner: u8 op, u8 slot of the mission's speech (load: i32 sample;
+                              // attach: u8 kind, u16 net id; position: vec3; play; clear)
+    G_GARAGE_DOOR = 144,      // reliable: u8 garage, u8 door of a shop garage (0 shut, 1 open, 2 none: the sender's
+                              // door follows ours)
 
     G_VOICE = 200,            // unreliable: voice frame
     G_LAST = 255,

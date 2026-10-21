@@ -186,16 +186,32 @@ bool ApplyProfile(const std::vector<uint8_t>& blob, bool& lookOwn) {
 
 struct RemoteLook {
     std::vector<uint8_t> desc;
+    uint16_t model = 0;  // a skin mod's player model (SET_PLAYER_MODEL), 0 = CJ in his clothes
     int appliedTo = -1;  // handle of the ped it was last rebuilt on: a respawned ped can reuse the old one's address
 };
 std::map<uint8_t, RemoteLook> g_looks;
 
 void HandleLook(uint8_t from, Reader& r) {
     std::vector<uint8_t> desc = r.Bytes(kClothesSize);
+    uint16_t model = r.U16();
     if (!r.Ok() || desc.size() != kClothesSize || from == Net().MyId()) return;
     RemoteLook& l = g_looks[from];
-    if (l.desc != desc) l.appliedTo = -1;
+    if (l.desc != desc || l.model != model) l.appliedTo = -1;
     l.desc = std::move(desc);
+    l.model = model;
+}
+
+// the player's model as SET_PLAYER_MODEL (0x47A820) changes it: a new clump, the walk set kept. Special characters
+// (290-299) are loaded under a name the other game does not know: their player stays CJ there.
+bool SetRemoteModel(CPlayerPed* ped, int model) {
+    if (ped->ModelIndex() == model) return true;
+    if (model != 0 && (!IsPedModel(model) || (model >= 290 && model <= 299) || !LoadModelNow(model))) return false;
+    int32_t walk = Field<int32_t>(ped, 0x4D4);  // CPed::m_nAnimGroup
+    CallVirtual<8>(ped);                        // CEntity::DeleteRwObject
+    Field<uint16_t>(ped, 0x22) = 0xFFFF;        // CEntity::m_nModelIndex: SetModelIndex rebuilds only a new one
+    CallVirtual<5>(ped, (uint32_t)model);       // CPed::SetModelIndex
+    Field<int32_t>(ped, 0x4D4) = walk;
+    return true;
 }
 
 void HandleStats(uint8_t from, Reader& r) {
@@ -319,11 +335,14 @@ public:
         if (now - m_lastLookMs >= 1000) {
             m_lastLookMs = now;
             std::vector<uint8_t> desc((uint8_t*)me->ClothesDesc(), (uint8_t*)me->ClothesDesc() + kClothesSize);
-            if (desc != m_sentLook || now - m_lookSentMs > 10000) {
+            uint16_t model = me->ModelIndex();
+            if (desc != m_sentLook || model != m_sentModel || now - m_lookSentMs > 10000) {
                 Writer w(proto::G_PLAYER_LOOK);
                 w.Bytes(desc.data(), desc.size());
+                w.U16(model);
                 Net().Send(proto::CH_RELIABLE, w);
                 m_sentLook = std::move(desc);
+                m_sentModel = model;
                 m_lookSentMs = now;
             }
             std::vector<uint8_t> stats((uint8_t*)kStatsBlock, (uint8_t*)kStatsBlock + kStatsSize);
@@ -340,11 +359,15 @@ public:
         for (auto& [id, l] : g_looks) {
             RemotePlayer* rp = Players::Instance().Get(id);
             if (!rp || !rp->ped || rp->pedHandle == l.appliedTo || rp->ped->InVehicle()) continue;
-            memcpy(rp->ped->ClothesDesc(), l.desc.data(), kClothesSize);
-            MuscleFrom muscle(rp->ped->ClothesDesc());
-            RebuildPlayer(rp->ped, true);  // fat/muscle from the description, not from our stats
+            bool skin = l.model != 0 && SetRemoteModel(rp->ped, l.model);
+            if (!skin) {
+                SetRemoteModel(rp->ped, 0);
+                memcpy(rp->ped->ClothesDesc(), l.desc.data(), kClothesSize);
+                MuscleFrom muscle(rp->ped->ClothesDesc());
+                RebuildPlayer(rp->ped, true);  // fat/muscle from the description, not from our stats
+            }
             l.appliedTo = rp->pedHandle;
-            LOGI("Look of player %d applied", id);
+            LOGI("Look of player %d applied (model %d)", id, skin ? l.model : 0);
         }
 
         // the partner's profile goes to the server when it changed (checked every 30 s)
@@ -371,6 +394,7 @@ public:
 
 private:
     std::vector<uint8_t> m_profile, m_saved, m_sentLook, m_sentStats;
+    uint16_t m_sentModel = 0;
     bool m_profileReceived = false, m_applied = false;
     bool m_resetPending = false, m_reset = false;  // a new game emptied the profile: applied in the next world
     uint64_t m_lastSaveMs = 0, m_lastLookMs = 0, m_lookSentMs = 0, m_statsSentMs = 0, m_quietUntil = 0;

@@ -4,6 +4,7 @@
 // game's own means so it looks native:
 //  * walking/running   - "go to point" tasks towards the owner's position;
 //  * aiming/shooting   - aim/shoot-at-coord tasks (gun pose, muzzle flash, sound, tracers);
+//  * drive-bys         - the gang drive-by task (TASK_DRIVE_BY) at the same target, out of the mirror's car;
 //  * entering/leaving  - enter/leave car tasks (door and seat animations);
 //  * anything else     - the owner's current action animation (chat, phone, benches, fights, falls).
 #include "entities/ped/Peds.h"
@@ -44,7 +45,7 @@ float SyncOut(CPed* p) { return p->InVehicle() ? 220.0f : 150.0f; }
 constexpr int kSpecialFirst = 290, kSpecialLast = 299;
 constexpr int kEmptyDecisionMaker = 65542;  // SET_CHAR_DECISION_MAKER template "Empty"
 constexpr int TASK_ENTER_CAR_AS_PASSENGER = 700, TASK_ENTER_CAR_AS_DRIVER = 701, TASK_LEAVE_CAR = 704;
-constexpr int TASK_SIMPLE_USE_GUN = 1017;
+constexpr int TASK_SIMPLE_USE_GUN = 1017, TASK_SIMPLE_GANG_DRIVEBY = 1022;
 constexpr uint64_t kCarTaskGraceMs = 6000;  // let enter/leave animations finish before warping
 constexpr uint16_t kNoAnim = 0xFFFF;
 
@@ -118,6 +119,15 @@ bool IsPedDead(CPed* p) {
 }
 
 bool IsAlive(const NetPed& np) { return np.ped && IsPedValid(np.ped) && GetPedRef(np.ped) == np.handle; }
+
+// The people an interior brings (InteriorGroup_c::SetupPeds: a police station's officers, a shop's customers) keep
+// area 0 inside: they count as in the interior of our player near them, or they were never shared
+int8_t AreaOf(CPed* ped) {
+    int8_t area = ped->AreaCode();
+    CPlayerPed* me = FindPlayerPed(0);
+    if (area == 0 && me && me->AreaCode() != 0 && (ped->GetPosition() - me->GetPosition()).Length() < 80.0f) return me->AreaCode();
+    return area;
+}
 
 // CTaskManager::FindActiveTaskByType: searches the active primary chain and the secondary tasks
 void* FindTask(CPed* ped, int type) {
@@ -204,6 +214,16 @@ void __fastcall HookSetMoveAnim(CPed* ped, void* edx) {
     if (NetPed* np = Peds::Instance().Find(ped); np && np->owner != Net().MyId() && np->animFull) return;
     g_origSetMoveAnim(ped, edx);
 }
+
+// The frame update of a ped's animations takes the first one without looking (velocity extraction, 0x4D1750), so a
+// ped left with none crashes the game: the game's own peds always keep their stance or walk under the rest. A mirror's
+// action (a fight stance) fades out when its owner's ends, while its move animation was held back (above) and the
+// game starts one only when the move state changes: games crashed half a second after a mirrored fight.
+bool HasLastingBodyAnim(CPed* ped) {
+    for (void* a = anim::First(ped->RwObject()); a; a = anim::Next(a))
+        if (!(anim::Flags(a) & anim::F_PARTIAL) && anim::BlendDelta(a) >= 0.0f) return true;
+    return false;
+}
 }  // namespace
 
 void Peds::RememberSpecialModel(int model, const char* name) {
@@ -258,8 +278,35 @@ PedSyncState Peds::Capture(NetPed& np) {
     s.health = Clamp8(ped->Health());
     s.armour = Clamp8(ped->Armour());
     s.weapon = (uint8_t)ped->ActiveWeapon().type;
-    s.area = ped->AreaCode();
+    s.area = AreaOf(ped);
     s.flags = (IsPedDead(ped) ? PedSyncState::F_DEAD : 0) | (ped->IsDucking() ? PedSyncState::F_DUCKING : 0);
+
+    // guns: shots show up as the clip emptying (the gun task fires on its own schedule), on foot and out of a car
+    CWeapon& w = ped->ActiveWeapon();
+    if (w.type != np.lastWeapon) np.lastClip = -1;
+    if (np.lastClip >= 0 && w.ammoInClip < np.lastClip) np.lastShotMs = now;
+    np.lastClip = w.ammoInClip;
+    np.lastWeapon = (uint8_t)w.type;
+    auto aimAt = [&](CEntity* target, CVector tp) {
+        if (!target && tp.Length() < 1.0f)
+            tp = s.pos + CVector{-std::sin(s.heading) * 10.0f, std::cos(s.heading) * 10.0f, 0.0f};
+        s.flags |= PedSyncState::F_AIMING;
+        s.aim = tp - s.pos;
+        if (target && target->IsPed()) {  // a ped target is tracked by the mirror's own task
+            auto* tped = (CPed*)target;
+            if (tped == FindPlayerPed(0)) {
+                s.aimKind = 1;
+                s.aimId = Net().MyId();
+            } else if (RemotePlayer* rp = Players::Instance().FindByPed(tped)) {
+                s.aimKind = 1;
+                s.aimId = rp->id;
+            } else if (NetPed* tn = Find(tped)) {
+                s.aimKind = 2;
+                s.aimId = tn->netId;
+            }
+        }
+        if (now - np.lastShotMs < 600) s.flags |= PedSyncState::F_FIRING;
+    };
 
     if (CVehicle* v = ped->VehicleIfIn()) {
         if (NetVehicle* nv = Vehicles::Instance().EnsureNetworked(v)) {
@@ -267,6 +314,11 @@ PedSyncState Peds::Capture(NetPed& np) {
             s.vehNetId = nv->netId;
             s.seat = (int8_t)PassengerSeatOf(v, ped);
             if (FindTask(ped, TASK_LEAVE_CAR)) s.flags |= PedSyncState::F_LEAVING;
+            // a drive-by: CTaskSimpleGangDriveBy::m_pTargetEntity, else m_vecCoords (an offset from a target)
+            if (void* db = FindTask(ped, TASK_SIMPLE_GANG_DRIVEBY)) {
+                auto* target = Field<CEntity*>(db, 0x34);
+                aimAt(target, target ? target->GetPosition() : Field<CVector>(db, 0x38));
+            }
         }
         return s;
     }
@@ -287,33 +339,9 @@ PedSyncState Peds::Capture(NetPed& np) {
         return s;
     }
 
-    // guns: shots show up as the clip emptying (the gun task fires on its own schedule)
-    CWeapon& w = ped->ActiveWeapon();
-    if (w.type != np.lastWeapon) np.lastClip = -1;
-    if (np.lastClip >= 0 && w.ammoInClip < np.lastClip) np.lastShotMs = now;
-    np.lastClip = w.ammoInClip;
-    np.lastWeapon = (uint8_t)w.type;
     if (void* gun = FindTask(ped, TASK_SIMPLE_USE_GUN)) {
         auto* target = Field<CEntity*>(gun, 0x1C);  // CTaskSimpleUseGun::m_pTarget, else m_vecTarget
-        CVector tp = target ? target->GetPosition() : Field<CVector>(gun, 0x20);
-        if (!target && tp.Length() < 1.0f)
-            tp = s.pos + CVector{-std::sin(s.heading) * 10.0f, std::cos(s.heading) * 10.0f, 0.0f};
-        s.flags |= PedSyncState::F_AIMING;
-        s.aim = tp - s.pos;
-        if (target && target->IsPed()) {  // a ped target is tracked by the mirror's own task
-            auto* tped = (CPed*)target;
-            if (tped == FindPlayerPed(0)) {
-                s.aimKind = 1;
-                s.aimId = Net().MyId();
-            } else if (RemotePlayer* rp = Players::Instance().FindByPed(tped)) {
-                s.aimKind = 1;
-                s.aimId = rp->id;
-            } else if (NetPed* tn = Find(tped)) {
-                s.aimKind = 2;
-                s.aimId = tn->netId;
-            }
-        }
-        if (now - np.lastShotMs < 600) s.flags |= PedSyncState::F_FIRING;
+        aimAt(target, target ? target->GetPosition() : Field<CVector>(gun, 0x20));
         return s;
     }
     CaptureAnim(ped, s);
@@ -369,7 +397,7 @@ void Peds::ScanOwned() {
     // owned peds that vanished or went out of the partner's range
     std::vector<uint16_t> gone;
     for (auto& [id, np] : m_byId)
-        if (np.owner == myId && (!IsAlive(np) || RemoteDistance(np.ped->GetPosition(), np.ped->AreaCode()) > SyncOut(np.ped)))
+        if (np.owner == myId && (!IsAlive(np) || RemoteDistance(np.ped->GetPosition(), AreaOf(np.ped)) > SyncOut(np.ped)))
             gone.push_back(id);
     for (uint16_t id : gone) {
         Writer w(proto::G_PED_REMOVE);
@@ -384,7 +412,7 @@ void Peds::ScanOwned() {
         if (ped == me || ped->IsPlayer() || Players::Instance().FindByPed(ped)) continue;
         NetPed* np = Find(ped);
         if (np && np->owner != myId) continue;  // mirror
-        float d = RemoteDistance(ped->GetPosition(), ped->AreaCode());
+        float d = RemoteDistance(ped->GetPosition(), AreaOf(ped));
         if (!np) {
             if (d > SyncIn(ped)) continue;
             if (CVehicle* v = ped->VehicleIfIn(); v && !IsSyncableVehicle(v)) continue;
@@ -576,8 +604,8 @@ void Peds::ApplyMirror(NetPed& np) {
     np.lastClip = ped->ActiveWeapon().ammoInClip;
     np.lastWeapon = (uint8_t)ped->ActiveWeapon().type;
 
-    if (ped->ActiveWeapon().type != st.weapon && now - np.lastTaskMs > 1000) {
-        np.lastTaskMs = now;
+    if (ped->ActiveWeapon().type != st.weapon && now - np.weaponMs > 1000) {
+        np.weaponMs = now;
         if (st.weapon != 0) {
             int wmodel = -1;
             Cmd(0x0781).I(st.weapon).Out(&wmodel).Run();  // GET_WEAPONTYPE_MODEL
@@ -590,6 +618,18 @@ void Peds::ApplyMirror(NetPed& np) {
         Cmd(0x01B9).I(np.handle).I(st.weapon).Run();  // SET_CURRENT_CHAR_WEAPON
     }
 
+    // the copy here of what the owner's ped aims at (the real player when it is ours), -1: the point st.pos + st.aim
+    auto aimHandle = [&]() -> int {
+        if (st.aimKind == 1) {
+            CPed* p = st.aimId == Net().MyId() ? FindPlayerPed(0) : nullptr;
+            if (const RemotePlayer* rp = Players::Instance().Get((uint8_t)st.aimId); rp && st.aimId != Net().MyId()) p = rp->ped;
+            return p ? GetPedRef(p) : -1;
+        }
+        if (st.aimKind == 2)
+            if (auto it = m_byId.find(st.aimId); it != m_byId.end() && IsAlive(it->second)) return it->second.handle;
+        return -1;
+    };
+
     // ---- vehicles: the game's own enter/leave tasks, warps only as a fallback
     if (st.flags & PedSyncState::F_IN_VEHICLE) {
         NetVehicle* nv = Vehicles::Instance().Find(st.vehNetId);
@@ -600,7 +640,34 @@ void Peds::ApplyMirror(NetPed& np) {
             np.leaveTaskMs = now;
         }
         int seat = inside ? PassengerSeatOf(nv->veh, ped) : -2;
-        if (seat == st.seat || now - np.lastTaskMs < 1000) return;
+        if (seat == st.seat) {
+            if (np.leaveTaskMs) return;  // getting out: TASK_LEAVE_CAR ends a drive-by by itself
+            // a drive-by: the game's gang drive-by task leans out, aims and fires at the owner's target; its shots hurt
+            // what this game owns, the player too, as a mirror's gunfire on foot does
+            bool aiming = (st.flags & PedSyncState::F_AIMING) && st.weapon != 0;
+            int target = aiming ? aimHandle() : -1;
+            CVector at = st.pos + st.aim;
+            int rate = (st.flags & PedSyncState::F_FIRING) ? 90 : 0;  // m_nFrequencyPercentage: 0 leans out and aims only
+            if (void* db = FindTask(ped, TASK_SIMPLE_GANG_DRIVEBY)) {
+                if (!aiming || target != np.gunTargetHandle) {
+                    CallMethod<0x601420>(ped->Intelligence(), true, false);  // CPedIntelligence::ClearTasks: seated again
+                } else {
+                    int8_t& freq = Field<int8_t>(db, 0x13);
+                    if (rate && !freq) Field<int16_t>(db, 0x16) = -1;  // m_nAttackTimer: drawn again (rate 0 drew up to 10 s)
+                    freq = (int8_t)rate;
+                    if (target < 0) Field<CVector>(db, 0x38) = at;  // m_vecCoords: the point follows the owner's
+                }
+            } else if (aiming && ped->ActiveWeapon().type == st.weapon && now - np.gunTaskMs > 1000 && !TaskPending(ped)) {
+                if (target >= 0) at = CVector{};  // with a target char the point is an offset from it
+                // TASK_DRIVE_BY char, target char, target car, x, y, z, abort radius (the owner ends it), style
+                // AI_ALL_DIRN, right-hand seat (the seat decides), fire rate
+                Cmd(0x0713).I(np.handle).I(target).I(-1).F(at.x).F(at.y).F(at.z).F(1000.0f).I(8).I(0).I(rate).Run();
+                np.gunTargetHandle = target;
+                np.gunTaskMs = now;
+            }
+            return;
+        }
+        if (now - np.lastTaskMs < 1000) return;
         if (!inside && np.leaveTaskMs && now - np.leaveTaskMs < kCarTaskGraceMs) return;  // getting out like the owner
         if (!inside && np.enterVeh == st.vehNetId && now - np.enterTaskMs < kCarTaskGraceMs) return;  // still getting in
         np.lastTaskMs = now;
@@ -657,15 +724,7 @@ void Peds::ApplyMirror(NetPed& np) {
     if ((st.flags & PedSyncState::F_AIMING) && st.weapon != 0) {
         CVector aimAt = st.pos + st.aim;
         uint8_t mode = (st.flags & PedSyncState::F_FIRING) ? 2 : 1;
-        int targetHandle = -1;
-        if (st.aimKind == 1) {
-            CPed* p = st.aimId == Net().MyId() ? FindPlayerPed(0) : nullptr;
-            if (const RemotePlayer* rp = Players::Instance().Get((uint8_t)st.aimId); rp && st.aimId != Net().MyId()) p = rp->ped;
-            targetHandle = p ? GetPedRef(p) : -1;
-        } else if (st.aimKind == 2) {
-            auto it = m_byId.find(st.aimId);
-            if (it != m_byId.end() && IsAlive(it->second)) targetHandle = it->second.handle;
-        }
+        int targetHandle = aimHandle();
         bool moved = targetHandle < 0 && (aimAt - np.gunTarget).Length() > 1.5f;
         if (mode != np.gunMode || targetHandle != np.gunTargetHandle || moved || now - np.gunTaskMs > 1500) {
             if (targetHandle >= 0)  // TASK_SHOOT_AT_CHAR / TASK_AIM_GUN_AT_CHAR: follows a moving target itself
@@ -755,8 +814,17 @@ void Peds::ApplyMirror(NetPed& np) {
 
 void Peds::OnPreProcess() {
     if (!Net().Online() || !core::IsPlayerReady()) return;
-    for (auto& [id, np] : m_byId)
-        if (np.owner != Net().MyId()) ApplyMirror(np);
+    for (auto& [id, np] : m_byId) {
+        if (np.owner == Net().MyId()) continue;
+        ApplyMirror(np);
+        CPed* ped = np.ped;
+        if (!IsAlive(np) || !ped->RwObject() || ped->InVehicle() || IsPedDead(ped) || HasLastingBodyAnim(ped)) continue;
+        // its stance comes back, as the game would give it (see HasLastingBodyAnim)
+        Call<0x4D4610, void*>(ped->RwObject(), Field<int32_t>(ped, 0x4D4), 3 /* ANIM_ID_IDLE */, 4.0f);  // CAnimManager::BlendAnimation
+        np.baseBlock = kNoAnim;
+        np.animFull = false;
+        LOGD("Mirror %04X had no lasting animation: its stance is back", np.netId);
+    }
 }
 
 void Peds::OnPostProcess() {
@@ -782,7 +850,7 @@ void Peds::OnPostProcess() {
             spawned += np.ped != nullptr;
             acting += np.animBlock != kNoAnim;
             aiming += np.gunMode != 0;
-            gunTasks += IsAlive(np) && FindTask(np.ped, TASK_SIMPLE_USE_GUN) != nullptr;
+            gunTasks += IsAlive(np) && (FindTask(np.ped, TASK_SIMPLE_USE_GUN) || FindTask(np.ped, TASK_SIMPLE_GANG_DRIVEBY));
         }
         LOGI("Peds: %d announced, %d mirrors (%d spawned, %d animated, %d aiming, %d with a gun task, %d shots)", owned,
              mirrors, spawned, acting, aiming, gunTasks, m_mirrorShots);

@@ -126,10 +126,12 @@ struct BlipRecord {  // what the host sends for one blip
     }
 };
 
+enum : uint8_t { AREA_LOCATE = 0, AREA_SPHERE = 1 };
 struct Area {
     uint32_t id;
-    float x1, y1, x2, y2, z;
+    float x1, y1, x2, y2, z;  // a sphere: centre x1, y1, z and radius x2
     uint64_t seenMs;
+    uint8_t kind = AREA_LOCATE;
 };
 
 enum : uint8_t { BLIP_SET = 1, BLIP_REMOVE = 2, BLIP_CLEAR = 3 };
@@ -301,7 +303,7 @@ bool MarkerAt(const CVector& p, Area& out) {
         }
     }
     for (auto& [id, a] : g_areas)
-        if (NowMs() - a.seenMs < 1000 && InArea(a, p, 0.0f)) {
+        if (a.kind == AREA_LOCATE && NowMs() - a.seenMs < 1000 && InArea(a, p, 0.0f)) {
             out = a;
             return true;
         }
@@ -577,12 +579,40 @@ void __cdecl HookHighlight(uint32_t id, float x1, float y1, float x2, float y2, 
     g_origHighlight(id, x1, y1, x2, y2, z);
 }
 
+// DRAW_SPHERE: a red circle a script draws in the frames it wants it (OG Loc's at Freddy's door), C3dMarkers::
+// PlaceMarkerSet(id, type 1, position, radius, 255, 0, 0, 228, pulse 2048, 0.1, no rotation) from its command
+using PlaceMarkerSetFn = void(__cdecl*)(uint32_t, uint16_t, CVector*, float, uint8_t, uint8_t, uint8_t, uint8_t, uint16_t,
+                                        float, int16_t);
+PlaceMarkerSetFn g_origDrawSphere = nullptr;
+void __cdecl HookDrawSphere(uint32_t id, uint16_t type, CVector* pos, float radius, uint8_t r, uint8_t g, uint8_t b,
+                            uint8_t a, uint16_t pulse, float pulseFraction, int16_t rotate) {
+    if (Net().Online() && Net().IsHost() && pos) {
+        if (!g_areas.count(id)) LOGD("Script sphere %08X at %.1f,%.1f,%.1f", id, pos->x, pos->y, pos->z);
+        g_areas[id] = {id, pos->x, pos->y, radius, 0.0f, pos->z, NowMs(), AREA_SPHERE};
+    }
+    g_origDrawSphere(id, type, pos, radius, r, g, b, a, pulse, pulseFraction, rotate);
+}
+
+void DrawSphere(uint32_t id, const Area& a) {
+    CVector at{a.x1, a.y1, a.z};
+    g_origDrawSphere(id, 1, &at, a.x2, 255, 0, 0, 228, 2048, 0.1f, 0);
+}
+
+// The radar leaves the mission start points out (their letters and markers) while CTheScripts::IsPlayerOnAMission:
+// the partner, on no mission of its own, kept seeing them during the host's mission.
+using OnMissionFn = bool(__cdecl*)();
+OnMissionFn g_origRadarOnMission = nullptr;
+bool __cdecl RadarOnMission() {
+    return g_origRadarOnMission() || (Net().Online() && !Net().IsHost() && HostMissionRecent(0));
+}
+
 void HandleMarkers(uint8_t from, Reader& r) {
     uint8_t n = r.U8();
     std::vector<Area> areas;
     for (uint8_t i = 0; i < n && r.Ok(); ++i) {
         Area a{};
         a.id = r.U32();
+        a.kind = r.U8();
         a.x1 = r.F32();
         a.y1 = r.F32();
         a.x2 = r.F32();
@@ -591,6 +621,9 @@ void HandleMarkers(uint8_t from, Reader& r) {
         areas.push_back(a);
     }
     if (!r.Ok() || from != Net().HostId() || Net().IsHost()) return;
+    if (areas.size() != g_partnerAreas.size())
+        LOGD("Host markers: %zu (spheres %d)", areas.size(),
+             (int)std::count_if(areas.begin(), areas.end(), [](const Area& a) { return a.kind == AREA_SPHERE; }));
     g_partnerAreas = std::move(areas);
     g_partnerAreasMs = NowMs();
 }
@@ -1364,6 +1397,9 @@ public:
         mem::HookFn(0x69DCD0, &HookClear, &g_origClear, "CMessages::ClearMessages");
         mem::HookFn(0x69DD30, &HookClearSmall, &g_origClearSmall, "CMessages::ClearSmallMessagesOnly");
         mem::HookFn(0x485E00, &HookHighlight, &g_origHighlight, "CTheScripts::HighlightImportantArea");
+        mem::RedirectCallFn(0x4845F8, &HookDrawSphere, &g_origDrawSphere);  // DRAW_SPHERE -> C3dMarkers::PlaceMarkerSet
+        mem::RedirectCallFn(0x586D81, &RadarOnMission, &g_origRadarOnMission);  // CRadar::DrawCoordBlip
+        mem::RedirectCallFn(0x585C4E, &RadarOnMission, &g_origRadarOnMission);  // CRadar::Draw3dMarkers
         mem::HookFn(0x4D5E80, &HookLoadCutscene, &g_origLoadCutscene, "CCutsceneMgr::LoadCutsceneData");
         mem::HookFn(0x5B1460, &HookStartCutscene, &g_origStartCutscene, "CCutsceneMgr::StartCutscene");
         mem::RedirectCallFn(0x4D5EA3, &HookRebuildCutscenePlayer, &g_origCutscenePlayer);  // in LoadCutsceneData
@@ -1560,6 +1596,7 @@ private:
         for (size_t i = 0; i < live.size() && i < 32; ++i) {
             const Area& a = live[i];
             w.U32(a.id);
+            w.U8(a.kind);
             w.F32(a.x1);
             w.F32(a.y1);
             w.F32(a.x2);
@@ -1577,7 +1614,10 @@ private:
         if (g_hostWaits) g_origHighlight(g_waitArea.id, g_waitArea.x1, g_waitArea.y1, g_waitArea.x2, g_waitArea.y2, g_waitArea.z);
         // markers are drawn every frame while the host keeps them (stale after 1 s: host gone/paused)
         if (NowMs() - g_partnerAreasMs < 1000)
-            for (const Area& a : g_partnerAreas) g_origHighlight(a.id ^ 0x40000000u, a.x1, a.y1, a.x2, a.y2, a.z);
+            for (const Area& a : g_partnerAreas) {
+                if (a.kind == AREA_SPHERE) DrawSphere(a.id ^ 0x40000000u, a);
+                else g_origHighlight(a.id ^ 0x40000000u, a.x1, a.y1, a.x2, a.y2, a.z);
+            }
         // entity blips whose mirror appeared later
         static uint64_t last = 0;
         if (NowMs() - last > 500) {

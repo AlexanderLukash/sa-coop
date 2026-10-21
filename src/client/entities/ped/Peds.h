@@ -65,6 +65,7 @@ struct NetPed {
     int gunTargetHandle = -1;  // ped aimed at, -1: gunTarget point
     game::CVector gunTarget;
     uint64_t gunTaskMs = 0;
+    uint64_t weaponMs = 0;     // the last weapon change: its own timer, the walk tasks' held a walking mirror's gun back
     uint16_t enterVeh = 0;
     uint64_t enterTaskMs = 0, leaveTaskMs = 0;
     uint16_t animBlock = 0xFFFF, animIdx = 0;  // action animation replayed on the mirror

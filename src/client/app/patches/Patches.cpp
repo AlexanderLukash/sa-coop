@@ -57,6 +57,19 @@ void __fastcall HookUpdateMouse(void* self, void* edx) {
 // answer away (eax is overwritten at 0x4D987A): its redirect changes nothing.
 bool __cdecl AudioIsForegroundApp() { return true; }
 
+// WinMain runs a frame (RsEventHandler(rsIDLE, TRUE) -> Idle) only while the window is in the foreground. Running in the
+// background it drew on, and in exclusive fullscreen an alt-tab loses the D3D device: what was drawn then left the
+// screen corrupted after the return and the game crashed in d3d9 later. While the device is lost a frame is processed
+// without drawing (Idle with no argument returns before the rendering), and RenderWare resets the device on the first
+// drawn frame as it does after the game's own pause.
+using RsEventFn = int(__cdecl*)(int, void*);
+RsEventFn g_origIdleEvent = nullptr;
+int __cdecl HookIdleEvent(int event, void* param) {
+    auto* dev = (IDirect3DDevice9*)game::D3DDevice();
+    if (dev && dev->TestCooperativeLevel() == D3DERR_DEVICELOST) param = nullptr;
+    return g_origIdleEvent(event, param);
+}
+
 using VoidFn = void(__cdecl*)();
 VoidFn g_origStartUserPause = nullptr;
 void __cdecl HookStartUserPause() {
@@ -459,6 +472,38 @@ void FixPluginWrappers() {
     if (fixed) LOGI("Fixed %d register wrappers of old plugins (lost carry in the saved stack pointer):%s", fixed, where.c_str());
 }
 
+namespace {
+// ---------------------------------------------------------------- engine guards
+// Stencil shadows (high shadow quality) of map objects: CStencilShadows::RenderForObject checks only the triangle count
+// of the object's shadow mesh, and CCollisionData::RemoveCollisionVolumes (its col file streamed out) frees the mesh
+// but keeps the counts. An object still on the shadow list then crashed the game at 0x40F64C, right after rocket
+// blasts in two players' reports. A shadow without its mesh is skipped.
+using StencilForObjectFn = bool(__cdecl*)(void*, void*);
+StencilForObjectFn g_origStencilForObject = nullptr;
+bool __cdecl HookStencilForObject(void* shadow, void* arg) {
+    auto* owner = *(game::CEntity**)shadow;                                  // CStencilShadowObject::m_pOwner
+    void* col = owner ? game::CallMethod<0x535300, void*>(owner) : nullptr;  // CEntity::GetColModel
+    void* data = col ? game::Field<void*>(col, 0x2C) : nullptr;              // CColModel::m_pColData
+    if (data && (!game::Field<void*>(data, 0x28) || !game::Field<void*>(data, 0x2C))) return false;  // shadow mesh
+    return g_origStencilForObject(shadow, arg);
+}
+
+// A mission may create a car of a model it requested a while before without checking that it is still there: OG Loc's
+// chase asks for the Manana while loading its car recordings, lets it go later and creates three of them on a timer.
+// A model not in memory crashed CVehicleModelInfo::CreateInstance (0x4C9691) in a host's game. It is loaded first.
+using CreateCarForScriptFn = game::CVehicle*(__cdecl*)(int, game::CVector, uint8_t);
+CreateCarForScriptFn g_origCreateCarForScript = nullptr;
+game::CVehicle* __cdecl HookCreateCarForScript(int model, game::CVector pos, uint8_t missionCleanup) {
+    if (!game::IsModelLoaded(model) && game::IsVehicleModel(model)) {
+        LOGW("A script creates a car of model %d that is not in memory: loading it first", model);
+        game::RequestModel(model, 0x10 /* PRIORITY_REQUEST: the car holds it, nothing keeps it after */);
+        game::LoadAllRequestedModels(false);
+    }
+    return g_origCreateCarForScript(model, pos, missionCleanup);
+}
+
+}  // namespace
+
 bool GameMouseEnabled() { return !ui::In().MouseCaptured(); }
 
 void ApplyWindowPlacement() {
@@ -513,6 +558,7 @@ void Apply() {
         else LOGW("Background patch skipped: unexpected bytes at 0x748A8D (another mod?)");
         mem::RedirectCall(0x4D9875, (void*)&AudioIsForegroundApp, nullptr);  // CAEAudioHardware::Service
         mem::RedirectCall(0x4F15E1, (void*)&AudioIsForegroundApp, nullptr);  // CAEStreamThread::MainLoop
+        mem::RedirectCallFn(0x748D9B, &HookIdleEvent, &g_origIdleEvent);    // WinMain -> RsEventHandler(rsIDLE)
     }
     mem::HookFn(0x57C520, &HookCentreMousePointer, &g_origCentreMouse, "CMenuManager::CentreMousePointer");
     mem::RedirectCallFn(0x53E9F1, &HookIdleMouseSetPos, &g_origIdleMouseSetPos);  // Idle -> RsMouseSetPos
@@ -521,6 +567,8 @@ void Apply() {
     mem::RedirectCallFn(0x576C55, &HookMenuStopRadio, &g_origMenuStopRadio);  // CMenuManager::CheckForMenuClosing
     mem::RedirectCallFn(0x5737A5, &HookMenuStopRadio, &g_origMenuStopRadio);  // CMenuManager::SwitchToNewScreen
     mem::HookFn(0x746190, &HookSelectDevice, &g_origSelectDevice, "psSelectDevice");
+    mem::HookFn(0x710310, &HookStencilForObject, &g_origStencilForObject, "CStencilShadows::RenderForObject");
+    mem::HookFn(0x431F80, &HookCreateCarForScript, &g_origCreateCarForScript, "CCarCtrl::CreateCarForScript");
     if (cfg.windowed) {
         InstallWindowedMode();
         mem::HookFn(0x745C70, &HookSetVideoMode, &g_origSetVideoMode, "SetVideoMode");

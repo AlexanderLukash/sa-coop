@@ -13,6 +13,11 @@ namespace coop::net {
 bool Init();
 void Shutdown();
 
+// ENet's datagrams of up to 1392 bytes (1420 with IP and UDP) do not pass every line (a VPN, a mobile network, a router
+// that drops IP fragments): a reliable packet that never gets through ends the connection 10-20 s later. The two sides
+// agree on the smaller MTU of the two (the connect handshake), so either one setting this is enough.
+constexpr enet_uint32 kMtu = 1200;
+
 // Packet flags for a channel: reliable channels get ENET_PACKET_FLAG_RELIABLE.
 uint32_t FlagsForChannel(uint8_t channel);
 

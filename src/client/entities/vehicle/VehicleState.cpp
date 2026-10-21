@@ -126,8 +126,11 @@ VehicleState VehicleState::Capture(game::CVehicle* v) {
     s.gas = v->GasPedal();
     s.brake = v->BrakePedal();
     s.health = v->Health();
+    // the horn: our player's held button (CPad::GetHorn), a driver of the game's own a honk (CVehicle::m_HornCounter)
+    game::CPlayerPed* me = game::FindPlayerPed(0);
+    bool horn = me && v->Driver() == me ? game::CallMethod<0x53FEE0, bool>(game::GetPad(0)) : game::Field<uint32_t>(v, 0x514) > 0;
     s.flags = (v->EngineOn() ? F_ENGINE : 0) | (v->LightsOn() ? F_LIGHTS : 0) | (v->SirenOn() ? F_SIREN : 0) |
-              (v->Status() == 5 ? F_WRECKED : 0);
+              (horn ? F_HORN : 0) | (v->Status() == 5 ? F_WRECKED : 0);
     int type = v->VehicleSubClass();
     if (type <= game::VEHICLE_TYPE_PLANE || type == game::VEHICLE_TYPE_TRAILER) {  // CAutomobile and its subclasses
         s.extras |= X_MISC;
@@ -142,6 +145,12 @@ VehicleState VehicleState::Capture(game::CVehicle* v) {
         s.extras |= X_TURRET;
         s.turretYaw = game::Field<float>(v, 0x94C);   // CAutomobile::m_fDoomVerticalRotation
         s.turretPitch = game::Field<float>(v, 0x950);  // m_fDoomHorizontalRotation
+    }
+    // CHeli::ProcessControl (0x6C7050) lights it for the police AI or a player's Police Maverick (the horn)
+    if (type == game::VEHICLE_TYPE_HELI && game::Field<uint8_t>(v, 0xA11) && game::Field<float>(v, 0xA00) > 0.0f) {
+        s.extras |= X_LIGHT;
+        s.lightTarget = game::Field<CVector>(v, 0x9F4);
+        s.lightPower = game::Field<float>(v, 0xA00);
     }
     return s;
 }
@@ -164,6 +173,11 @@ void VehicleState::Write(Writer& w) const {
         w.I16(Writer::Quant(turretYaw, 3.2f));
         w.I16(Writer::Quant(turretPitch, 3.2f));
     }
+    if (extras & X_LIGHT) {
+        w.Vec(V(lightTarget));
+        w.Unit8(lightPower);
+    }
+    if (extras & X_TOW) w.U16(tower);
 }
 
 bool VehicleState::Read(Reader& r) {
@@ -184,6 +198,11 @@ bool VehicleState::Read(Reader& r) {
         turretYaw = r.I16() / 32767.0f * 3.2f;
         turretPitch = r.I16() / 32767.0f * 3.2f;
     }
+    if (extras & X_LIGHT) {
+        lightTarget = G(r.Vec());
+        lightPower = r.Unit8();
+    }
+    if (extras & X_TOW) tower = r.U16();
     return r.Ok();
 }
 

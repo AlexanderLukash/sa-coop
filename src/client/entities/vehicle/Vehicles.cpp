@@ -118,8 +118,31 @@ void __cdecl HookSteerAICarWithPhysics(CVehicle* v) {
     g_origSteerAI(v);
 }
 
+// CHeli::HeliSearchLights (0xC1C990) has 4 places and CHeli::AddHeliSearchLight does not check: with the other game's
+// helicopters copied here a night chase can light more, and a 5th wrote over what follows the array
+using AddSearchLightFn = void(__cdecl*)(const CVector&, const CVector&, float, float, uint32_t, uint8_t, uint8_t);
+AddSearchLightFn g_origAddSearchLight = nullptr;
+void __cdecl HookAddSearchLight(const CVector& from, const CVector& to, float radius, float power, uint32_t corona,
+                                uint8_t clip, uint8_t shadow) {
+    if (Ref<uint32_t>(0xC1C96C) < 4) g_origAddSearchLight(from, to, radius, power, corona, clip, shadow);  // NumberOfSearchLights
+}
+
+// The horn sounds for as long as the counter is up only in the player's own car (STATUS_PLAYER); in any other car the
+// audio plays a random honking pattern. A mirror honks while its owner's horn does, as the owner hears it.
+using HornStateFn = void(__fastcall*)(void*, void*, bool*, void*);
+HornStateFn g_origHornState = nullptr;
+void __fastcall HookGetHornState(void* audio, void* edx, bool* on, void* params) {
+    g_origHornState(audio, edx, on, params);
+    if (*on || !Net().Online()) return;
+    auto* v = Field<CVehicle*>(params, 0x10);  // tVehicleParams::Vehicle
+    if (NetVehicle* nv = Vehicles::Instance().Find(v); nv && Vehicles::Instance().IsMirror(*nv) && nv->hasState)
+        *on = (nv->state.flags & VehicleState::F_HORN) != 0;
+}
+
 void Vehicles::OnInstallHooks() {
     mem::HookFn(0x437C20, &HookSteerAICarWithPhysics, &g_origSteerAI, "CCarCtrl::SteerAICarWithPhysics");
+    mem::HookFn(0x4F61E0, &HookGetHornState, &g_origHornState, "CAEVehicleAudioEntity::GetHornState");
+    mem::HookFn(0x6C45B0, &HookAddSearchLight, &g_origAddSearchLight, "CHeli::AddHeliSearchLight");
     Net().SetHandler(proto::G_VEH_CREATE, [](uint8_t from, Reader& r) { Instance().HandleCreate(from, r); });
     Net().SetHandler(proto::G_VEH_REMOVE, [](uint8_t from, Reader& r) { Instance().HandleRemove(from, r); });
     Net().SetHandler(proto::G_VEH_SYNC, [](uint8_t from, Reader& r) { Instance().HandleSync(from, r); });
@@ -287,6 +310,9 @@ CVehicle* Vehicles::SpawnMirror(const VehicleSpawn& sp) {
     Cmd(0x00A5).I(sp.model).F(sp.pos.x).F(sp.pos.y).F(sp.pos.z).Out(&handle).Run();  // CREATE_CAR
     CVehicle* v = GetVehicle(handle);
     if (!v) return nullptr;
+    // CREATE_CAR marks the car as held by a script (CVehicle::bIsLocked), and a tow truck or a tractor never hooks such
+    // a car (CAutomobile::TowTruckControl, 0x6A4366); a mission's car stays so, as in its owner's game
+    if (!sp.script) v->VehicleFlagsLo() &= ~8u;
     SetVehicleMatrix(v, sp.pos, sp.rot);
     memcpy(v->Colors(), sp.colors, 4);
     v->Health() = sp.health;
@@ -510,6 +536,10 @@ void Vehicles::ApplyDriverState(uint8_t from, uint16_t netId, const VehicleState
     NetVehicle* nv = Find(netId);
     if (!nv || nv->owner != from) return;
     if (nv->hasState && (int32_t)(st.time - nv->lastTime) < 0) return;
+    if ((st.flags ^ (nv->hasState ? nv->state.flags : 0)) & VehicleState::F_HORN)
+        LOGD("Vehicle %04X: horn %s", netId, (st.flags & VehicleState::F_HORN) ? "on" : "off");
+    if ((st.extras ^ (nv->hasState ? nv->state.extras : 0)) & VehicleState::X_LIGHT)
+        LOGD("Vehicle %04X: searchlight %s", netId, (st.extras & VehicleState::X_LIGHT) ? "on" : "off");
     nv->lastTime = st.time;
     nv->state = st;
     nv->hasState = true;
@@ -613,9 +643,18 @@ void Vehicles::ApplyMirror(NetVehicle& nv, float dt) {
         Cmd(0x020B).I(nv.handle).Run();  // EXPLODE_CAR: it blew up in the owner's game
         return;
     }
+    // towed in its owner's game: hooked here to the copy of its tower too. A tow truck or a tractor hooks a car only by
+    // its driver's pad (CAutomobile::TowTruckControl); linked, the two stop colliding and the hoist holds it up
+    CVehicle* tower = nullptr;
+    if (st.extras & VehicleState::X_TOW)
+        if (NetVehicle* tn = Find(st.tower); tn && tn->veh != v && IsVehicleValid(tn->veh)) tower = tn->veh;
+    if (tower && !Field<CVehicle*>(v, 0x4C4) && !Field<CVehicle*>(tower, 0x4C8))  // m_pTowingVehicle, m_pVehicleBeingTowed
+        if (CallVirtual<61, bool>(v, tower, false))                                 // CVehicle::SetTowLink (vtable +0xF4)
+            LOGD("Vehicle %04X hooked to %04X here", nv.netId, st.tower);
     // a remote player (or nobody) drives it: no local pad input must reach this vehicle. A trailer keeps its own
-    // status: an abandoned one looks for a cab to hitch (CTrailer::ScanForTowLink), whoever's game that cab is in
-    if (v->Driver() != me && v->VehicleSubClass() != VEHICLE_TYPE_TRAILER) v->SetStatus(STATUS_PHYSICS);
+    // status: an abandoned one looks for a cab to hitch (CTrailer::ScanForTowLink), whoever's game that cab is in.
+    // A towed one keeps STATUS_IS_TOWED: with any other its ProcessControl breaks the link (0x6B32A7)
+    if (v->Driver() != me && v->VehicleSubClass() != VEHICLE_TYPE_TRAILER && !tower) v->SetStatus(STATUS_PHYSICS);
 
     float age = std::min(0.3f, (float)(NowMs() - nv.recvMs) / 1000.0f);
     CVector target = st.pos + st.vel * age;
@@ -659,6 +698,8 @@ void Vehicles::ApplyMirror(NetVehicle& nv, float dt) {
     v->Health() = st.health;
     v->SetEngineOn((st.flags & VehicleState::F_ENGINE) != 0);
     v->SetSiren((st.flags & VehicleState::F_SIREN) != 0);
+    int16_t alarm = Field<int16_t>(v, 0x45C);  // CVehicle::m_nAlarmState: a car alarm keeps its time in the horn counter
+    if (alarm == 0 || alarm == -1) Field<uint32_t>(v, 0x514) = (st.flags & VehicleState::F_HORN) ? 1 : 0;  // the siren's yelp asks it
     ApplyParts(v, st);
     ApplyHydraulics(v, st);
 }
@@ -691,6 +732,11 @@ void Vehicles::OnPreProcess() {
 void Vehicles::SendState(NetVehicle& nv) {
     VehicleState st = VehicleState::Capture(nv.veh);
     st.time = (uint32_t)NowMs();
+    if (CVehicle* t = Field<CVehicle*>(nv.veh, 0x4C4))  // CVehicle::m_pTowingVehicle: the other game hooks its copies too
+        if (NetVehicle* tn = Find(t)) {
+            st.extras |= VehicleState::X_TOW;
+            st.tower = tn->netId;
+        }
     Writer w(proto::G_VEH_SYNC);
     w.U16(nv.netId);
     st.Write(w);
@@ -760,9 +806,11 @@ void Vehicles::OnPostProcess() {
         if (NetVehicle* nv = IsVehicleValid(v) ? Find(v) : nullptr; nv && !IsMirror(*nv) && CanGiveAway(v)) GiveAway(*nv, to);
     m_giveAway.clear();
     // a trailer or a car this player's vehicle tows is simulated here from now on
-    if (CVehicle* mine = me->InVehicle() && me->Vehicle() && me->Vehicle()->Driver() == me ? me->Vehicle() : nullptr)
-        if (auto* towed = Field<CVehicle*>(mine, 0x4C8))  // CVehicle::m_pVehicleBeingTowed
-            if (NetVehicle* tn = Find(towed); tn && IsMirror(*tn)) TakeOwnership(*tn);
+    if (CVehicle* mine = me->InVehicle() && me->Vehicle() && me->Vehicle()->Driver() == me ? me->Vehicle() : nullptr) {
+        int n = 0;  // a baggage train: each trailer tows the next
+        for (auto* towed = Field<CVehicle*>(mine, 0x4C8); towed && n < 4; towed = Field<CVehicle*>(towed, 0x4C8), ++n)
+            if (NetVehicle* tn = Find(towed); tn && IsMirror(*tn)) TakeOwnership(*tn);  // CVehicle::m_pVehicleBeingTowed
+    }
     if (now - m_lastScan >= 250) {
         m_lastScan = now;
         ScanTraffic();
@@ -773,6 +821,13 @@ void Vehicles::OnPostProcess() {
             if (nv.hasState) {
                 nv.veh->SteerAngle() = nv.state.steer;
                 nv.veh->BrakePedal() = nv.state.brake;
+                // CHeli::ProcessControl just switched its searchlight off (no police AI, no player here) and
+                // CHeli::PreRender (0x6C5420) adds the light to this frame at night: as the owner's
+                if (nv.veh->VehicleSubClass() == VEHICLE_TYPE_HELI) {
+                    Field<uint8_t>(nv.veh, 0xA11) = (nv.state.extras & VehicleState::X_LIGHT) != 0;  // m_bSearchLightEnabled
+                    Field<CVector>(nv.veh, 0x9F4) = nv.state.lightTarget;                          // m_vecSearchLightTarget
+                    Field<float>(nv.veh, 0xA00) = nv.state.lightPower;                             // m_fSearchLightIntensity
+                }
             }
             continue;
         }

@@ -66,6 +66,20 @@ struct KeepWanted {
     }
 };
 
+// SET_CHAR_ONLY_DAMAGED_BY_PLAYER and SET_CAR_ONLY_DAMAGED_BY_PLAYER (a mission's target, a vigilante's criminals)
+// let through only FindPlayerPed's hits (CEventDamage::AffectsPed, CVehicle::CanVehicleBeDamaged): the other
+// player is a player too, so the flag is off while its hit is applied
+struct AsPlayersHit {
+    uint32_t& flags;
+    bool had;
+    explicit AsPlayersHit(CPhysical* e) : flags(e->PhysicalFlags()), had(flags & CPhysical::PF_INVULNERABLE) {
+        flags &= ~CPhysical::PF_INVULNERABLE;
+    }
+    ~AsPlayersHit() {
+        if (had) flags |= CPhysical::PF_INVULNERABLE;
+    }
+};
+
 bool IsCollision(int weapon) { return weapon == WEAPON_RAMMEDBYCAR || weapon == WEAPON_RUNOVERBYCAR; }
 // a bullet or a blow: the shooter's game sees where it hits
 bool IsDirect(int weapon) {
@@ -240,6 +254,7 @@ void HandleDamage(uint8_t from, Reader& r) {
         if (CPed* ped = Peds::Instance().FindOwned(netId)) {
             {
                 KeepWanted keep;
+                AsPlayersHit player(ped);
                 CVehicle* car = rp && rp->ped && rp->ped->InVehicle() ? rp->ped->Vehicle() : nullptr;
                 if (weapon == WEAPON_RAMMEDBYCAR && car) g_origKillWithCar(ped, nullptr, car, damage, 0);
                 else if (weapon != WEAPON_RAMMEDBYCAR) g_origGenerateDamage(ped, attacker, weapon, (int)damage, piece, dir);
@@ -265,6 +280,7 @@ void HandleDamage(uint8_t from, Reader& r) {
         NetVehicle* nv = Vehicles::Instance().Find(netId);
         if (nv && !Vehicles::Instance().IsMirror(*nv) && IsVehicleValid(nv->veh)) {
             KeepWanted keep;
+            AsPlayersHit player(nv->veh);
             g_origInflictDamage(nv->veh, nullptr, attacker, weapon, damage, CVector{p.x, p.y, p.z});
         }
     } else if (kind == KILLED_BY_YOU) {

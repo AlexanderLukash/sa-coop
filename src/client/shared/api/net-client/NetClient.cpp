@@ -152,6 +152,7 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
         return;
     }
     enet_host_compress_with_range_coder(client);
+    client->mtu = net::kMtu;
     ENetAddress addr{}, relay{};
     nat::Endpoint codeEp;
     uint8_t key = 0;
@@ -183,6 +184,8 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
 
     std::vector<Packet> outLocal;
     bool connected = false;
+    // the connection just before it ended, for the log: ENet resets the peer before it reports the end
+    enet_uint32 lastLoss = 0, lastInTransit = 0, lastHeard = 0;
     while (!m_quit) {
         // flush outgoing
         {
@@ -223,6 +226,10 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
                         break;
                     }
                     LOGW("Соединение с сервером %s", connected ? "потеряно" : "не установлено");
+                    if (connected)
+                        LOGI("Перед разрывом: пинг %u мс, потери %.1f%%, без подтверждения %u байт, сервер молчал %u мс, код %u",
+                             m_rtt.load(), lastLoss * 100.0 / (double)ENET_PEER_PACKET_LOSS_SCALE, lastInTransit,
+                             enet_time_get() - lastHeard, ev.data);
                     connected = false;
                     m_state = State::Disconnected;
                     m_disconnectEvent = true;
@@ -242,7 +249,12 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
             if (m_quit) break;
             rc = enet_host_check_events(client, &ev);
         }
-        if (connected) m_rtt = peer->roundTripTime;
+        if (connected) {
+            m_rtt = peer->roundTripTime;
+            lastLoss = peer->packetLoss;
+            lastInTransit = peer->reliableDataInTransit;
+            lastHeard = peer->lastReceiveTime;
+        }
     }
 
     if (connected) {

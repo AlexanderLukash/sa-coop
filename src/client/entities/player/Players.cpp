@@ -917,10 +917,13 @@ void Players::ApplyState(RemotePlayer& rp) {
         SetEntityPosition(ped, cur + corr);
         if (err.z > 1.0f && ped->MoveSpeed().z < 0.0f) ped->MoveSpeed().z = 0.0f;  // below its place: no falling on
     }
-    // standing still: keep the facing in sync (movement/aim set it while active)
+    // standing still: keep the facing in sync (movement sets it while active). Aiming, the owner's game turns its player
+    // with its camera, and that camera exists only there: here the player kept facing where it began to aim and only
+    // its gun went up and down. It faces as its owner, quickly.
     bool moving = std::abs(st.pad.lx) > 10 || std::abs(st.pad.ly) > 10;
-    if (!moving && !(st.pad.buttons & PadState::B_RS1)) {
-        float r = LerpAngle(ped->CurrentRotation(), st.rotation, 0.2f);
+    bool aiming = (st.pad.buttons & PadState::B_RS1) != 0;
+    if (aiming || !moving) {
+        float r = LerpAngle(ped->CurrentRotation(), st.rotation, aiming ? 0.6f : 0.2f);
         ped->CurrentRotation() = ped->AimingRotation() = r;
     }
 }

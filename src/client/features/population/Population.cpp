@@ -135,10 +135,41 @@ void __cdecl HookPossiblyRemoveVehicle(CVehicle* v) {
     g_origPossiblyRemove(v);
 }
 
+// The people of an interior (the entrance's: a police station's officers, a shop's customers; a furnished house's) come
+// in the game of the player who is there first, and the other player sees that game's (Peds): each game had its own,
+// and none of the other's.
+// `at`: where in the interior (one area holds several interiors far apart)
+bool OtherPlayerInside(const CVector& at) {
+    int area = Ref<int32_t>(0xB72914);  // CGame::currArea: the interior this game's player is in (or just came into)
+    if (!Net().Online() || !core::IsPlayerReady() || area == 0) return false;
+    for (auto& [id, rp] : Players::Instance().All())
+        if (rp.hasState && rp.state.area == area && (rp.state.pos - at).Length() < 80.0f) return true;
+    return false;
+}
+
+using PopulateInteriorFn = void(__cdecl*)(int, CVector);
+PopulateInteriorFn g_origPopulateInterior = nullptr;
+void __cdecl HookPopulateInterior(int count, CVector at) {  // CEntryExit::GenerateAmbientPeds, on coming in
+    if (OtherPlayerInside(at)) {  // our player is still at the door outside, `at` is in the interior
+        LOGI("The interior's people are the other game's (%d not made here)", count);
+        return;
+    }
+    g_origPopulateInterior(count, at);
+}
+
+using SetupPedsFn = void(__fastcall*)(void*, void*);
+SetupPedsFn g_origSetupInteriorPeds = nullptr;
+void __fastcall HookSetupInteriorPeds(void* group, void* edx) {  // InteriorGroup_c::Update asks again every frame
+    CPlayerPed* me = FindPlayerPed(0);
+    if (!me || !OtherPlayerInside(me->GetPosition())) g_origSetupInteriorPeds(group, edx);
+}
+
 class Population : public Module {
 public:
     const char* Name() const override { return "Population"; }
     void OnInstallHooks() override {
+        mem::RedirectCallFn(0x59690F, &HookSetupInteriorPeds, &g_origSetupInteriorPeds);  // InteriorGroup_c::Update
+        mem::RedirectCallFn(0x43E983, &HookPopulateInterior, &g_origPopulateInterior);    // CEntryExit::GenerateAmbientPeds
         mem::HookFn(0x616650, &HookPopulationUpdate, &g_origPopUpdate, "CPopulation::Update");
         mem::HookFn(0x4341C0, &HookGenerateRandomCars, &g_origGenerateRandomCars, "CCarCtrl::GenerateRandomCars");
         mem::HookFn(0x6F3F40, &HookCarGeneratorsProcess, &g_origCarGenerators, "CTheCarGenerators::Process");

@@ -34,7 +34,10 @@ struct VehicleState {
     uint16_t misc = 0;  // X_MISC, CAutomobile::m_wMiscComponentAngle: Hydra nozzles, raised hydraulics, tow hoist, forks
     float gear = 0;     // X_GEAR, CPlane::m_fLandingGearStatus: 0 down, 1 up, negative while going down
     float turretYaw = 0, turretPitch = 0;  // X_TURRET: Rhino, SWAT van, fire truck
-    enum : uint8_t { X_MISC = 1, X_GEAR = 2, X_TURRET = 4 };
+    game::CVector lightTarget;             // X_LIGHT: a helicopter's searchlight, CHeli::m_vecSearchLightTarget
+    float lightPower = 0;                  // and CHeli::m_fSearchLightIntensity (0..1)
+    uint16_t tower = 0;                    // X_TOW: net id of the vehicle towing this one (CVehicle::m_pTowingVehicle)
+    enum : uint8_t { X_MISC = 1, X_GEAR = 2, X_TURRET = 4, X_LIGHT = 8, X_TOW = 16 };
 
     static VehicleState Capture(game::CVehicle* v);
     void Write(Writer& w) const;
