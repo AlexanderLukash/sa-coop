@@ -24,8 +24,9 @@ and plays in the same world as a character of their own, with their own money, s
 
 The host starts a mission, but it only begins once both players stand in the marker. The partner sees the same
 texts, subtitles, radar blips, markers, race checkpoints and timers, and the texts come in the language of the
-partner's own game. Weapons the mission gives CJ go to the partner as well. Both players get the mission reward,
-and enemies attack both of them.
+partner's own game. The partner also hears the lines characters say during missions outside cutscenes. Weapons
+the mission gives CJ go to the partner as well. Both players get the mission reward. Enemies attack both of them,
+and either player can hurt them.
 
 | The host stands in the marker | The partner sees that the host is waiting |
 |---|---|
@@ -46,11 +47,11 @@ refuses with Esc.
 
 ### A shared world
 
-Both players have the same pedestrians, cars and police, the same time of day and the same weather. When one
-player drives away, the pedestrians and cars near the other one move over to the other player's game instead of
-vanishing. Knocked-down lamp posts and signs, broken glass and crates, fire, gang territories and the building
-doors a mission opens look the same for both. Horseshoes, oysters, snapshots and tags count toward the shared
-world.
+Both players have the same pedestrians, people inside buildings, cars and police, the same time of day and the
+same weather. When one player drives away, the pedestrians and cars near the other one move over to the other
+player's game instead of vanishing. Knocked-down lamp posts and signs, broken glass and crates, fire, gang
+territories, the building doors a mission opens and the doors of Pay 'n' Spray and mod shops look the same for
+both. Horseshoes, oysters, snapshots and tags count toward the shared world.
 
 | The host's screen | The partner's screen |
 |---|---|
@@ -60,17 +61,20 @@ world.
 
 Each player drives on their own or rides as a passenger with the other. A passenger can shoot from the window: the
 right mouse button leans out with the gun, the left one fires. Tuning and damage are visible to the other player.
-Plane landing gear and nozzles, tank and fire truck turrets, hydraulics, trailers and the tow truck all work.
-Explosions, rockets, grenades, tank shells, fire truck water, trains and RC toys are seen by both players. Either
-player can leave a car in the garage at a safe house, and the host's world keeps it.
+Plane landing gear and nozzles, tank and fire truck turrets, hydraulics, the horn, the police helicopter's
+searchlight, trailers, the tow truck and the airport tug all work. Explosions, rockets, grenades, tank shells,
+fire truck water, NPC drive-bys, trains and RC toys are seen by both players. Either player can leave a car in the
+garage at a safe house, and the host's world keeps it.
 
 ![The partner rides as a passenger in the host's car](docs/images/car.jpg)
 
 ### Your own progress
 
 Food and the gym, weapon and driving skills, clothes, haircuts, tattoos, money and side job rewards are separate
-for each player. The friend comes into the host's world as their own CJ, in the clothes and with the tattoos their
-CJ has in their own game. If the friend joined from the main menu, the look comes from their latest save. When the
+for each player. What a player does at a diner, the gym, a barber's or a tattoo parlour, the other player sees as
+well. If a player changes their character model, for example with a skin selector, the other player sees the new
+model too. The friend comes into the host's world as their own CJ, in the clothes and with the tattoos their CJ
+has in their own game. If the friend joined from the main menu, the look comes from their latest save. When the
 host saves the game, the friend's progress is saved on the host's side as well.
 
 | The host sees the partner | The partner sees the host |
@@ -163,6 +167,8 @@ The chat supports the `/help`, `/players` and `/tp` (go to your partner) command
 - Only the host can start story missions, Cesar's races and turf wars. When a mission has CJ carry something, like
   the crates in the house robbery with Ryder, the host does it.
 - You see the other player's train but cannot get into it: it is driven by the player whose game made it.
+- The other player's parachute canopy is not shown, only their animations. Each player hears their own
+  pedestrians' chatter outside missions.
 - The partner gets story progress (new areas, gyms, mission markers) by loading the host's world after every
   mission the host passes. Loading takes a few seconds, and the partner keeps their position, weapons and
   progress.
