@@ -183,7 +183,7 @@ async function createWindow() {
   window = new BrowserWindow({ width: 1280, height: 840, minWidth: 1020, minHeight: 720,
     backgroundColor: '#0c0b14', autoHideMenuBar: true, title: 'SA COOP — Back to the Grove',
     icon: path.join(__dirname, '../assets/icon.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: process.platform !== 'linux', nodeIntegration: false } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));

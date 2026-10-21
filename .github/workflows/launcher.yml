@@ -60,7 +60,7 @@ jobs:
         run: npm run dist:linux -- --publish never
       - name: Linux AppImage startup smoke without FUSE
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum node tools/appimage-smoke.cjs ./out/SA.COOP.Launcher-*.AppImage
+        run: xvfb-run --auto-servernum node tools/appimage-smoke.cjs ./out/*Launcher-*.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-${{ runner.os }}

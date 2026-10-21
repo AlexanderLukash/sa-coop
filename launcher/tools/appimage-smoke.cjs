@@ -1,20 +1,25 @@
 const { spawn } = require('node:child_process');
+const net = require('node:net');
 const { setTimeout: delay } = require('node:timers/promises');
 
 async function main() {
   const appImage = process.argv[2];
   if (!appImage) throw new Error('Usage: node tools/appimage-smoke.cjs <AppImage>');
-  const port = 9333;
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   const child = spawn(appImage, [
     '--appimage-extract-and-run', '--ozone-platform=x11', `--remote-debugging-port=${port}`,
-  ], { env: { ...process.env, APPIMAGE_EXTRACT_AND_RUN: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  ], { env: { ...process.env, APPIMAGE_EXTRACT_AND_RUN: '1' }, stdio: ['ignore', 'ignore', 'pipe'] });
   let logs = '';
-  for (const stream of [child.stdout, child.stderr]) stream.on('data', data => {
-    logs = (logs + data.toString()).slice(-12000);
-  });
+  child.stderr.on('data', data => { logs = (logs + data.toString()).slice(-12000); });
   try {
     let pages;
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 60; i++) {
       if (child.exitCode !== null) throw new Error(`AppImage exited early (${child.exitCode}).\n${logs}`);
       try {
         const response = await fetch(`http://127.0.0.1:${port}/json/list`);
