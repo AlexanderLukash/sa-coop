@@ -65,6 +65,7 @@ jobs:
             launcher/out/*.exe
             launcher/out/*.AppImage
             launcher/out/*.deb
+            dist/SA-COOP.zip
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -90,5 +91,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
-          files: release-assets/*.exe
+          files: |
+            release-assets/*.exe
+            release-assets/SA-COOP.zip
           fail_on_unmatched_files: true
