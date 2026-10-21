@@ -65,7 +65,12 @@ jobs:
             launcher/out/*.exe
             launcher/out/*.AppImage
             launcher/out/*.deb
-            dist/SA-COOP.zip
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: release-SA-COOP
+          path: dist/SA-COOP.zip
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -81,6 +86,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: launcher-Windows
+          path: release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-SA-COOP
           path: release-assets
           merge-multiple: true
       - name: Select release tag
