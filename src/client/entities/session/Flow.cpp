@@ -1,6 +1,7 @@
 #include "entities/session/Flow.h"
 
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <cmath>
@@ -67,6 +68,25 @@ void Fail(const std::string& why) {
     SetPhase(Phase::Idle);
 }
 
+// A server of this install left by an earlier game whose process hung after a crash holds the port: the new server
+// cannot open it and this game would join the old one (a wrong password, an old world)
+void StopLeftoverServers(const std::wstring& exe) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, L"coop-server.exe")) continue;
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+        if (!p) continue;
+        wchar_t path[MAX_PATH];
+        DWORD n = MAX_PATH;
+        if (QueryFullProcessImageNameW(p, 0, path, &n) && !_wcsicmp(path, exe.c_str()) && TerminateProcess(p, 0))
+            LOGW("A server left by an earlier game was stopped (pid %lu)", pe.th32ProcessID);
+        CloseHandle(p);
+    }
+    CloseHandle(snap);
+}
+
 bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
     auto& cfg = Cfg();
     std::wstring exe = cfg.coopDir + L"coop-server.exe";
@@ -74,6 +94,7 @@ bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
         Fail(TR("Нет файла coop\\coop-server.exe. Переустановите мод.", "The file coop\\coop-server.exe is missing. Reinstall the mod."));
         return false;
     }
+    StopLeftoverServers(exe);
     std::wstring cmd = L"\"" + exe + L"\" --port " + std::to_wstring(g_port) + L" --data \"" + cfg.coopDir +
                        Utf8ToWide(cfg.serverData) + L"\" --name \"" + Utf8ToWide(cfg.nickname) + L"\" --host \"" +
                        Utf8ToWide(cfg.nickname) + L"\"";

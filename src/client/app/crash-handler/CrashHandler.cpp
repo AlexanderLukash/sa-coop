@@ -101,7 +101,12 @@ LONG WINAPI VectoredHandler(EXCEPTION_POINTERS* ep) {
 
 LONG WINAPI UnhandledFilter(EXCEPTION_POINTERS* ep) {
     WriteReport(ep, false);
-    return g_prevFilter ? g_prevFilter(ep) : EXCEPTION_CONTINUE_SEARCH;
+    LONG r = g_prevFilter ? g_prevFilter(ep) : EXCEPTION_CONTINUE_SEARCH;
+    // nobody took it: Windows Error Reporting comes next, and its window may never show for a fullscreen game. The game
+    // was gone while its process stayed, with the server it started still on the port (the next game connected to that
+    // old server: "wrong password"). The report is written: the process ends here.
+    if (r == EXCEPTION_CONTINUE_SEARCH) TerminateProcess(GetCurrentProcess(), ep->ExceptionRecord->ExceptionCode);
+    return r;
 }
 
 void DumpThread(DWORD tid, const char* why) {
