@@ -36,7 +36,8 @@ static void WriteDefaultConfig(const std::wstring& path) {
         "port = 7788\r\n"
         "; Оставьте пустым, если пароль не нужен.\r\n"
         "password =\r\n"
-        "max_players = 2\r\n"
+        "; Total players including the host (1-8).\r\n"
+        "max_players = 8\r\n"
         "; Ник игрока, который всегда будет хостом. Если пусто, хостом становится тот, кто зашёл первым.\r\n"
         "host =\r\n"
         "motd = Добро пожаловать! Чтобы увидеть список команд, напишите /help.\r\n"
@@ -77,7 +78,7 @@ int wmain(int argc, wchar_t** argv) {
     cfg.name = ini.Get("server", "name", cfg.name);
     cfg.port = (uint16_t)ini.GetInt("server", "port", kDefaultPort);
     cfg.password = ini.Get("server", "password", "");
-    cfg.maxPlayers = ini.GetInt("server", "max_players", 2);
+    cfg.maxPlayers = ini.GetInt("server", "max_players", cfg.maxPlayers);
     cfg.hostName = ini.Get("server", "host", "");
     cfg.motd = ini.Get("server", "motd", cfg.motd);
     cfg.friendlyFire = ini.GetBool("server", "friendly_fire", false);

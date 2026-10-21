@@ -12,7 +12,11 @@
 
 <p align="center"><a href="README.md">Русский</a> · <b>English</b></p>
 
-SA:COOP is a mod for GTA San Andreas that lets two players go through the story together over the network. One
+This fork includes upstream PR #24 and supports up to **8 players total**.
+See [eight-player setup and validation](docs/COOP-8.md), especially if an existing
+`coop/server.ini` still limits the server to two or four players.
+
+SA:COOP is a mod for GTA San Andreas that lets up to eight players go through the story together over the network. One
 player is the host: the game runs on their save, and they start the missions. The other player connects to them
 and plays in the same world as a character of their own, with their own money, skills and look.
 
@@ -20,7 +24,7 @@ and plays in the same world as a character of their own, with their own money, s
 
 ## What the mod does
 
-### The story for two
+### The story together
 
 The host starts a mission, but it only begins once both players stand in the marker. The partner sees the same
 texts, subtitles, radar blips, markers, race checkpoints and timers, and the texts come in the language of the
@@ -217,7 +221,7 @@ src/
 │   ├── features/  story and cutscenes, progress, garages, voice, weather and more
 │   ├── entities/  session, player, vehicle, ped, mission, profile
 │   └── shared/    engine wrappers, network, drawing and input, config
-├── server/        coop-server.exe, the server for two players
+├── server/        coop-server.exe, the server for up to eight players
 ├── loader/        vorbisFile.dll, the ASI loader for a clean game
 └── common/        protocol, network, log and utilities for all three
 ```
