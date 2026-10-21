@@ -14,8 +14,13 @@ New servers default to eight slots. If `coop/server.ini` already exists with
 also use `coop-server.exe --max 8`; values above eight are capped at eight.
 The F9 host launcher respects `server.ini`.
 
+The launcher skin update extends this build to `0.2.5-mp9`, protocol 18:
+`G_PLAYER_LOOK` now includes a model ID before the clothes payload. The launcher
+writes `[player] skin` to its separate config. Install the updated client and
+server together on every machine; mp8/protocol 17 clients cannot use this update.
+
 Install this build's `coop.asi` on every player's machine and use its matching
-`coop/coop-server.exe`. Version 0.2.5-mp8 uses protocol 17; older clients are
+`coop/coop-server.exe`. The earlier 0.2.5-mp8 build used protocol 17; older clients are
 rejected because their servers/client assumptions predate eight-player sessions.
 
 Build and check on Windows:
@@ -29,7 +34,7 @@ python tools/test_server_capacity.py
 
 The capacity test checks actual ENet connections, the welcome roster, relay from
 player ID 7 to all seven peers, refusal of the ninth player, slot reuse, configured
-smaller sessions, the upper cap, and rejection of protocol 16 clients. It does not
+smaller sessions, the upper cap, and rejection of the previous protocol's clients. It does not
 run GTA. Before treating this as a tested gameplay release, verify eight game
 instances together: separate weapons/appearance, mission readiness, cutscene skip
 voting, vehicle/ped ownership, interiors, disconnects, and reconnects. Normal

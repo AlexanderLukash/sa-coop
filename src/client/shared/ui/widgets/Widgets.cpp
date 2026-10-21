@@ -21,8 +21,8 @@ bool g_tabPressed = false, g_shiftTab = false;
 size_t g_caret = std::string::npos;
 uint64_t g_caretTime = 0;
 
-constexpr uint32_t kPanelBg = 0xFF000000;
-constexpr uint32_t kFieldBg = 0xFF090C10;
+constexpr uint32_t kPanelBg = 0xF21B1527;
+constexpr uint32_t kFieldBg = 0xFF251D33;
 
 bool Hover(float x, float y, float w, float h) {
     auto& st = In().State();
@@ -65,12 +65,15 @@ bool AnyTextFocused() { return !g_focus.empty(); }
 float Panel(float x, float y, float w, float h, const char* asciiTitle) {
     auto& g = Gfx();
     float s = g.Scale();
-    g.Rect(x, y, w, h, kPanelBg);
-    g.RectOutline(x, y, w, h, kSaLine, std::max(1.0f, s));
+    g.RoundRect(x - 8 * s, y + 12 * s, w + 16 * s, h, 24 * s, 0x55000000);
+    g.RoundRect(x, y, w, h, 22 * s, kSaLine);
+    g.RoundRect(x + s, y + s, w - 2 * s, h - 2 * s, 21 * s, kPanelBg);
     // the title in the game's gothic font, like "Main Menu" on the game's own pages
-    float th = 58 * s;
-    g.GameText(GAME_FONT_GOTHIC, x + 52 * s, y + 16 * s, asciiTitle, th, kSaBlue);
-    return y + 16 * s + th;
+    g.RoundRect(x + 36 * s, y + 26 * s, 6 * s, 37 * s, 3 * s, kSaBlue);
+    g.Text(FONT_BIG, x + 56 * s, y + 23 * s, asciiTitle, 0xFFF6F1FF, 0);
+    g.Text(FONT_MENU_SMALL, x + w - 42 * s, y + 36 * s, "SAN ANDREAS / CO-OP", kSaMuted, TEXT_RIGHT);
+    g.Rect(x + 36 * s, y + 82 * s, w - 72 * s, s, kSaLine);
+    return y + 96 * s;
 }
 
 void Label(float x, float y, const std::string& utf8, uint32_t argb, bool small) {
@@ -86,8 +89,8 @@ static bool MenuItem(float x, float y, float w, float h, FontId font, const std:
     bool lit = enabled && (selected || hover);
     float tw = g.TextWidth(font, label), lh = g.LineHeight(font);
     float tx = x + (w - tw) * 0.5f, ty = y + (h - lh) * 0.5f;
-    if (enabled && (selected || (hover && pointerOnHover))) Pointer(tx - lh * 0.95f, y + h * 0.5f, lh * 1.7f, kSaBlue);
-    g.Text(font, tx, ty, label, !enabled ? 0xFF353F4A : lit ? kSaBlue : kSaSlate, TEXT_SHADOW);
+    g.RoundRect(x, y + 2, w, h - 4, 8 * g.Scale(), !enabled ? 0xFF262030 : lit ? 0xFF7450AC : 0xFF30253F);
+    g.Text(font, tx, ty, label, !enabled ? 0xFF72697F : lit ? 0xFFFFFFFF : kSaSlate, 0);
     return hover && In().State().lmbPressed;
 }
 

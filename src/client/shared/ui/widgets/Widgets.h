@@ -1,18 +1,17 @@
 #pragma once
-// Tiny immediate-mode widgets for the co-op menus (mouse + keyboard), drawn in the style of the game's own menus:
-// black panels, light blue for the selected item, slate blue for the rest, the game's star pointer.
+// Immediate-mode co-op widgets: dark purple panels, lilac accents, rounded controls.
 #include <cstdint>
 #include <string>
 
 namespace coop::ui::w {
 
-// the game's frontend palette
-constexpr uint32_t kSaBlue = 0xFFACCBF1;   // selected item, titles
-constexpr uint32_t kSaSlate = 0xFF4A5A6B;  // other items
-constexpr uint32_t kSaMuted = 0xFF8D9CAD;  // captions and hints (a lighter slate for small text)
-constexpr uint32_t kSaGreen = 0xFF5FA04E;  // the money green, lifted for text on black
-constexpr uint32_t kSaRed = 0xFFC8282D;    // a little brighter than the health bar, for text on black
-constexpr uint32_t kSaLine = 0xFF26303B;   // separators, field borders
+// Shared launcher-inspired palette (legacy constant names retained).
+constexpr uint32_t kSaBlue = 0xFFC1A1FF;
+constexpr uint32_t kSaSlate = 0xFFBDB5CD;
+constexpr uint32_t kSaMuted = 0xFF9E94B1;
+constexpr uint32_t kSaGreen = 0xFF91D5B6;
+constexpr uint32_t kSaRed = 0xFFFF95AC;
+constexpr uint32_t kSaLine = 0xFF443653;
 
 void BeginFrame();  // call once per frame before widgets
 void EndFrame();

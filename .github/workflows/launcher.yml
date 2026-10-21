@@ -1,0 +1,71 @@
+name: launcher
+on:
+  push:
+    paths: ['launcher/**', '.github/workflows/launcher.yml']
+  pull_request:
+    paths: ['launcher/**', '.github/workflows/launcher.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: launcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: launcher/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Windows'
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        if: runner.os == 'Windows'
+        with:
+          path: toolchain/llvm-mingw
+          key: llvm-mingw-20261006-ucrt-x86_64
+      - name: Build native mod integration fixture
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ../tools/get-toolchain.ps1
+          python ../tools/build.py dist
+          python ../tools/build_launcher_probe.py
+      - name: Native mod / launcher / server integration
+        if: runner.os == 'Windows'
+        run: npm run test:native
+      - name: Windows UI smoke
+        if: runner.os == 'Windows'
+        run: npm run test:ui
+      - name: Linux UI smoke
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run test:ui
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        run: npm run dist:win -- --publish never
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: npm run dist:linux -- --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ runner.os }}
+          path: |
+            launcher/out/*.exe
+            launcher/out/*.AppImage
+            launcher/out/*.deb
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: launcher-screenshots-${{ runner.os }}
+          path: launcher/test-results/*.png

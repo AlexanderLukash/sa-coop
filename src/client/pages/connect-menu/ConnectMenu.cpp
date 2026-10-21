@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 
 #include "common/api/nat-traversal/NatTraversal.h"
 #include "common/config/version/Version.h"
@@ -11,6 +12,7 @@
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
+#include "shared/game/SkinCatalog.h"
 #include "shared/lib/core/Core.h"
 #include "shared/ui/chat/Chat.h"
 #include "shared/ui/input/Input.h"
@@ -22,7 +24,7 @@ namespace coop::ui {
 namespace {
 using w::kSaBlue, w::kSaSlate, w::kSaMuted, w::kSaRed, w::kSaLine, w::kSaGreen;
 constexpr uint32_t kText = 0xFFE6E9EF;
-constexpr uint32_t kGold = 0xFFE2C063;  // the game's mission-title cream
+constexpr uint32_t kGold = 0xFFC1A1FF;  // the game's mission-title cream
 
 bool g_visible = false;
 bool g_autoShown = false;
@@ -33,6 +35,9 @@ int g_slotIndex = 0;  // index into the slot list
 std::vector<flow::SaveSlotInfo> g_slots;
 uint64_t g_slotsTime = 0;
 uint64_t g_copiedMs = 0;
+bool g_skinBrowser = false;
+std::wstring g_skinSearch;
+int g_skinPage = 0;
 
 void CopyToClipboard(const std::string& utf8) {
     std::wstring text = Utf8ToWide(utf8);
@@ -136,16 +141,16 @@ void RenderConnectMenu() {
     float lh = g.LineHeight(FONT_NORMAL), sh = g.LineHeight(FONT_SMALL), mh = g.LineHeight(FONT_MENU),
           ch = g.LineHeight(FONT_MENU_SMALL), bh = g.LineHeight(FONT_BIG);
     float rowH = lh + 14 * s;
-    float W = 820 * s, H = 690 * s;
+    float W = 940 * s, H = (online || busy || g_skinBrowser ? 950 : 820) * s;
     float x = (g.Width() - W) * 0.5f, y = (g.Height() - H) * 0.5f;
     float cx = x + 52 * s, cw = W - 104 * s;
-    float room = mh * 1.6f;  // space for the pointer left of a menu item
+    float room = 12 * s;
 
     float fy = y + H - 20 * s - sh;       // key legend
     float by = fy - 14 * s - rowH;        // footer items
     float bodyBottom = by - 12 * s;
 
-    g.Rect(0, 0, g.Width(), g.Height(), 0x99000000);
+    g.Rect(0, 0, g.Width(), g.Height(), 0xB00E0917);
     w::BeginFrame();
     float cy = w::Panel(x, y, W, H, "SA:COOP") + 8 * s;
     float vx = x + W - 52 * s;
@@ -177,7 +182,40 @@ void RenderConnectMenu() {
         return w::Button(id, px - room, py, g.TextWidth(FONT_MENU, label) + 2 * room, rowH, label, enabled, lit);
     };
 
-    if (online) {
+    if (g_skinBrowser) {
+        g.Text(FONT_BIG, cx, cy, TR("Выбор персонажа", "Your character"), kText, 0);
+        cy += bh + 18 * s;
+        w::TextBox("skin-search", cx, cy, cw, rowH, g_skinSearch, 40, false, false,
+                   TR("Поиск по имени или ID", "Search by name or ID"));
+        cy += rowH + 16 * s;
+        std::string query = Narrow(g_skinSearch);
+        auto lower = [](std::string value) { std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return (char)std::tolower(c); }); return value; };
+        query = lower(query);
+        std::vector<const skins::Skin*> matches;
+        for (const auto& skin : skins::kCatalog)
+            if (query.empty() || lower(Format("%d %s %s", skin.id, skin.name, skin.model)).find(query) != std::string::npos) matches.push_back(&skin);
+        constexpr int pageSize = 18;
+        int pages = std::max(1, ((int)matches.size() + pageSize - 1) / pageSize);
+        g_skinPage = std::clamp(g_skinPage, 0, pages - 1);
+        float cellW = (cw - 20 * s) / 3, cellH = 60 * s;
+        for (int i = 0; i < pageSize && g_skinPage * pageSize + i < (int)matches.size(); ++i) {
+            const auto& skin = *matches[g_skinPage * pageSize + i];
+            const std::string id = "skin-" + std::to_string(skin.id);
+            if (w::Button(id.c_str(), cx + (i % 3) * (cellW + 10 * s), cy + (i / 3) * (cellH + 9 * s), cellW, cellH,
+                          Format("#%d  %s", skin.id, skin.name), true, Cfg().skin == skin.id)) {
+                Cfg().skin = skin.id;
+                flow::SaveConnectSettings();
+            }
+        }
+        cy += 6 * (cellH + 9 * s) + 16 * s;
+        int step = w::Selector("skin-page", cx, cy, cw, rowH,
+                               Format(TR("Страница %d / %d · %d скинов", "Page %d / %d · %d skins"), g_skinPage + 1, pages, (int)matches.size()));
+        if (step) g_skinPage = (g_skinPage + step + pages) % pages;
+        cy += rowH + 18 * s;
+        const auto* selected = skins::Find(Cfg().skin);
+        para(selected ? Format(TR("Выбрано: %s (#%d)", "Selected: %s (#%d)"), selected->name, selected->id) : "CJ", kSaBlue);
+        para(TR("Скин применится вне транспорта и катсцен.", "Your skin changes when outside vehicles and cutscenes."), kSaMuted);
+    } else if (online) {
         // ---- in a session: who we are, the code for the friend, the players
         bool host = net.IsHost();
         g.Text(FONT_BIG, cx, cy, host ? TR("Сервер запущен", "Server running") : TR("Вы в игре", "Connected"), kSaBlue,
@@ -208,7 +246,7 @@ void RenderConnectMenu() {
         cy += ch + 8 * s;
         auto row = [&](const std::string& name, bool isHost, uint32_t ping, bool me) {
             float rh = lh + 14 * s;
-            g.Rect(cx, cy, cw, rh, 0xFF090C10);
+            g.Rect(cx, cy, cw, rh, 0xFF251D33);
             g.Text(FONT_NORMAL, cx + 14 * s, cy + 7 * s, me ? name + TR(" (вы)", " (you)") : name, me ? 0xFFFFFFFF : kText,
                    TEXT_SHADOW);
             g.Text(FONT_MENU_SMALL, cx + cw * 0.55f, cy + (rh - ch) * 0.5f, isHost ? TR("хост", "host") : TR("напарник", "partner"),
@@ -219,13 +257,15 @@ void RenderConnectMenu() {
         row(Cfg().nickname, host, net.Rtt(), true);
         for (auto& [id, p] : net.Peers()) row(p.name, p.isHost, p.ping, false);
         if (host && net.Peers().empty()) para(TR("Ждём друга...", "Waiting for your friend..."), kSaMuted);
+        cy += 12 * s;
+        if (w::Button("skins-online", cx, cy, cw, rowH, TR("Изменить персонажа", "Change character"))) g_skinBrowser = true;
     } else if (busy) {
         // ---- connecting / starting / loading, in the middle of the body
         float barH = 6 * s;
         cy += std::max(0.0f, (bodyBottom - cy - (mh * 2 + 18 * s + barH + 16 * s + sh)) * 0.5f);
         para(flow::StatusText(), kSaBlue, FONT_MENU, true);
         cy += 18 * s;
-        g.Rect(cx, cy, cw, barH, 0xFF141A21);
+        g.Rect(cx, cy, cw, barH, 0xFF30253F);
         float p = phase == flow::Phase::WaitingWorld ? net.WorldProgress() : -1.0f;
         if (p >= 0) {
             g.Rect(cx, cy, cw * std::clamp(p, 0.0f, 1.0f), barH, kSaBlue);
@@ -262,6 +302,9 @@ void RenderConnectMenu() {
         caption(cx, TR("Ник", "Nickname"));
         cy += ch + 6 * s;
         bool enter = w::TextBox("nick", cx, cy, 320 * s, rowH, g_nick, 20);
+        const auto* selected = skins::Find(Cfg().skin);
+        if (w::Button("skins-offline", cx + 340 * s, cy, cw - 340 * s, rowH,
+                      selected ? Format("%s · #%d", selected->name, selected->id) : TR("Выбрать скин", "Choose skin"))) g_skinBrowser = true;
         cy += rowH + 14 * s;
 
         int hostSlot = 0;
@@ -280,7 +323,7 @@ void RenderConnectMenu() {
             caption(cx, TR("Сохранение", "Save"));
             cy += ch + 6 * s;
             if (inGame) {
-                g.Rect(cx, cy, cw, rowH, 0xFF090C10);
+                g.Rect(cx, cy, cw, rowH, 0xFF251D33);
                 g.Text(FONT_NORMAL, cx + 12 * s, cy + (rowH - lh) * 0.5f, TR("Текущая игра", "Current game"), kText, TEXT_SHADOW);
             } else {
                 int d = w::Selector("slot", cx, cy, cw, rowH, g_slots[g_slotIndex].title);
@@ -328,16 +371,18 @@ void RenderConnectMenu() {
 
     // ---- footer: like "Back" on the game's pages
     g.Rect(cx, bodyBottom, cw, std::max(1.0f, s), kSaLine);
-    if (online || busy) {
+    if (g_skinBrowser) {
+        if (item("back-skins", cx, by, TR("Готово", "Done"))) g_skinBrowser = false;
+    } else if (online || busy) {
         if (item("leave", cx, by, online ? TR("Отключиться", "Disconnect") : TR("Отмена", "Cancel"))) flow::Leave();
     }
     std::string close = online || busy || inGame ? TR("Закрыть", "Close") : TR("Одиночная игра", "Single player");
     if (item("close", cx + cw - g.TextWidth(FONT_MENU, close), by, close)) SetConnectMenuVisible(false);
     g.Text(FONT_SMALL, cx, fy,
-           TR("{ACCBF1}F9{8D9CAD}  окно     {ACCBF1}T{8D9CAD}  чат     {ACCBF1}B{8D9CAD}  голос     "
-              "{ACCBF1}G{8D9CAD}  сесть пассажиром     {ACCBF1}F2{8D9CAD}  игроки",
-              "{ACCBF1}F9{8D9CAD}  window     {ACCBF1}T{8D9CAD}  chat     {ACCBF1}B{8D9CAD}  voice     "
-              "{ACCBF1}G{8D9CAD}  passenger     {ACCBF1}F2{8D9CAD}  players"),
+           TR("{C1A1FF}F9{9E94B1}  окно     {C1A1FF}T{9E94B1}  чат     {C1A1FF}B{9E94B1}  голос     "
+              "{C1A1FF}G{9E94B1}  сесть пассажиром     {C1A1FF}F2{9E94B1}  игроки",
+              "{C1A1FF}F9{9E94B1}  window     {C1A1FF}T{9E94B1}  chat     {C1A1FF}B{9E94B1}  voice     "
+              "{C1A1FF}G{9E94B1}  passenger     {C1A1FF}F2{9E94B1}  players"),
            kSaMuted, TEXT_SHADOW);
     w::EndFrame();
     w::DrawCursor();

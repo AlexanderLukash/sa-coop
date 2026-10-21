@@ -187,7 +187,7 @@ void Chat::Render() {
         }
     }
     if (m_open) {
-        g.Rect(x - 8 * s, y - 6 * s, width + 16 * s, lh * kVisibleLines + 12 * s, 0x60000000);
+        g.Rect(x - 8 * s, y - 6 * s, width + 16 * s, lh * kVisibleLines + 12 * s, 0xB01B1527);
     }
     float cy = y + lh * (kVisibleLines - 1);
     for (auto& v : vis) {
@@ -197,8 +197,8 @@ void Chat::Render() {
     if (m_open) {
         float iy = y + lh * kVisibleLines + 10 * s;
         float ih = lh + 8 * s;
-        g.Rect(x - 8 * s, iy, width + 16 * s, ih, 0xB0101010);
-        g.RectOutline(x - 8 * s, iy, width + 16 * s, ih, 0xFF5A82C8);
+        g.Rect(x - 8 * s, iy, width + 16 * s, ih, 0xE0251D33);
+        g.RectOutline(x - 8 * s, iy, width + 16 * s, ih, 0xFFC1A1FF);
         const wchar_t* prefix = TR(L"Сказать: ", L"Say: ");
         std::wstring shown = prefix + m_input;
         float prefixW = g.TextWidthW(FONT_NORMAL, prefix);

@@ -459,6 +459,7 @@ void Init(void* hModule) {
     EnsureDirectory(coopDir);
     if (!FileExists(coopDir + L"coop.ini")) WriteDefaultConfig(coopDir + L"coop.ini");
     cfg.Load(coopDir);  // reads -coopcfg; does not log
+    cfg.WriteLauncherStatus("loaded");
     std::wstring logPath = cfg.iniPath.substr(0, cfg.iniPath.size() - 4) + L".log";
     log::Open(logPath);
     LOGI("%s %s (protocol %u) loaded, coop dir: %s, config: %s", COOP_NAME, COOP_VERSION_STR, kProtocolVersion,
@@ -479,6 +480,7 @@ void Init(void* hModule) {
     LOGI("gta_sa.exe size: %u", (unsigned)fad.nFileSizeLow);
     // 1.0 US signature (both HOODLUM and "compact" executables share all addresses)
     if (*(uint32_t*)0x82457C != 0x94BF) {
+        cfg.WriteLauncherStatus("failed", "GTA San Andreas 1.0 US is required.");
         LOGE("Unsupported gta_sa.exe (size %u). SA:COOP requires GTA SA 1.0 US.", (unsigned)fad.nFileSizeLow);
         MessageBoxW(nullptr,
                     TR(L"SA:COOP работает только с GTA San Andreas версии 1.0 US.\n"
@@ -493,7 +495,7 @@ void Init(void* hModule) {
         return;
     }
 
-    if (!mem::Init()) return;
+    if (!mem::Init()) { cfg.WriteLauncherStatus("failed", "Could not initialize game hooks."); return; }
 
     patches::Apply();
 

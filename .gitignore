@@ -6,6 +6,11 @@
 __pycache__/
 *.pyc
 
+# launcher dependencies, packages and visual test output
+/launcher/node_modules/
+/launcher/out/
+/launcher/test-results/
+
 # local data that is not part of the project: the game's own files and the reverse engineering notes
 /game_files/
 /re/

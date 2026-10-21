@@ -18,6 +18,7 @@
 #include "entities/vehicle/Vehicles.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
+#include "shared/config/ServerCommand.h"
 #include "shared/game/Game.h"
 #include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
@@ -55,6 +56,7 @@ bool g_hasSpot = false;
 void SetPhase(Phase p) {
     g_phase = p;
     g_phaseTime = NowMs();
+    if (p == Phase::Playing) Cfg().WriteLauncherStatus("playing");
 }
 
 void Fail(const std::string& why) {
@@ -65,6 +67,7 @@ void Fail(const std::string& why) {
     ui::TheChat().AddError(why);
     Net().Disconnect();
     SetPhase(Phase::Idle);
+    Cfg().WriteLauncherStatus("failed", why);
 }
 
 bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
@@ -74,13 +77,7 @@ bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
         Fail(TR("Нет файла coop\\coop-server.exe. Переустановите мод.", "The file coop\\coop-server.exe is missing. Reinstall the mod."));
         return false;
     }
-    std::wstring cmd = L"\"" + exe + L"\" --port " + std::to_wstring(g_port) + L" --data \"" + cfg.coopDir +
-                       Utf8ToWide(cfg.serverData) + L"\" --name \"" + Utf8ToWide(cfg.nickname) + L"\" --host \"" +
-                       Utf8ToWide(cfg.nickname) + L"\"";
-    if (!g_password.empty()) cmd += L" --password \"" + Utf8ToWide(g_password) + L"\"";
-    if (!worldPath.empty()) cmd += L" --world \"" + worldPath + L"\"";
-    if (newGame) cmd += L" --new-game";
-    cmd += cfg.friendlyFire ? L" --friendly-fire 1" : L" --friendly-fire 0";  // the checkbox wins over server.ini
+    std::wstring cmd = BuildServerCommand(cfg, g_port, g_password, worldPath, newGame);
 
     if (!g_serverJob) {
         g_serverJob = CreateJobObjectW(nullptr, nullptr);
@@ -174,6 +171,7 @@ void SaveConnectSettings() {
     ini.Load(cfg.iniPath);
     ini.Set("player", "name", cfg.nickname);
     ini.Set("player", "language", cfg.english ? "en" : "ru");
+    ini.SetInt("player", "skin", cfg.skin);
     ini.Set("connect", "mode", cfg.wantsHost ? "host" : "join");  // the menu opens on the same tab next time
     ini.Set("connect", "host", cfg.host);
     ini.SetInt("connect", "port", cfg.port);

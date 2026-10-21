@@ -27,6 +27,7 @@ void Session::Connect(const std::string& host, uint16_t port, const std::string&
     m_inviteCode.clear();
     m_myId = m_hostId = 255;
     m_state = State::Connecting;
+    Cfg().WriteLauncherStatus("connecting");
     if (!m_net.Start(host, port)) {
         m_state = State::Failed;
         m_failReason = TR("Не удалось запустить сеть.", "Could not start the network.");
@@ -43,6 +44,7 @@ void Session::Disconnect(const std::string& reason) {
     m_world.clear();
     m_worldExpected = m_worldRecv = 0;
     if (wasOnline && onOffline) onOffline(reason);
+    if (wasOnline) Cfg().WriteLauncherStatus("offline", reason);
 }
 
 const PeerInfo* Session::Peer(uint8_t id) const {
@@ -105,6 +107,7 @@ void Session::Update() {
         }
         m_net.Stop();
         m_peers.clear();
+        Cfg().WriteLauncherStatus("failed", m_failReason);
         if (wasOnline && onOffline) onOffline(m_failReason);
     }
 }
@@ -122,6 +125,7 @@ void Session::HandleService(uint8_t id, Reader& r) {
             m_peers.clear();
             for (auto& p : w.players) m_peers[p.id] = PeerInfo{p.id, p.name, p.isHost, 0};
             m_state = State::Online;
+            Cfg().WriteLauncherStatus("online");
             LOGI("Вошли на сервер \"%s\" как игрок %d, хост: %d", m_serverName.c_str(), m_myId, m_hostId);
             chat.AddSystem(IsHost() ? TR("Сервер запущен. Вы хост.", "The server is up. You are the host.")
                                     : Format(TR("Вы подключились к серверу «%s».", "You joined the server \"%s\"."),
@@ -141,6 +145,7 @@ void Session::HandleService(uint8_t id, Reader& r) {
             else if (reason.empty()) m_failReason = TR("Вас выгнали с сервера.", "You were kicked from the server.");
             else m_failReason = Format(TR("Вас выгнали с сервера: %s.", "You were kicked from the server: %s."), reason.c_str());
             LOGW("%s", m_failReason.c_str());
+            Cfg().WriteLauncherStatus("failed", m_failReason);
             // shown once: a failed connect by the flow, a kick by onOffline when the connection closes
             break;
         }

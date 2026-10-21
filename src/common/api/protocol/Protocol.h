@@ -69,7 +69,7 @@ enum MsgId : uint8_t {
     G_PLAYER_AIM = 67,        // unreliable
     G_PLAYER_SPAWN = 68,      // reliable: (re)spawn, model, interior
     G_PLAYER_DEATH = 69,
-    G_PLAYER_LOOK = 70,       // reliable: clothes, fat, muscle
+    G_PLAYER_LOOK = 70,       // reliable: u16 skin model, bytes clothes (fat/muscle included)
     G_PLAYER_STATS = 71,      // reliable: stats affecting the remote ped (skills, stamina, fight style)
     G_PLAYER_WEAPONS = 72,    // reliable: weapon inventory
     G_BULLET = 73,            // visual bullet replay

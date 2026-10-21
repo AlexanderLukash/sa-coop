@@ -180,11 +180,11 @@ bool Renderer::BuildFonts() {
     int menu = std::max(12, (int)std::lround(h / 45.0));
     int menuSmall = std::max(10, (int)std::lround(h / 66.0));
     // the menu font of the game is wide and spaced out: Bahnschrift stretched by a third, with tracking
-    bool ok = BuildFont(m_fonts[FONT_NORMAL], L"Arial", normal, FW_BOLD) &&
-              BuildFont(m_fonts[FONT_SMALL], L"Arial", small, FW_BOLD) &&
-              BuildFont(m_fonts[FONT_BIG], L"Bahnschrift", big, FW_BOLD, 1.35f, big * 0.12f, true) &&
-              BuildFont(m_fonts[FONT_MENU], L"Bahnschrift", menu, FW_BOLD, 1.3f, menu * 0.12f, true) &&
-              BuildFont(m_fonts[FONT_MENU_SMALL], L"Bahnschrift", menuSmall, FW_SEMIBOLD, 1.3f, menuSmall * 0.16f, true);
+    bool ok = BuildFont(m_fonts[FONT_NORMAL], L"Segoe UI", normal, FW_NORMAL) &&
+              BuildFont(m_fonts[FONT_SMALL], L"Segoe UI", small, FW_NORMAL) &&
+              BuildFont(m_fonts[FONT_BIG], L"Segoe UI", big, FW_BOLD) &&
+              BuildFont(m_fonts[FONT_MENU], L"Segoe UI", menu, FW_SEMIBOLD) &&
+              BuildFont(m_fonts[FONT_MENU_SMALL], L"Segoe UI", menuSmall, FW_NORMAL);
     m_fontHeightFor = h;
     if (ok) LOGI("UI fonts created for %dx%d (%d/%d/%d/%d/%d px)", (int)m_width, h, normal, small, big, menu, menuSmall);
     return ok;
@@ -199,8 +199,8 @@ void Renderer::Invalidate() {
     m_ready = false;
 }
 
-bool Renderer::Begin() {
-    m_dev = (IDirect3DDevice9*)game::D3DDevice();
+bool Renderer::Begin(IDirect3DDevice9* previewDevice) {
+    m_dev = previewDevice ? previewDevice : (IDirect3DDevice9*)game::D3DDevice();
     if (!m_dev) return false;
 
     D3DVIEWPORT9 vp;
@@ -313,6 +313,18 @@ void Renderer::Rect(float x, float y, float w, float h, uint32_t argb) {
     Font& f = m_fonts[FONT_NORMAL];
     SetTexture(f.tex);
     Quad(x, y, w, h, f.whiteU, f.whiteV, f.whiteU, f.whiteV, argb);
+}
+
+void Renderer::RoundRect(float x, float y, float w, float h, float radius, uint32_t argb) {
+    float r = std::clamp(radius, 0.0f, std::min(w, h) * 0.5f);
+    Rect(x, y + r, w, h - r * 2, argb);
+    for (float row = 0; row < r; row += 1.0f) {
+        float d = r - row - 0.5f;
+        float inset = r - std::sqrt(std::max(0.0f, r * r - d * d));
+        float band = std::min(1.0f, r - row);
+        Rect(x + inset, y + row, w - inset * 2, band, argb);
+        Rect(x + inset, y + h - row - band, w - inset * 2, band, argb);
+    }
 }
 
 void Renderer::RectOutline(float x, float y, float w, float h, uint32_t argb, float t) {
@@ -464,7 +476,7 @@ std::vector<std::wstring> Renderer::Wrap(FontId fid, std::wstring_view text, flo
 }
 
 bool Renderer::SaveFrame(const std::string& bmpPath, int downscale) {
-    auto* dev = (IDirect3DDevice9*)game::D3DDevice();
+    auto* dev = m_dev;
     if (!dev || downscale < 1) return false;
     IDirect3DSurface9 *bb = nullptr, *plain = nullptr, *sys = nullptr;
     bool ok = false;

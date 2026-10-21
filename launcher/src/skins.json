@@ -1,0 +1,2095 @@
+[
+  {
+    "id": 0,
+    "name": "CJ",
+    "description": "Story",
+    "model": "null",
+    "special": false
+  },
+  {
+    "id": 1,
+    "name": "The Truth",
+    "description": "Story",
+    "model": "truth",
+    "special": true
+  },
+  {
+    "id": 2,
+    "name": "Maccer",
+    "description": "Story",
+    "model": "maccer",
+    "special": true
+  },
+  {
+    "id": 3,
+    "name": "Andre",
+    "description": "Story",
+    "model": "andre",
+    "special": true
+  },
+  {
+    "id": 4,
+    "name": "Big Bear / Thin",
+    "description": "Story",
+    "model": "bbthin",
+    "special": true
+  },
+  {
+    "id": 5,
+    "name": "Big Bear",
+    "description": "Story",
+    "model": "bb",
+    "special": true
+  },
+  {
+    "id": 6,
+    "name": "Emmet",
+    "description": "Story",
+    "model": "emmet",
+    "special": true
+  },
+  {
+    "id": 7,
+    "name": "MALE01",
+    "description": "Citizens",
+    "model": "male01",
+    "special": false
+  },
+  {
+    "id": 8,
+    "name": "Janitor",
+    "description": "Story",
+    "model": "janitor",
+    "special": true
+  },
+  {
+    "id": 9,
+    "name": "BFORI",
+    "description": "Citizens",
+    "model": "bfori",
+    "special": false
+  },
+  {
+    "id": 10,
+    "name": "BFOST",
+    "description": "Citizens",
+    "model": "bfost",
+    "special": false
+  },
+  {
+    "id": 11,
+    "name": "VBFYCRP",
+    "description": "Citizens",
+    "model": "vbfycrp",
+    "special": false
+  },
+  {
+    "id": 12,
+    "name": "BFYRI",
+    "description": "Citizens",
+    "model": "bfyri",
+    "special": false
+  },
+  {
+    "id": 13,
+    "name": "BFYST",
+    "description": "Citizens",
+    "model": "bfyst",
+    "special": false
+  },
+  {
+    "id": 14,
+    "name": "BMORI",
+    "description": "Citizens",
+    "model": "bmori",
+    "special": false
+  },
+  {
+    "id": 15,
+    "name": "BMOST",
+    "description": "Citizens",
+    "model": "bmost",
+    "special": false
+  },
+  {
+    "id": 16,
+    "name": "BMYAP",
+    "description": "Citizens",
+    "model": "bmyap",
+    "special": false
+  },
+  {
+    "id": 17,
+    "name": "BMYBU",
+    "description": "Citizens",
+    "model": "bmybu",
+    "special": false
+  },
+  {
+    "id": 18,
+    "name": "BMYBE",
+    "description": "Citizens",
+    "model": "bmybe",
+    "special": false
+  },
+  {
+    "id": 19,
+    "name": "BMYDJ",
+    "description": "Citizens",
+    "model": "bmydj",
+    "special": false
+  },
+  {
+    "id": 20,
+    "name": "BMYRI",
+    "description": "Citizens",
+    "model": "bmyri",
+    "special": false
+  },
+  {
+    "id": 21,
+    "name": "BMYCR",
+    "description": "Citizens",
+    "model": "bmycr",
+    "special": false
+  },
+  {
+    "id": 22,
+    "name": "BMYST",
+    "description": "Citizens",
+    "model": "bmyst",
+    "special": false
+  },
+  {
+    "id": 23,
+    "name": "WMYBMX",
+    "description": "Citizens",
+    "model": "wmybmx",
+    "special": false
+  },
+  {
+    "id": 24,
+    "name": "WBDYG1",
+    "description": "Citizens",
+    "model": "wbdyg1",
+    "special": false
+  },
+  {
+    "id": 25,
+    "name": "WBDYG2",
+    "description": "Citizens",
+    "model": "wbdyg2",
+    "special": false
+  },
+  {
+    "id": 26,
+    "name": "WMYBP",
+    "description": "Citizens",
+    "model": "wmybp",
+    "special": false
+  },
+  {
+    "id": 27,
+    "name": "WMYCON",
+    "description": "Citizens",
+    "model": "wmycon",
+    "special": false
+  },
+  {
+    "id": 28,
+    "name": "BMYDRUG",
+    "description": "Citizens",
+    "model": "bmydrug",
+    "special": false
+  },
+  {
+    "id": 29,
+    "name": "WMYDRUG",
+    "description": "Citizens",
+    "model": "wmydrug",
+    "special": false
+  },
+  {
+    "id": 30,
+    "name": "HMYDRUG",
+    "description": "Citizens",
+    "model": "hmydrug",
+    "special": false
+  },
+  {
+    "id": 31,
+    "name": "DWFOLC",
+    "description": "Citizens",
+    "model": "dwfolc",
+    "special": false
+  },
+  {
+    "id": 32,
+    "name": "DWMOLC1",
+    "description": "Citizens",
+    "model": "dwmolc1",
+    "special": false
+  },
+  {
+    "id": 33,
+    "name": "DWMOLC2",
+    "description": "Citizens",
+    "model": "dwmolc2",
+    "special": false
+  },
+  {
+    "id": 34,
+    "name": "DWMYLC1",
+    "description": "Citizens",
+    "model": "dwmylc1",
+    "special": false
+  },
+  {
+    "id": 35,
+    "name": "HMOGAR",
+    "description": "Citizens",
+    "model": "hmogar",
+    "special": false
+  },
+  {
+    "id": 36,
+    "name": "WMYGOL1",
+    "description": "Citizens",
+    "model": "wmygol1",
+    "special": false
+  },
+  {
+    "id": 37,
+    "name": "WMYGOL2",
+    "description": "Citizens",
+    "model": "wmygol2",
+    "special": false
+  },
+  {
+    "id": 38,
+    "name": "HFORI",
+    "description": "Citizens",
+    "model": "hfori",
+    "special": false
+  },
+  {
+    "id": 39,
+    "name": "HFOST",
+    "description": "Citizens",
+    "model": "hfost",
+    "special": false
+  },
+  {
+    "id": 40,
+    "name": "HFYRI",
+    "description": "Citizens",
+    "model": "hfyri",
+    "special": false
+  },
+  {
+    "id": 41,
+    "name": "HFYST",
+    "description": "Citizens",
+    "model": "hfyst",
+    "special": false
+  },
+  {
+    "id": 42,
+    "name": "Jethro",
+    "description": "Story",
+    "model": "jethro",
+    "special": true
+  },
+  {
+    "id": 43,
+    "name": "HMORI",
+    "description": "Citizens",
+    "model": "hmori",
+    "special": false
+  },
+  {
+    "id": 44,
+    "name": "HMOST",
+    "description": "Citizens",
+    "model": "hmost",
+    "special": false
+  },
+  {
+    "id": 45,
+    "name": "HMYBE",
+    "description": "Citizens",
+    "model": "hmybe",
+    "special": false
+  },
+  {
+    "id": 46,
+    "name": "HMYRI",
+    "description": "Citizens",
+    "model": "hmyri",
+    "special": false
+  },
+  {
+    "id": 47,
+    "name": "HMYCR",
+    "description": "Citizens",
+    "model": "hmycr",
+    "special": false
+  },
+  {
+    "id": 48,
+    "name": "HMYST",
+    "description": "Citizens",
+    "model": "hmyst",
+    "special": false
+  },
+  {
+    "id": 49,
+    "name": "OMOKUNG",
+    "description": "Citizens",
+    "model": "omokung",
+    "special": false
+  },
+  {
+    "id": 50,
+    "name": "WMYMECH",
+    "description": "Citizens",
+    "model": "wmymech",
+    "special": false
+  },
+  {
+    "id": 51,
+    "name": "BMYMOUN",
+    "description": "Citizens",
+    "model": "bmymoun",
+    "special": false
+  },
+  {
+    "id": 52,
+    "name": "WMYMOUN",
+    "description": "Citizens",
+    "model": "wmymoun",
+    "special": false
+  },
+  {
+    "id": 53,
+    "name": "OFORI",
+    "description": "Citizens",
+    "model": "ofori",
+    "special": false
+  },
+  {
+    "id": 54,
+    "name": "OFOST",
+    "description": "Citizens",
+    "model": "ofost",
+    "special": false
+  },
+  {
+    "id": 55,
+    "name": "OFYRI",
+    "description": "Citizens",
+    "model": "ofyri",
+    "special": false
+  },
+  {
+    "id": 56,
+    "name": "OFYST",
+    "description": "Citizens",
+    "model": "ofyst",
+    "special": false
+  },
+  {
+    "id": 57,
+    "name": "OMORI",
+    "description": "Citizens",
+    "model": "omori",
+    "special": false
+  },
+  {
+    "id": 58,
+    "name": "OMOST",
+    "description": "Citizens",
+    "model": "omost",
+    "special": false
+  },
+  {
+    "id": 59,
+    "name": "OMYRI",
+    "description": "Citizens",
+    "model": "omyri",
+    "special": false
+  },
+  {
+    "id": 60,
+    "name": "OMYST",
+    "description": "Citizens",
+    "model": "omyst",
+    "special": false
+  },
+  {
+    "id": 61,
+    "name": "WMYPLT",
+    "description": "Citizens",
+    "model": "wmyplt",
+    "special": false
+  },
+  {
+    "id": 62,
+    "name": "WMOPJ",
+    "description": "Citizens",
+    "model": "wmopj",
+    "special": false
+  },
+  {
+    "id": 63,
+    "name": "BFYPRO",
+    "description": "Citizens",
+    "model": "bfypro",
+    "special": false
+  },
+  {
+    "id": 64,
+    "name": "HFYPRO",
+    "description": "Citizens",
+    "model": "hfypro",
+    "special": false
+  },
+  {
+    "id": 65,
+    "name": "Kendl",
+    "description": "Story",
+    "model": "kendl",
+    "special": true
+  },
+  {
+    "id": 66,
+    "name": "BMYPOL1",
+    "description": "Citizens",
+    "model": "bmypol1",
+    "special": false
+  },
+  {
+    "id": 67,
+    "name": "BMYPOL2",
+    "description": "Citizens",
+    "model": "bmypol2",
+    "special": false
+  },
+  {
+    "id": 68,
+    "name": "WMOPREA",
+    "description": "Citizens",
+    "model": "wmoprea",
+    "special": false
+  },
+  {
+    "id": 69,
+    "name": "SBFYST",
+    "description": "Citizens",
+    "model": "sbfyst",
+    "special": false
+  },
+  {
+    "id": 70,
+    "name": "WMOSCI",
+    "description": "Citizens",
+    "model": "wmosci",
+    "special": false
+  },
+  {
+    "id": 71,
+    "name": "WMYSGRD",
+    "description": "Citizens",
+    "model": "wmysgrd",
+    "special": false
+  },
+  {
+    "id": 72,
+    "name": "SWMYHP1",
+    "description": "Citizens",
+    "model": "swmyhp1",
+    "special": false
+  },
+  {
+    "id": 73,
+    "name": "SWMYHP2",
+    "description": "Citizens",
+    "model": "swmyhp2",
+    "special": false
+  },
+  {
+    "id": 75,
+    "name": "SWFOPRO",
+    "description": "Citizens",
+    "model": "swfopro",
+    "special": false
+  },
+  {
+    "id": 76,
+    "name": "WFYSTEW",
+    "description": "Citizens",
+    "model": "wfystew",
+    "special": false
+  },
+  {
+    "id": 77,
+    "name": "SWMOTR1",
+    "description": "Citizens",
+    "model": "swmotr1",
+    "special": false
+  },
+  {
+    "id": 78,
+    "name": "WMOTR1",
+    "description": "Citizens",
+    "model": "wmotr1",
+    "special": false
+  },
+  {
+    "id": 79,
+    "name": "BMOTR1",
+    "description": "Citizens",
+    "model": "bmotr1",
+    "special": false
+  },
+  {
+    "id": 80,
+    "name": "VBMYBOX",
+    "description": "Citizens",
+    "model": "vbmybox",
+    "special": false
+  },
+  {
+    "id": 81,
+    "name": "VWMYBOX",
+    "description": "Citizens",
+    "model": "vwmybox",
+    "special": false
+  },
+  {
+    "id": 82,
+    "name": "VHMYELV",
+    "description": "Citizens",
+    "model": "vhmyelv",
+    "special": false
+  },
+  {
+    "id": 83,
+    "name": "VBMYELV",
+    "description": "Citizens",
+    "model": "vbmyelv",
+    "special": false
+  },
+  {
+    "id": 84,
+    "name": "VIMYELV",
+    "description": "Citizens",
+    "model": "vimyelv",
+    "special": false
+  },
+  {
+    "id": 85,
+    "name": "VWFYPRO",
+    "description": "Citizens",
+    "model": "vwfypro",
+    "special": false
+  },
+  {
+    "id": 86,
+    "name": "Ryder / Heist",
+    "description": "Story",
+    "model": "ryder3",
+    "special": true
+  },
+  {
+    "id": 87,
+    "name": "VWFYST1",
+    "description": "Citizens",
+    "model": "vwfyst1",
+    "special": false
+  },
+  {
+    "id": 88,
+    "name": "WFORI",
+    "description": "Citizens",
+    "model": "wfori",
+    "special": false
+  },
+  {
+    "id": 89,
+    "name": "WFOST",
+    "description": "Citizens",
+    "model": "wfost",
+    "special": false
+  },
+  {
+    "id": 90,
+    "name": "WFYJG",
+    "description": "Citizens",
+    "model": "wfyjg",
+    "special": false
+  },
+  {
+    "id": 91,
+    "name": "WFYRI",
+    "description": "Citizens",
+    "model": "wfyri",
+    "special": false
+  },
+  {
+    "id": 92,
+    "name": "WFYRO",
+    "description": "Citizens",
+    "model": "wfyro",
+    "special": false
+  },
+  {
+    "id": 93,
+    "name": "WFYST",
+    "description": "Citizens",
+    "model": "wfyst",
+    "special": false
+  },
+  {
+    "id": 94,
+    "name": "WMORI",
+    "description": "Citizens",
+    "model": "wmori",
+    "special": false
+  },
+  {
+    "id": 95,
+    "name": "WMOST",
+    "description": "Citizens",
+    "model": "wmost",
+    "special": false
+  },
+  {
+    "id": 96,
+    "name": "WMYJG",
+    "description": "Citizens",
+    "model": "wmyjg",
+    "special": false
+  },
+  {
+    "id": 97,
+    "name": "WMYLG",
+    "description": "Citizens",
+    "model": "wmylg",
+    "special": false
+  },
+  {
+    "id": 98,
+    "name": "WMYRI",
+    "description": "Citizens",
+    "model": "wmyri",
+    "special": false
+  },
+  {
+    "id": 99,
+    "name": "WMYRO",
+    "description": "Citizens",
+    "model": "wmyro",
+    "special": false
+  },
+  {
+    "id": 100,
+    "name": "WMYCR",
+    "description": "Citizens",
+    "model": "wmycr",
+    "special": false
+  },
+  {
+    "id": 101,
+    "name": "WMYST",
+    "description": "Citizens",
+    "model": "wmyst",
+    "special": false
+  },
+  {
+    "id": 102,
+    "name": "BALLAS1",
+    "description": "Gangs",
+    "model": "ballas1",
+    "special": false
+  },
+  {
+    "id": 103,
+    "name": "BALLAS2",
+    "description": "Gangs",
+    "model": "ballas2",
+    "special": false
+  },
+  {
+    "id": 104,
+    "name": "BALLAS3",
+    "description": "Gangs",
+    "model": "ballas3",
+    "special": false
+  },
+  {
+    "id": 105,
+    "name": "Grove · OG",
+    "description": "Gangs",
+    "model": "fam1",
+    "special": false
+  },
+  {
+    "id": 106,
+    "name": "Grove · Soldier",
+    "description": "Gangs",
+    "model": "fam2",
+    "special": false
+  },
+  {
+    "id": 107,
+    "name": "Grove · Homie",
+    "description": "Gangs",
+    "model": "fam3",
+    "special": false
+  },
+  {
+    "id": 108,
+    "name": "LSV1",
+    "description": "Gangs",
+    "model": "lsv1",
+    "special": false
+  },
+  {
+    "id": 109,
+    "name": "LSV2",
+    "description": "Gangs",
+    "model": "lsv2",
+    "special": false
+  },
+  {
+    "id": 110,
+    "name": "LSV3",
+    "description": "Gangs",
+    "model": "lsv3",
+    "special": false
+  },
+  {
+    "id": 111,
+    "name": "MAFFA",
+    "description": "Gangs",
+    "model": "maffa",
+    "special": false
+  },
+  {
+    "id": 112,
+    "name": "MAFFB",
+    "description": "Gangs",
+    "model": "maffb",
+    "special": false
+  },
+  {
+    "id": 113,
+    "name": "MAFBOSS",
+    "description": "Gangs",
+    "model": "mafboss",
+    "special": false
+  },
+  {
+    "id": 114,
+    "name": "VLA1",
+    "description": "Gangs",
+    "model": "vla1",
+    "special": false
+  },
+  {
+    "id": 115,
+    "name": "VLA2",
+    "description": "Gangs",
+    "model": "vla2",
+    "special": false
+  },
+  {
+    "id": 116,
+    "name": "VLA3",
+    "description": "Gangs",
+    "model": "vla3",
+    "special": false
+  },
+  {
+    "id": 117,
+    "name": "TRIADA",
+    "description": "Gangs",
+    "model": "triada",
+    "special": false
+  },
+  {
+    "id": 118,
+    "name": "TRIADB",
+    "description": "Gangs",
+    "model": "triadb",
+    "special": false
+  },
+  {
+    "id": 119,
+    "name": "Johnny Sindacco",
+    "description": "Story",
+    "model": "sindaco",
+    "special": true
+  },
+  {
+    "id": 120,
+    "name": "TRIBOSS",
+    "description": "Gangs",
+    "model": "triboss",
+    "special": false
+  },
+  {
+    "id": 121,
+    "name": "DNB1",
+    "description": "Gangs",
+    "model": "dnb1",
+    "special": false
+  },
+  {
+    "id": 122,
+    "name": "DNB2",
+    "description": "Gangs",
+    "model": "dnb2",
+    "special": false
+  },
+  {
+    "id": 123,
+    "name": "DNB3",
+    "description": "Gangs",
+    "model": "dnb3",
+    "special": false
+  },
+  {
+    "id": 124,
+    "name": "VMAFF1",
+    "description": "Gangs",
+    "model": "vmaff1",
+    "special": false
+  },
+  {
+    "id": 125,
+    "name": "VMAFF2",
+    "description": "Gangs",
+    "model": "vmaff2",
+    "special": false
+  },
+  {
+    "id": 126,
+    "name": "VMAFF3",
+    "description": "Gangs",
+    "model": "vmaff3",
+    "special": false
+  },
+  {
+    "id": 127,
+    "name": "VMAFF4",
+    "description": "Gangs",
+    "model": "vmaff4",
+    "special": false
+  },
+  {
+    "id": 128,
+    "name": "DNMYLC",
+    "description": "Citizens",
+    "model": "dnmylc",
+    "special": false
+  },
+  {
+    "id": 129,
+    "name": "DNFOLC1",
+    "description": "Citizens",
+    "model": "dnfolc1",
+    "special": false
+  },
+  {
+    "id": 130,
+    "name": "DNFOLC2",
+    "description": "Citizens",
+    "model": "dnfolc2",
+    "special": false
+  },
+  {
+    "id": 131,
+    "name": "DNFYLC",
+    "description": "Citizens",
+    "model": "dnfylc",
+    "special": false
+  },
+  {
+    "id": 132,
+    "name": "DNMOLC1",
+    "description": "Citizens",
+    "model": "dnmolc1",
+    "special": false
+  },
+  {
+    "id": 133,
+    "name": "DNMOLC2",
+    "description": "Citizens",
+    "model": "dnmolc2",
+    "special": false
+  },
+  {
+    "id": 134,
+    "name": "SBMOTR2",
+    "description": "Citizens",
+    "model": "sbmotr2",
+    "special": false
+  },
+  {
+    "id": 135,
+    "name": "SWMOTR2",
+    "description": "Citizens",
+    "model": "swmotr2",
+    "special": false
+  },
+  {
+    "id": 136,
+    "name": "SBMYTR3",
+    "description": "Citizens",
+    "model": "sbmytr3",
+    "special": false
+  },
+  {
+    "id": 137,
+    "name": "SWMOTR3",
+    "description": "Citizens",
+    "model": "swmotr3",
+    "special": false
+  },
+  {
+    "id": 138,
+    "name": "WFYBE",
+    "description": "Citizens",
+    "model": "wfybe",
+    "special": false
+  },
+  {
+    "id": 139,
+    "name": "BFYBE",
+    "description": "Citizens",
+    "model": "bfybe",
+    "special": false
+  },
+  {
+    "id": 140,
+    "name": "HFYBE",
+    "description": "Citizens",
+    "model": "hfybe",
+    "special": false
+  },
+  {
+    "id": 141,
+    "name": "SOFYBU",
+    "description": "Citizens",
+    "model": "sofybu",
+    "special": false
+  },
+  {
+    "id": 142,
+    "name": "SBMYST",
+    "description": "Citizens",
+    "model": "sbmyst",
+    "special": false
+  },
+  {
+    "id": 143,
+    "name": "SBMYCR",
+    "description": "Citizens",
+    "model": "sbmycr",
+    "special": false
+  },
+  {
+    "id": 144,
+    "name": "BMYCG",
+    "description": "Citizens",
+    "model": "bmycg",
+    "special": false
+  },
+  {
+    "id": 145,
+    "name": "WFYCRK",
+    "description": "Citizens",
+    "model": "wfycrk",
+    "special": false
+  },
+  {
+    "id": 146,
+    "name": "HMYCM",
+    "description": "Citizens",
+    "model": "hmycm",
+    "special": false
+  },
+  {
+    "id": 147,
+    "name": "WMYBU",
+    "description": "Citizens",
+    "model": "wmybu",
+    "special": false
+  },
+  {
+    "id": 148,
+    "name": "BFYBU",
+    "description": "Citizens",
+    "model": "bfybu",
+    "special": false
+  },
+  {
+    "id": 149,
+    "name": "Big Smoke / Armor",
+    "description": "Story",
+    "model": "smokev",
+    "special": true
+  },
+  {
+    "id": 150,
+    "name": "WFYBU",
+    "description": "Citizens",
+    "model": "wfybu",
+    "special": false
+  },
+  {
+    "id": 151,
+    "name": "DWFYLC1",
+    "description": "Citizens",
+    "model": "dwfylc1",
+    "special": false
+  },
+  {
+    "id": 152,
+    "name": "WFYPRO",
+    "description": "Citizens",
+    "model": "wfypro",
+    "special": false
+  },
+  {
+    "id": 153,
+    "name": "WMYCONB",
+    "description": "Citizens",
+    "model": "wmyconb",
+    "special": false
+  },
+  {
+    "id": 154,
+    "name": "WMYBE",
+    "description": "Citizens",
+    "model": "wmybe",
+    "special": false
+  },
+  {
+    "id": 155,
+    "name": "WMYPIZZ",
+    "description": "Citizens",
+    "model": "wmypizz",
+    "special": false
+  },
+  {
+    "id": 156,
+    "name": "BMOBAR",
+    "description": "Citizens",
+    "model": "bmobar",
+    "special": false
+  },
+  {
+    "id": 157,
+    "name": "CWFYHB",
+    "description": "Citizens",
+    "model": "cwfyhb",
+    "special": false
+  },
+  {
+    "id": 158,
+    "name": "CWMOFR",
+    "description": "Citizens",
+    "model": "cwmofr",
+    "special": false
+  },
+  {
+    "id": 159,
+    "name": "CWMOHB1",
+    "description": "Citizens",
+    "model": "cwmohb1",
+    "special": false
+  },
+  {
+    "id": 160,
+    "name": "CWMOHB2",
+    "description": "Citizens",
+    "model": "cwmohb2",
+    "special": false
+  },
+  {
+    "id": 161,
+    "name": "CWMYFR",
+    "description": "Citizens",
+    "model": "cwmyfr",
+    "special": false
+  },
+  {
+    "id": 162,
+    "name": "CWMYHB1",
+    "description": "Citizens",
+    "model": "cwmyhb1",
+    "special": false
+  },
+  {
+    "id": 163,
+    "name": "BMYBOUN",
+    "description": "Citizens",
+    "model": "bmyboun",
+    "special": false
+  },
+  {
+    "id": 164,
+    "name": "WMYBOUN",
+    "description": "Citizens",
+    "model": "wmyboun",
+    "special": false
+  },
+  {
+    "id": 165,
+    "name": "WMOMIB",
+    "description": "Citizens",
+    "model": "wmomib",
+    "special": false
+  },
+  {
+    "id": 166,
+    "name": "BMYMIB",
+    "description": "Citizens",
+    "model": "bmymib",
+    "special": false
+  },
+  {
+    "id": 167,
+    "name": "WMYBELL",
+    "description": "Citizens",
+    "model": "wmybell",
+    "special": false
+  },
+  {
+    "id": 168,
+    "name": "BMOCHIL",
+    "description": "Citizens",
+    "model": "bmochil",
+    "special": false
+  },
+  {
+    "id": 169,
+    "name": "SOFYRI",
+    "description": "Citizens",
+    "model": "sofyri",
+    "special": false
+  },
+  {
+    "id": 170,
+    "name": "SOMYST",
+    "description": "Citizens",
+    "model": "somyst",
+    "special": false
+  },
+  {
+    "id": 171,
+    "name": "VWMYBJD",
+    "description": "Citizens",
+    "model": "vwmybjd",
+    "special": false
+  },
+  {
+    "id": 172,
+    "name": "VWFYCRP",
+    "description": "Citizens",
+    "model": "vwfycrp",
+    "special": false
+  },
+  {
+    "id": 173,
+    "name": "SFR1",
+    "description": "Gangs",
+    "model": "sfr1",
+    "special": false
+  },
+  {
+    "id": 174,
+    "name": "SFR2",
+    "description": "Gangs",
+    "model": "sfr2",
+    "special": false
+  },
+  {
+    "id": 175,
+    "name": "SFR3",
+    "description": "Gangs",
+    "model": "sfr3",
+    "special": false
+  },
+  {
+    "id": 176,
+    "name": "BMYBAR",
+    "description": "Citizens",
+    "model": "bmybar",
+    "special": false
+  },
+  {
+    "id": 177,
+    "name": "WMYBAR",
+    "description": "Citizens",
+    "model": "wmybar",
+    "special": false
+  },
+  {
+    "id": 178,
+    "name": "WFYSEX",
+    "description": "Citizens",
+    "model": "wfysex",
+    "special": false
+  },
+  {
+    "id": 179,
+    "name": "WMYAMMO",
+    "description": "Citizens",
+    "model": "wmyammo",
+    "special": false
+  },
+  {
+    "id": 180,
+    "name": "BMYTATT",
+    "description": "Citizens",
+    "model": "bmytatt",
+    "special": false
+  },
+  {
+    "id": 181,
+    "name": "VWMYCR",
+    "description": "Citizens",
+    "model": "vwmycr",
+    "special": false
+  },
+  {
+    "id": 182,
+    "name": "VBMOCD",
+    "description": "Citizens",
+    "model": "vbmocd",
+    "special": false
+  },
+  {
+    "id": 183,
+    "name": "VBMYCR",
+    "description": "Citizens",
+    "model": "vbmycr",
+    "special": false
+  },
+  {
+    "id": 184,
+    "name": "VHMYCR",
+    "description": "Citizens",
+    "model": "vhmycr",
+    "special": false
+  },
+  {
+    "id": 185,
+    "name": "SBMYRI",
+    "description": "Citizens",
+    "model": "sbmyri",
+    "special": false
+  },
+  {
+    "id": 186,
+    "name": "SOMYRI",
+    "description": "Citizens",
+    "model": "somyri",
+    "special": false
+  },
+  {
+    "id": 187,
+    "name": "SOMYBU",
+    "description": "Citizens",
+    "model": "somybu",
+    "special": false
+  },
+  {
+    "id": 188,
+    "name": "SWMYST",
+    "description": "Citizens",
+    "model": "swmyst",
+    "special": false
+  },
+  {
+    "id": 189,
+    "name": "WMYVA",
+    "description": "Citizens",
+    "model": "wmyva",
+    "special": false
+  },
+  {
+    "id": 190,
+    "name": "COPGRL3",
+    "description": "Citizens",
+    "model": "copgrl3",
+    "special": false
+  },
+  {
+    "id": 191,
+    "name": "GUNGRL3",
+    "description": "Citizens",
+    "model": "gungrl3",
+    "special": false
+  },
+  {
+    "id": 192,
+    "name": "MECGRL3",
+    "description": "Citizens",
+    "model": "mecgrl3",
+    "special": false
+  },
+  {
+    "id": 193,
+    "name": "NURGRL3",
+    "description": "Citizens",
+    "model": "nurgrl3",
+    "special": false
+  },
+  {
+    "id": 194,
+    "name": "CROGRL3",
+    "description": "Citizens",
+    "model": "crogrl3",
+    "special": false
+  },
+  {
+    "id": 195,
+    "name": "GANGRL3",
+    "description": "Citizens",
+    "model": "gangrl3",
+    "special": false
+  },
+  {
+    "id": 196,
+    "name": "CWFOFR",
+    "description": "Citizens",
+    "model": "cwfofr",
+    "special": false
+  },
+  {
+    "id": 197,
+    "name": "CWFOHB",
+    "description": "Citizens",
+    "model": "cwfohb",
+    "special": false
+  },
+  {
+    "id": 198,
+    "name": "CWFYFR1",
+    "description": "Citizens",
+    "model": "cwfyfr1",
+    "special": false
+  },
+  {
+    "id": 199,
+    "name": "CWFYFR2",
+    "description": "Citizens",
+    "model": "cwfyfr2",
+    "special": false
+  },
+  {
+    "id": 200,
+    "name": "CWMYHB2",
+    "description": "Citizens",
+    "model": "cwmyhb2",
+    "special": false
+  },
+  {
+    "id": 201,
+    "name": "DWFYLC2",
+    "description": "Citizens",
+    "model": "dwfylc2",
+    "special": false
+  },
+  {
+    "id": 202,
+    "name": "DWMYLC2",
+    "description": "Citizens",
+    "model": "dwmylc2",
+    "special": false
+  },
+  {
+    "id": 203,
+    "name": "OMYKARA",
+    "description": "Citizens",
+    "model": "omykara",
+    "special": false
+  },
+  {
+    "id": 204,
+    "name": "WMYKARA",
+    "description": "Citizens",
+    "model": "wmykara",
+    "special": false
+  },
+  {
+    "id": 205,
+    "name": "WFYBURG",
+    "description": "Citizens",
+    "model": "wfyburg",
+    "special": false
+  },
+  {
+    "id": 206,
+    "name": "VWMYCD",
+    "description": "Citizens",
+    "model": "vwmycd",
+    "special": false
+  },
+  {
+    "id": 207,
+    "name": "VHFYPRO",
+    "description": "Citizens",
+    "model": "vhfypro",
+    "special": false
+  },
+  {
+    "id": 208,
+    "name": "Suzie",
+    "description": "Story",
+    "model": "suzie",
+    "special": true
+  },
+  {
+    "id": 209,
+    "name": "OMONOOD",
+    "description": "Citizens",
+    "model": "omonood",
+    "special": false
+  },
+  {
+    "id": 210,
+    "name": "OMOBOAT",
+    "description": "Citizens",
+    "model": "omoboat",
+    "special": false
+  },
+  {
+    "id": 211,
+    "name": "WFYCLOT",
+    "description": "Citizens",
+    "model": "wfyclot",
+    "special": false
+  },
+  {
+    "id": 212,
+    "name": "VWMOTR1",
+    "description": "Citizens",
+    "model": "vwmotr1",
+    "special": false
+  },
+  {
+    "id": 213,
+    "name": "VWMOTR2",
+    "description": "Citizens",
+    "model": "vwmotr2",
+    "special": false
+  },
+  {
+    "id": 214,
+    "name": "VWFYWAI",
+    "description": "Citizens",
+    "model": "vwfywai",
+    "special": false
+  },
+  {
+    "id": 215,
+    "name": "SBFORI",
+    "description": "Citizens",
+    "model": "sbfori",
+    "special": false
+  },
+  {
+    "id": 216,
+    "name": "SWFYRI",
+    "description": "Citizens",
+    "model": "swfyri",
+    "special": false
+  },
+  {
+    "id": 217,
+    "name": "WMYCLOT",
+    "description": "Citizens",
+    "model": "wmyclot",
+    "special": false
+  },
+  {
+    "id": 218,
+    "name": "SBFOST",
+    "description": "Citizens",
+    "model": "sbfost",
+    "special": false
+  },
+  {
+    "id": 219,
+    "name": "SBFYRI",
+    "description": "Citizens",
+    "model": "sbfyri",
+    "special": false
+  },
+  {
+    "id": 220,
+    "name": "SBMOCD",
+    "description": "Citizens",
+    "model": "sbmocd",
+    "special": false
+  },
+  {
+    "id": 221,
+    "name": "SBMORI",
+    "description": "Citizens",
+    "model": "sbmori",
+    "special": false
+  },
+  {
+    "id": 222,
+    "name": "SBMOST",
+    "description": "Citizens",
+    "model": "sbmost",
+    "special": false
+  },
+  {
+    "id": 223,
+    "name": "SHMYCR",
+    "description": "Citizens",
+    "model": "shmycr",
+    "special": false
+  },
+  {
+    "id": 224,
+    "name": "SOFORI",
+    "description": "Citizens",
+    "model": "sofori",
+    "special": false
+  },
+  {
+    "id": 225,
+    "name": "SOFOST",
+    "description": "Citizens",
+    "model": "sofost",
+    "special": false
+  },
+  {
+    "id": 226,
+    "name": "SOFYST",
+    "description": "Citizens",
+    "model": "sofyst",
+    "special": false
+  },
+  {
+    "id": 227,
+    "name": "SOMOBU",
+    "description": "Citizens",
+    "model": "somobu",
+    "special": false
+  },
+  {
+    "id": 228,
+    "name": "SOMORI",
+    "description": "Citizens",
+    "model": "somori",
+    "special": false
+  },
+  {
+    "id": 229,
+    "name": "SOMOST",
+    "description": "Citizens",
+    "model": "somost",
+    "special": false
+  },
+  {
+    "id": 230,
+    "name": "SWMOTR5",
+    "description": "Citizens",
+    "model": "swmotr5",
+    "special": false
+  },
+  {
+    "id": 231,
+    "name": "SWFORI",
+    "description": "Citizens",
+    "model": "swfori",
+    "special": false
+  },
+  {
+    "id": 232,
+    "name": "SWFOST",
+    "description": "Citizens",
+    "model": "swfost",
+    "special": false
+  },
+  {
+    "id": 233,
+    "name": "SWFYST",
+    "description": "Citizens",
+    "model": "swfyst",
+    "special": false
+  },
+  {
+    "id": 234,
+    "name": "SWMOCD",
+    "description": "Citizens",
+    "model": "swmocd",
+    "special": false
+  },
+  {
+    "id": 235,
+    "name": "SWMORI",
+    "description": "Citizens",
+    "model": "swmori",
+    "special": false
+  },
+  {
+    "id": 236,
+    "name": "SWMOST",
+    "description": "Citizens",
+    "model": "swmost",
+    "special": false
+  },
+  {
+    "id": 237,
+    "name": "SHFYPRO",
+    "description": "Citizens",
+    "model": "shfypro",
+    "special": false
+  },
+  {
+    "id": 238,
+    "name": "SBFYPRO",
+    "description": "Citizens",
+    "model": "sbfypro",
+    "special": false
+  },
+  {
+    "id": 239,
+    "name": "SWMOTR4",
+    "description": "Citizens",
+    "model": "swmotr4",
+    "special": false
+  },
+  {
+    "id": 240,
+    "name": "SWMYRI",
+    "description": "Citizens",
+    "model": "swmyri",
+    "special": false
+  },
+  {
+    "id": 241,
+    "name": "SMYST",
+    "description": "Citizens",
+    "model": "smyst",
+    "special": false
+  },
+  {
+    "id": 242,
+    "name": "SMYST2",
+    "description": "Citizens",
+    "model": "smyst2",
+    "special": false
+  },
+  {
+    "id": 243,
+    "name": "SFYPRO",
+    "description": "Citizens",
+    "model": "sfypro",
+    "special": false
+  },
+  {
+    "id": 244,
+    "name": "VBFYST2",
+    "description": "Citizens",
+    "model": "vbfyst2",
+    "special": false
+  },
+  {
+    "id": 245,
+    "name": "VBFYPRO",
+    "description": "Citizens",
+    "model": "vbfypro",
+    "special": false
+  },
+  {
+    "id": 246,
+    "name": "VHFYST3",
+    "description": "Citizens",
+    "model": "vhfyst3",
+    "special": false
+  },
+  {
+    "id": 247,
+    "name": "BIKERA",
+    "description": "Citizens",
+    "model": "bikera",
+    "special": false
+  },
+  {
+    "id": 248,
+    "name": "BIKERB",
+    "description": "Citizens",
+    "model": "bikerb",
+    "special": false
+  },
+  {
+    "id": 249,
+    "name": "BMYPIMP",
+    "description": "Citizens",
+    "model": "bmypimp",
+    "special": false
+  },
+  {
+    "id": 250,
+    "name": "SWMYCR",
+    "description": "Citizens",
+    "model": "swmycr",
+    "special": false
+  },
+  {
+    "id": 251,
+    "name": "WFYLG",
+    "description": "Citizens",
+    "model": "wfylg",
+    "special": false
+  },
+  {
+    "id": 252,
+    "name": "WMYVA2",
+    "description": "Citizens",
+    "model": "wmyva2",
+    "special": false
+  },
+  {
+    "id": 253,
+    "name": "BMOSEC",
+    "description": "Citizens",
+    "model": "bmosec",
+    "special": false
+  },
+  {
+    "id": 254,
+    "name": "BIKDRUG",
+    "description": "Citizens",
+    "model": "bikdrug",
+    "special": false
+  },
+  {
+    "id": 255,
+    "name": "WMYCH",
+    "description": "Citizens",
+    "model": "wmych",
+    "special": false
+  },
+  {
+    "id": 256,
+    "name": "SBFYSTR",
+    "description": "Citizens",
+    "model": "sbfystr",
+    "special": false
+  },
+  {
+    "id": 257,
+    "name": "SWFYSTR",
+    "description": "Citizens",
+    "model": "swfystr",
+    "special": false
+  },
+  {
+    "id": 258,
+    "name": "HECK1",
+    "description": "Citizens",
+    "model": "heck1",
+    "special": false
+  },
+  {
+    "id": 259,
+    "name": "HECK2",
+    "description": "Citizens",
+    "model": "heck2",
+    "special": false
+  },
+  {
+    "id": 260,
+    "name": "BMYCON",
+    "description": "Citizens",
+    "model": "bmycon",
+    "special": false
+  },
+  {
+    "id": 261,
+    "name": "WMYCD1",
+    "description": "Citizens",
+    "model": "wmycd1",
+    "special": false
+  },
+  {
+    "id": 262,
+    "name": "BMOCD",
+    "description": "Citizens",
+    "model": "bmocd",
+    "special": false
+  },
+  {
+    "id": 263,
+    "name": "VWFYWA2",
+    "description": "Citizens",
+    "model": "vwfywa2",
+    "special": false
+  },
+  {
+    "id": 264,
+    "name": "WMOICE",
+    "description": "Citizens",
+    "model": "wmoice",
+    "special": false
+  },
+  {
+    "id": 265,
+    "name": "Tenpenny",
+    "description": "Story",
+    "model": "tenpen",
+    "special": true
+  },
+  {
+    "id": 266,
+    "name": "Pulaski",
+    "description": "Story",
+    "model": "pulaski",
+    "special": true
+  },
+  {
+    "id": 267,
+    "name": "Hernandez",
+    "description": "Story",
+    "model": "hern",
+    "special": true
+  },
+  {
+    "id": 268,
+    "name": "Dwayne",
+    "description": "Story",
+    "model": "dwayne",
+    "special": true
+  },
+  {
+    "id": 269,
+    "name": "Big Smoke",
+    "description": "Story",
+    "model": "smoke",
+    "special": true
+  },
+  {
+    "id": 270,
+    "name": "Sweet",
+    "description": "Story",
+    "model": "sweet",
+    "special": true
+  },
+  {
+    "id": 271,
+    "name": "Ryder",
+    "description": "Story",
+    "model": "ryder",
+    "special": true
+  },
+  {
+    "id": 272,
+    "name": "Forelli",
+    "description": "Story",
+    "model": "forelli",
+    "special": true
+  },
+  {
+    "id": 273,
+    "name": "T-Bone Mendez",
+    "description": "Story",
+    "model": "tbone",
+    "special": true
+  },
+  {
+    "id": 274,
+    "name": "LAEMT1",
+    "description": "Services",
+    "model": "laemt1",
+    "special": false
+  },
+  {
+    "id": 275,
+    "name": "LVEMT1",
+    "description": "Services",
+    "model": "lvemt1",
+    "special": false
+  },
+  {
+    "id": 276,
+    "name": "SFEMT1",
+    "description": "Services",
+    "model": "sfemt1",
+    "special": false
+  },
+  {
+    "id": 277,
+    "name": "LAFD1",
+    "description": "Services",
+    "model": "lafd1",
+    "special": false
+  },
+  {
+    "id": 278,
+    "name": "LVFD1",
+    "description": "Services",
+    "model": "lvfd1",
+    "special": false
+  },
+  {
+    "id": 279,
+    "name": "SFFD1",
+    "description": "Services",
+    "model": "sffd1",
+    "special": false
+  },
+  {
+    "id": 280,
+    "name": "LAPD1",
+    "description": "Services",
+    "model": "lapd1",
+    "special": false
+  },
+  {
+    "id": 281,
+    "name": "SFPD1",
+    "description": "Services",
+    "model": "sfpd1",
+    "special": false
+  },
+  {
+    "id": 282,
+    "name": "LVPD1",
+    "description": "Services",
+    "model": "lvpd1",
+    "special": false
+  },
+  {
+    "id": 283,
+    "name": "CSHER",
+    "description": "Services",
+    "model": "csher",
+    "special": false
+  },
+  {
+    "id": 284,
+    "name": "LAPDM1",
+    "description": "Services",
+    "model": "lapdm1",
+    "special": false
+  },
+  {
+    "id": 285,
+    "name": "SWAT",
+    "description": "Services",
+    "model": "swat",
+    "special": false
+  },
+  {
+    "id": 286,
+    "name": "FBI",
+    "description": "Services",
+    "model": "fbi",
+    "special": false
+  },
+  {
+    "id": 287,
+    "name": "ARMY",
+    "description": "Services",
+    "model": "army",
+    "special": false
+  },
+  {
+    "id": 288,
+    "name": "DSHER",
+    "description": "Services",
+    "model": "dsher",
+    "special": false
+  },
+  {
+    "id": 289,
+    "name": "Zero",
+    "description": "Story",
+    "model": "zero",
+    "special": true
+  },
+  {
+    "id": 290,
+    "name": "Ken Rosenberg",
+    "description": "Story",
+    "model": "rose",
+    "special": true
+  },
+  {
+    "id": 291,
+    "name": "Kent Paul",
+    "description": "Story",
+    "model": "paul",
+    "special": true
+  },
+  {
+    "id": 292,
+    "name": "Cesar",
+    "description": "Story",
+    "model": "cesar",
+    "special": true
+  },
+  {
+    "id": 293,
+    "name": "OG Loc",
+    "description": "Story",
+    "model": "ogloc",
+    "special": true
+  },
+  {
+    "id": 294,
+    "name": "Woozie",
+    "description": "Story",
+    "model": "wuzimu",
+    "special": true
+  },
+  {
+    "id": 295,
+    "name": "Mike Toreno",
+    "description": "Story",
+    "model": "torino",
+    "special": true
+  },
+  {
+    "id": 296,
+    "name": "Jizzy",
+    "description": "Story",
+    "model": "jizzy",
+    "special": true
+  },
+  {
+    "id": 297,
+    "name": "Madd Dogg",
+    "description": "Story",
+    "model": "maddogg",
+    "special": true
+  },
+  {
+    "id": 298,
+    "name": "Catalina",
+    "description": "Story",
+    "model": "cat",
+    "special": true
+  },
+  {
+    "id": 299,
+    "name": "Claude",
+    "description": "Story",
+    "model": "claude",
+    "special": true
+  }
+]

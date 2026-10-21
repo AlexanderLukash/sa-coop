@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>SA COOP — Back to the Grove</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="flow.css"><link rel="stylesheet" href="theme.css">
+</head>
+<body>
+  <a class="brand" href="#home" aria-label="SA COOP головна"><span class="brand-mark">SA<span>↗</span></span><span>COOP<span class="brand-small">SAN ANDREAS / TOGETHER</span></span></a>
+  <aside class="sidebar">
+    <div class="side-label">ВАШ НАСТУПНИЙ ЗАЇЗД</div>
+    <nav aria-label="Навігація">
+      <button class="nav active" data-page="welcome"><span class="icon">⌂</span>Почати гру<span class="nav-dot"></span></button>
+      <button class="nav" data-page="lobby"><span class="icon">◎</span>Локальне лоббі<span class="tag">LAN</span></button>
+      <button class="nav" data-page="files"><span class="icon">↓</span>Файли гри</button>
+      <button class="nav" data-page="settings"><span class="icon">☷</span>Налаштування</button>
+    </nav>
+    <div class="side-note"><div class="signal"><i></i><i></i><i></i><i></i></div><strong>Одна мережа.<br>Одна банда.</strong><p>Зберіть друзів у LAN.<br>Решту залиште лаунчеру.</p></div>
+    <div class="side-bottom"><span class="online-dot"></span> <span id="platform-label">WINDOWS / LINUX</span><span class="build-label">LAUNCHER <span id="launcher-version">0.1.0</span></span></div>
+  </aside>
+  <main>
+    <header class="topbar"><div class="header-clock" id="header-clock"></div><div class="header-session"><span class="session-count"><b id="header-player-count">0</b><span>/8</span></span><div><progress id="header-player-meter" value="0" max="8"></progress><span id="header-session-label">гравців у лобі</span></div></div><div class="breadcrumb">SA COOP <span>/</span> <b id="breadcrumb">Почати гру</b></div><button class="profile" id="header-profile"><span class="profile-status">Локальний профіль</span><span id="profile-name">Player</span><span class="avatar" id="profile-initial">P</span></button></header>
+    <div class="content">
+      <section class="page active" id="page-welcome">
+        <div class="welcome-heading"><div class="eyebrow">GROVE STREET. HOME.</div><h1>SAN ANDREAS<span>+</span></h1><div class="welcome-tags"><span>SA COOP</span><span>До 8 гравців</span><span>Локальна мережа</span></div><p>Твоє місто. Твої люди. Ваша спільна історія.<br>Створи свою банду або приєднайся до друзів.</p></div>
+        <div class="role-options"><button class="role-card host-role" id="choose-host"><span class="role-label">01 / ВАША ТЕРИТОРІЯ</span><span class="role-art">↗</span><strong>Хостити гру</strong><span class="role-description">Створіть лобі, запросіть друзів<br>і задайте правила вашої сесії.</span><span class="role-link">Створити свою банду <b>→</b></span></button><button class="role-card join-role" id="choose-join"><span class="role-label">02 / ВАШІ ЛЮДИ ВЖЕ ТУТ</span><span class="role-art">◎</span><strong>Приєднатись</strong><span class="role-description">Знайдіть лобі в локальній мережі<br>або зайдіть до друзів, які вже грають.</span><span class="role-link">Знайти свою банду <b>→</b></span></button></div>
+        <div class="welcome-profile"><span class="avatar" id="welcome-avatar">P</span><div><strong id="welcome-name">Player</strong><span id="welcome-skin">CJ</span></div><button class="text-button" id="edit-global-profile">Змінити нік та скін ↗</button><span class="network-note">LAN · Radmin VPN · Hamachi · Wine / PortProton</span></div>
+        <div class="setup-status"><span id="welcome-game-status">Оберіть GTA та встановіть мод перед запуском.</span><span id="game-status" class="status">Не налаштовано</span><button class="text-button" data-go="files">Файли гри →</button></div>
+      </section>
+      <section class="page" id="page-host">
+        <button class="text-button" data-go="welcome">← До вибору режиму</button><div class="page-heading"><div><div class="eyebrow">YOUR PLACE. YOUR RULES.</div><h1>Як назвемо банду<span class="orange">?</span></h1><p>Створіть лобі — друзі побачать цю назву у вашій мережі.</p></div></div>
+        <form id="host-form" class="host-setup"><label>Назва лобі<input id="host-name" required maxlength="64" placeholder="Наприклад, Вечір на Grove Street" autofocus></label><label>Мережева адреса<select id="host-network"></select><small>Оберіть LAN або VPN-адаптер, у мережі якого знаходяться друзі.</small></label><button class="btn primary" type="submit">Створити лобі та чекати друзів ↗</button><p>Нік, скін і налаштування сервера можна змінити в самому лобі.</p></form>
+      </section>
+      <section class="page" id="page-lobby">
+        <div class="page-heading"><div><div class="eyebrow">GOOD COMPANY. GREAT STORIES.</div><h1>Ваша банда<span class="orange">.</span></h1><p>Усі в одній мережі — усі в одній грі.</p></div><button class="btn outline" id="refresh-lobbies">↻ Оновити</button></div>
+        <div id="lobby-browser">
+          <div class="lobby-toolbar"><div><h3>Лоббі поруч <span class="count" id="lobby-count">0</span></h3><p>Автоматичний пошук у вашій локальній мережі</p></div><button class="btn primary" id="create-lobby">+ Створити лоббі</button></div>
+          <div class="room-list" id="room-list"><div class="empty"><span class="empty-icon">◎</span><h3>Збирайте своїх</h3><p>Лоббі з вашої мережі з’являться тут.<br>Створіть перше або підключіться за адресою.</p></div></div>
+          <form id="join-form" class="join-box"><label for="join-address">Є запрошення від друга?</label><div class="inline-fields"><input id="join-address" placeholder="sacoop://192.168.1.2:7790/ABCDEF" required autocomplete="off"><input id="join-password" type="password" placeholder="Пароль, якщо є" maxlength="64"><button class="btn dark" type="submit">Приєднатись →</button></div></form>
+          <div class="info-line"><span>ⓘ</span> Не бачите лоббі? Перевірте, чи ви в одній мережі. На хості дозвольте TCP 7790 та UDP 7791 у брандмауері.</div>
+        </div>
+        <div id="active-room" hidden>
+          <div class="room-header"><div><span class="eyebrow" id="room-state">ЛОББІ ВІДКРИТО</span><h2 id="room-name">Grove Street crew</h2><p id="room-details"></p></div><div class="room-tools"><button class="btn outline" id="room-server-settings">☷ Налаштування сервера</button><button class="btn outline" id="copy-invite">Запросити друга ↗</button></div></div>
+          <div class="members" id="members"></div>
+          <div class="room-bottom" id="room-bottom-anchor"><button class="text-button danger" id="leave-room">← Вийти з лоббі</button><span id="ready-summary"></span><button class="btn primary" id="ready-button">Я готовий</button><button class="btn primary" id="start-session" hidden>Почати сесію ↗</button></div>
+          <div class="info-line"><span>ⓘ</span><span id="room-hint">Оберіть свій скін та нік. Коли всі будуть готові, хост зможе почати сесію.</span></div>
+        </div>
+      </section>
+      <section class="page" id="page-files">
+        <div class="page-heading"><div><div class="eyebrow">READY FOR THE NEXT SESSION</div><h1>Усе для гри<span class="orange">.</span></h1><p>Ваша GTA. Наш кооп. Завжди актуальна версія.</p></div><button class="btn outline" id="open-folder">Відкрити папку ↗</button></div>
+        <div class="panel"><div class="section-number">01</div><div class="panel-content"><h3>Grand Theft Auto: San Andreas</h3><p>Оберіть папку гри версії 1.0 US. Лаунчер завантажує лише мод.</p><div class="path-field"><span id="files-path">Папку ще не обрано</span><button class="btn dark" id="choose-game">Обрати папку</button></div><p id="compatibility" class="small"></p></div></div>
+        <div class="panel"><div class="section-number">02</div><div class="panel-content"><div class="panel-heading"><div><h3>SA COOP <span class="small-badge">8 PLAYERS</span></h3><p>Мод, сервер і завантажувач ASI в одному пакеті.</p></div><button class="text-button" id="check-release">Перевірити оновлення ↻</button></div><div class="release-box"><div><strong id="release-name">GitHub Releases</strong><p id="release-details">AlexanderLukash/sa-coop · SA-COOP.zip</p></div><button class="btn primary" id="install-mod">Завантажити й встановити ↓</button></div><div id="install-progress" hidden><div class="progress-label"><span id="progress-text">Завантаження…</span><button class="text-button" id="cancel-install">Скасувати</button></div><progress id="progress-bar" max="100" value="0"></progress></div><div class="panel-footer"><button class="text-button" id="install-local">Встановити локальний ZIP</button><button class="text-button" id="open-releases">Сторінка релізів ↗</button></div></div></div>
+        <div class="info-line"><span>ⓘ</span> Однаковий реліз потрібен усім гравцям. Ваші збереження та наявні налаштування мода залишаються на місці.</div>
+      </section>
+      <section class="page" id="page-settings">
+        <div class="page-heading"><div><div class="eyebrow">MAKE YOURSELF AT HOME</div><h1>Ваші правила<span class="orange">.</span></h1><p>Підготуйте профіль, гру та наступну сесію.</p></div><button class="btn primary" type="submit" form="settings-form">Зберегти зміни ✓</button></div>
+        <form id="settings-form">
+          <div class="settings-grid"><div class="settings-card"><div class="card-kicker">01 / ПРОФІЛЬ І ГРА</div><label>Нікнейм<input name="nickname" required minlength="2" maxlength="20"></label><div class="field-row"><label>Ширина<input name="width" type="number" min="640" max="7680" required></label><label>Висота<input name="height" type="number" min="480" max="4320" required></label></div><label class="toggle"><span>Віконний режим<small>Зручно перемикатись між грою та лоббі</small></span><input type="checkbox" name="windowed"><span class="switch"></span></label><label class="toggle"><span>Голосовий чат<small>Утримуйте B у грі, щоб говорити</small></span><input type="checkbox" name="voiceEnabled"><span class="switch"></span></label><label>Гучність голосу <output id="voice-value">80%</output><input name="voiceVolume" type="range" min="0" max="100"></label><label>Підсилення мікрофона <output id="mic-value">100%</output><input name="micGain" type="range" min="0" max="200"></label></div>
+          <fieldset class="settings-card" id="server-settings"><div class="card-kicker">02 / СЕРВЕР · ЛИШЕ ХОСТ</div><label>Назва лоббі<input name="serverName" required maxlength="64"></label><div class="field-row"><label>Гравців<select name="maxPlayers"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></label><label>Порт гри<input name="port" type="number" min="1024" max="65535" required></label></div><label>Початок історії<select name="loadSlot"><option value="-1">Нова гра</option><option value="0">Обрати в меню GTA</option><option value="1">Збереження 1</option><option value="2">Збереження 2</option><option value="3">Збереження 3</option><option value="4">Збереження 4</option><option value="5">Збереження 5</option><option value="6">Збереження 6</option><option value="7">Збереження 7</option><option value="8">Збереження 8</option></select></label><label>Пароль лоббі<input name="password" type="password" maxlength="64" placeholder="Без пароля"></label><label class="toggle"><span>Дружній вогонь<small>Гравці можуть завдавати шкоди одне одному</small></span><input type="checkbox" name="friendlyFire"><span class="switch"></span></label><label>TCP-порт лоббі<input name="lobbyPort" type="number" min="1024" max="65535" required></label></fieldset></div>
+          <details class="advanced"><summary>Додаткові параметри та Linux / Wine <span>+</span></summary><div class="settings-grid"><label>Виконуваний файл Wine<input name="wineCommand" placeholder="wine"><small>Команда або повний шлях; аргументи вводити не потрібно.</small></label><label>Wine prefix<input name="winePrefix" placeholder="Стандартний ~/.wine"></label><label>Репозиторій релізів<input name="releaseRepo" placeholder="AlexanderLukash/sa-coop"></label></div><p>На Linux встановіть Wine з підтримкою 32-бітних Windows-застосунків. Лаунчер використовує окремий launcher.ini та запускає ту саму Windows-версію GTA і мода.</p></details>
+        </form>
+      </section>
+      <footer><span>MADE FOR THE CREW. BUILT FOR THE STREETS.</span><span>SA COOP <b>↗</b> WINDOWS + LINUX</span></footer>
+    </div>
+  </main>
+  <dialog id="profile-dialog"><form id="profile-form"><div class="dialog-heading"><div><span class="eyebrow">YOUR CHARACTER</span><h2>Впізнають свої.</h2></div><button type="button" class="text-button" id="close-profile">✕ Закрити</button></div><label>Ваш нік<input id="player-name" minlength="2" maxlength="20" required></label><div class="skin-filters"><input id="skin-search" type="search" placeholder="Пошук: ім’я або ID" aria-label="Пошук скінів"><select id="skin-category" aria-label="Категорія"><option value="">Усі скіни</option><option value="Story">Персонажі</option><option value="Citizens">Містяни</option><option value="Gangs">Банди</option><option value="Services">Служби</option></select></div><div class="skin-picker" id="skin-picker"></div><div class="skin-pagination"><button type="button" id="skin-prev" class="btn outline">←</button><span id="skin-page" aria-live="polite"></span><button type="button" id="skin-next" class="btn outline">→</button></div><label class="remember-profile"><input id="remember-profile" type="checkbox" checked> Зберегти як глобальний профіль</label><button class="btn primary" type="submit">Зберегти персонажа ✓</button></form></dialog>
+  <div class="toast" id="toast" role="status" hidden><span id="toast-text"></span><button id="dismiss-toast" aria-label="Закрити повідомлення">×</button></div>
+  <script src="app.js"></script>
+</body>
+</html>

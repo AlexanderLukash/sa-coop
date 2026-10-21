@@ -7,6 +7,7 @@ namespace coop {
 struct ClientConfig {
     // [player]
     std::string nickname = "Player";
+    int skin = -1;                    // launcher skin model; -1 keeps the save's appearance
     bool english = false;             // language = en: the interface in English instead of Russian
 
     // [connect]
@@ -14,6 +15,7 @@ struct ClientConfig {
     std::string host = "127.0.0.1";
     int port = 7788;
     std::string password;
+    std::string serverName;
     bool wantsHost = false;   // started from "Create server" in the launcher
     int loadSlot = 0;         // host: save slot (1..8) to load automatically, -1 a new game, 0 = choose in the menu
     bool friendlyFire = false;  // host: the players can hurt each other
@@ -49,6 +51,7 @@ struct ClientConfig {
     bool verboseLog = false;
     bool forceRelay = false;          // invite codes: skip the direct attempt (relay tests)
     std::string serverData = "server-data";  // the hosted server's folder in coop\ (test setups keep theirs apart)
+    std::string launcherSession;       // correlates status with one launch, ignoring stale files
 
     std::wstring coopDir;             // directory with coop.dll (…\coop\)
     std::wstring gameDir;             // directory with gta_sa.exe
@@ -56,6 +59,7 @@ struct ClientConfig {
     std::wstring worldDir;            // folder of the world saves (the host snapshot, the partner copy), ends with a slash
 
     bool Load(const std::wstring& coopDirectory);
+    void WriteLauncherStatus(const std::string& state, const std::string& message = {}) const;
 };
 
 ClientConfig& Cfg();

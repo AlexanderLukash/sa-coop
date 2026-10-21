@@ -52,7 +52,7 @@ void RenderOverlay() {
         float w = std::max(g.TextWidth(FONT_MENU, st), hint.empty() ? 0.0f : g.TextWidth(FONT_SMALL, hint)) + 48 * s;
         float h = g.LineHeight(FONT_MENU) + 24 * s + (hint.empty() ? 0.0f : g.LineHeight(FONT_SMALL) + 6 * s);
         float x = (g.Width() - w) * 0.5f, y = g.Height() * 0.18f;
-        g.Rect(x, y, w, h, 0xD0000000);
+        g.RoundRect(x, y, w, h, 12 * s, 0xE81B1527);
         g.Text(FONT_MENU, g.Width() * 0.5f, y + 12 * s, st, w::kSaBlue, TEXT_CENTER | TEXT_SHADOW);
         if (!hint.empty())
             g.Text(FONT_SMALL, g.Width() * 0.5f, y + 18 * s + g.LineHeight(FONT_MENU), hint, w::kSaMuted, TEXT_CENTER | TEXT_SHADOW);
@@ -64,8 +64,8 @@ void RenderOverlay() {
         int rows = 1 + (int)net.Peers().size();
         float H = lh * (rows + 1) + 30 * s;
         float x = (g.Width() - W) * 0.5f, y = g.Height() * 0.25f;
-        g.Rect(x, y, W, H, 0xE0000000);
-        g.RectOutline(x, y, W, H, w::kSaLine, std::max(1.0f, s));
+        g.RoundRect(x, y, W, H, 14 * s, w::kSaLine);
+        g.RoundRect(x + s, y + s, W - 2 * s, H - 2 * s, 13 * s, 0xF21B1527);
         g.Text(FONT_MENU_SMALL, x + 16 * s, y + 12 * s,
                Format(TR("%s · игроков: %d", "%s · players: %d"), net.ServerName().c_str(), rows), w::kSaMuted);
         float cy = y + 10 * s + lh * 1.3f;

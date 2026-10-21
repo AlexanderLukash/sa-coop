@@ -193,6 +193,9 @@ crashed, also attach `coop\crash.log`, and if you cannot connect, attach the hos
 
 ## Building from source
 
+The Windows/Linux desktop launcher with LAN lobbies, mod installation and server settings
+is in [launcher/](launcher/README.md).
+
 You need Windows, Python 3.10 or newer and PowerShell. A script downloads the compiler (llvm-mingw) into the
 `toolchain` folder:
 

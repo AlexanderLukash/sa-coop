@@ -158,8 +158,9 @@ std::string SanitizeNickname(std::string_view nick) {
     std::wstring w = Utf8ToWide(Trim(nick));
     std::wstring out;
     for (wchar_t c : w) {
-        bool ok = (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') ||
-                  (c >= 0x0410 && c <= 0x044F) || c == 0x0401 || c == 0x0451 || c == L'_' || c == L'-' ||
+        WORD type = 0;
+        GetStringTypeW(CT_CTYPE1, &c, 1, &type);
+        bool ok = (type & (C1_ALPHA | C1_DIGIT)) != 0 || c == L'_' || c == L'-' ||
                   c == L'.' || c == L'[' || c == L']';
         if (ok) out += c;
         if (out.size() >= 20) break;

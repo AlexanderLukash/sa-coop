@@ -12,8 +12,7 @@ struct IDirect3DTexture9;
 
 namespace coop::ui {
 
-// NORMAL/SMALL: Arial Bold (SA subtitles / SA-MP chat look); BIG/MENU/MENU_SMALL: wide capitals with tracking,
-// close to the game's menu font.
+// Segoe UI with full Cyrillic support, regular body text and semibold headings.
 enum FontId { FONT_NORMAL = 0, FONT_SMALL = 1, FONT_BIG = 2, FONT_MENU = 3, FONT_MENU_SMALL = 4, FONT_COUNT };
 
 // The game's own fonts (CFont styles).
@@ -39,10 +38,11 @@ inline uint32_t WithAlpha(uint32_t argb, float a) {
 class Renderer {
 public:
     // Must be called inside the game's frame (between BeginScene/EndScene).
-    bool Begin();
+    bool Begin(IDirect3DDevice9* previewDevice = nullptr);
     void End();
 
     void Rect(float x, float y, float w, float h, uint32_t argb);
+    void RoundRect(float x, float y, float w, float h, float radius, uint32_t argb);
     void RectOutline(float x, float y, float w, float h, uint32_t argb, float t = 1.0f);
     // Text in UTF-8. Supports inline colour codes {RRGGBB}.
     void Text(FontId f, float x, float y, std::string_view utf8, uint32_t argb, uint32_t flags = TEXT_SHADOW);

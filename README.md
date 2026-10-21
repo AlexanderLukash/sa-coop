@@ -227,6 +227,11 @@ src/
 - Адреса и структуры движка сверялись с проектами [gta-reversed](https://github.com/gta-reversed/gta-reversed)
   и [plugin-sdk](https://github.com/DK22Pac/plugin-sdk).
 
+## Лаунчер
+
+Настольный лаунчер для Windows и Linux: установка мода, LAN-лобби до восьми игроков,
+настройки сервера и запуск GTA (на Linux через Wine). См. [launcher/README.md](launcher/README.md).
+
 ## Лицензия
 
 Код SA:COOP распространяется по лицензии MIT (файл [LICENSE](LICENSE)). У ENet и MinHook свои лицензии. Их тексты

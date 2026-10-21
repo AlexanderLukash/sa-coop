@@ -39,6 +39,7 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     if (!ini.Load(iniPath)) return false;
 
     nickname = SanitizeNickname(ini.Get("player", "name", nickname));
+    skin = ini.GetInt("player", "skin", -1);
     if (nickname.size() < 2) nickname = "Player";
     english = ToLower(ini.Get("player", "language", "ru")) == "en";  // configs made before the switch were Russian
 
@@ -46,6 +47,7 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     host = ini.Get("connect", "host", host);
     port = ini.GetInt("connect", "port", kDefaultPort);
     password = ini.Get("connect", "password", "");
+    serverName = ini.Get("connect", "server_name", nickname);
     wantsHost = ToLower(ini.Get("connect", "mode", "join")) == "host";
     loadSlot = ini.GetInt("connect", "load_slot", 0);
     friendlyFire = ini.GetBool("connect", "friendly_fire", friendlyFire);
@@ -79,9 +81,28 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     verboseLog = ini.GetBool("debug", "verbose_log", verboseLog);
     forceRelay = ini.GetBool("debug", "force_relay", forceRelay);
     serverData = ini.Get("debug", "server_data", serverData);
+    launcherSession = ini.Get("debug", "launcher_session", "");
     while (!serverData.empty() && (serverData.back() == '\\' || serverData.back() == '/')) serverData.pop_back();
     if (serverData.empty()) serverData = "server-data";  // a trailing backslash would escape the quote around it
     return true;
+}
+
+void ClientConfig::WriteLauncherStatus(const std::string& state, const std::string& message) const {
+    if (launcherSession.empty()) return;
+    auto quote = [](const std::string& value) {
+        std::string result = "\"";
+        for (unsigned char c : value) {
+            if (c == '"' || c == '\\') result += '\\';
+            if (c < 0x20) { result += ' '; continue; }
+            result += (char)c;
+        }
+        return result + "\"";
+    };
+    std::string data = "{\"session\":" + quote(launcherSession) + ",\"state\":" + quote(state) +
+                       ",\"message\":" + quote(message) + "}";
+    std::wstring destination = iniPath + L".status.json", temp = destination + L".tmp";
+    if (WriteFileBytes(temp, data.data(), data.size()))
+        MoveFileExW(temp.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
 }
 
 }  // namespace coop

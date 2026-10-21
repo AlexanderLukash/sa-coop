@@ -44,7 +44,9 @@ bool Ini::Save(const std::wstring& path) const {
     for (auto& l : m_lines) {
         if (!l.key.empty()) {
             auto it = m_values.find(MakeKey(l.section, l.key));
-            out += l.key + " = " + (it != m_values.end() ? it->second : "") + "\r\n";
+            std::string value = it != m_values.end() ? it->second : "";
+            if (value.size() >= 2 && value.front() == '"' && value.back() == '"') value = '"' + value + '"';
+            out += l.key + " = " + value + "\r\n";
         } else {
             out += l.raw + "\r\n";
         }

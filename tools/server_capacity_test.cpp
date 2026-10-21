@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
             Clients clients(std::atoi(argv[1]));
             int capacity = std::atoi(argv[2]);
             if (std::string(argv[3]) == "old") {
-                clients.protocol = 16;
+                clients.protocol = kProtocolVersion - 1;
                 clients.Connect(0);
                 clients.Until([&] { return clients.rejected[0]; });
                 Check(!clients.welcomed[0] && clients.reasons[0].find("version") != std::string::npos,
