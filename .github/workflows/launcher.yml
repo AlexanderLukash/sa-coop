@@ -2,6 +2,7 @@ name: launcher
 on:
   push:
     paths: ['launcher/**', '.github/workflows/launcher.yml']
+    tags: ['launcher-v*']
   pull_request:
     paths: ['launcher/**', '.github/workflows/launcher.yml']
   workflow_dispatch:
@@ -69,3 +70,25 @@ jobs:
         with:
           name: launcher-screenshots-${{ runner.os }}
           path: launcher/test-results/*.png
+  publish-launcher:
+    if: startsWith(github.ref, 'refs/tags/launcher-v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: launcher-Windows
+          path: release-assets
+          merge-multiple: true
+      - name: Select release tag
+        id: release
+        shell: bash
+        run: echo "tag=${GITHUB_REF_NAME#launcher-}" >> "$GITHUB_OUTPUT"
+      - name: Attach launcher executables to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          files: release-assets/*.exe
+          fail_on_unmatched_files: true
