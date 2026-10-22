@@ -48,7 +48,8 @@ refuses with Esc.
 ### A shared world
 
 Both players have the same pedestrians, people inside buildings, cars and police, the same time of day and the
-same weather. When one player drives away, the pedestrians and cars near the other one move over to the other
+same weather. Pedestrians chat and swear the same way for both, and police roadblocks with their barriers are seen
+by both. When one player drives away, the pedestrians and cars near the other one move over to the other
 player's game instead of vanishing. Knocked-down lamp posts and signs, broken glass and crates, fire, gang
 territories, the building doors a mission opens and the doors of Pay 'n' Spray and mod shops look the same for
 both. Horseshoes, oysters, snapshots and tags count toward the shared world.
@@ -72,7 +73,7 @@ garage at a safe house, and the host's world keeps it.
 
 Food and the gym, weapon and driving skills, clothes, haircuts, tattoos, money and side job rewards are separate
 for each player. What a player does at a diner, the gym, a barber's or a tattoo parlour, the other player sees as
-well. If a player changes their character model, for example with a skin selector, the other player sees the new
+well, along with a tray of food, a cigarette, a phone at the ear and an open parachute. If a player changes their character model, for example with a skin selector, the other player sees the new
 model too. The friend comes into the host's world as their own CJ, in the clothes and with the tattoos their CJ
 has in their own game. If the friend joined from the main menu, the look comes from their latest save. When the
 host saves the game, the friend's progress is saved on the host's side as well.
@@ -192,6 +193,7 @@ English. A [Telegram group](https://t.me/+GNKZb83LqBQyMGEy) is also available if
 
 With a bug report, attach `coop\coop.log` from the game folder of the player who had the problem. If the game
 crashed, also attach `coop\crash.log`, and if you cannot connect, attach the host's `coop\server-data\server.log`.
+The log of the previous run is kept as `coop\coop.old.log`: send it if the game was started again after a crash.
 
 ## Building from source
 
