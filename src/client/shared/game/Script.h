@@ -109,4 +109,6 @@ enum : uint16_t {
     OP_SET_CHAR_RELATIONSHIP = 0x077A,
 };
 
+bool Running();  // one of our commands runs now (a game function it calls may ask)
+
 }  // namespace game::script

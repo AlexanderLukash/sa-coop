@@ -1798,10 +1798,10 @@ void Hold(CPed* ped, const Spot& s) {
         }
         if (!ready) return;
         if (a->cigarette) {
-            if (h.prop < 0)
+            if (h.prop < 0 && HasRoom(ObjectPool(), kKeepObjects, "object"))
                 Cmd(0x0107).I(kCigarette).F(s.ground.x).F(s.ground.y).F(s.ground.z + 1.0f).Out(&h.prop).Run();  // CREATE_OBJECT
             // TASK_PICK_UP_OBJECT: into the right hand, no pick-up animation
-            Cmd(0x070A).I(handle).I(h.prop).F(0.0f).F(0.0f).F(0.0f).I(6).I(16).S("NULL").S("NULL").I(-1).Run();
+            if (h.prop >= 0) Cmd(0x070A).I(handle).I(h.prop).F(0.0f).F(0.0f).F(0.0f).I(6).I(16).S("NULL").S("NULL").I(-1).Run();
         }
         h.stage = 1;
         return;  // the animation starts next frame, once the hand holds the cigarette

@@ -10,6 +10,7 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "entities/session/Flow.h"
 #include "common/lib/util/Util.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/game/Game.h"
@@ -35,6 +36,16 @@ void Center(uintptr_t e, float& x, float& y) {  // of CEntryExit::m_recEntrance
 std::vector<int32_t> g_sent;  // host: what the partner has, -1 for a free slot
 uint64_t g_scanMs = 0;
 
+// The host's mission can shut an interior behind its own CJ ("Cleaning the Hood" switches LACRAK off once CJ and Ryder
+// are out of the crack den): a partner still inside was locked in, and a reload of the host's world put it back there
+// (the save keeps the den shut). The ways out of the interior our player stands in stay open here.
+void KeepWayOut(CPoolHeader* pool) {
+    int8_t area = FindPlayerPed(0)->AreaCode();
+    if (area == 0) return;
+    for (int i = 0; i < pool->size; ++i)
+        if (pool->byteMap[i] >= 0 && Ref<int8_t>(Entry(pool, i) + 0x32) == area) *Flags(pool, i) |= 0x4000;  // m_nArea, ENABLE_ACCESS
+}
+
 class Entrances : public Module {
 public:
     const char* Name() const override { return "Entrances"; }
@@ -43,7 +54,7 @@ public:
         Net().SetHandler(proto::G_ENEX, [](uint8_t from, Reader& r) {
             int n = r.U16();
             CPoolHeader* pool = Pool();
-            if (from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !pool) return;
+            if (from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld() || !pool) return;
             for (int k = 0; k < n; ++k) {
                 char name[8];
                 r.Raw(name, 8);
@@ -70,7 +81,9 @@ public:
 
     void OnPostProcess() override {
         CPoolHeader* pool = Pool();
-        if (!Net().Online() || !Net().IsHost() || !core::IsPlayerReady() || !pool || NowMs() - g_scanMs < 500) return;
+        if (!Net().Online() || !core::IsPlayerReady() || !pool) return;
+        if (!Net().IsHost()) return KeepWayOut(pool);
+        if (NowMs() - g_scanMs < 500) return;
         g_scanMs = NowMs();
         bool all = g_sent.size() != (size_t)pool->size;
         g_sent.resize(pool->size, -1);

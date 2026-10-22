@@ -122,6 +122,10 @@ void NetClient::Stop() {
     m_state = State::Idle;
     std::lock_guard<std::mutex> a(m_outMutex);
     m_out.clear();
+    // what came after the last poll (a refusal's reason, a world chunk) belonged to that connection: it was handled
+    // in the next one ("the world arrived damaged")
+    std::lock_guard<std::mutex> b(m_inMutex);
+    m_in.clear();
 }
 
 void NetClient::Send(uint8_t channel, const Writer& w) { Send(channel, w.Data(), w.Size()); }
@@ -240,6 +244,9 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
                     Packet p{ev.channelID, std::vector<uint8_t>(ev.packet->data, ev.packet->data + ev.packet->dataLength)};
                     enet_packet_destroy(ev.packet);
                     std::lock_guard<std::mutex> lock(m_inMutex);
+                    // a game that stands (a long load, a hang, alt-tab without run_in_background) piled up every state
+                    // and applied them all at once, stale: past a few thousand only the reliable ones are kept
+                    if (m_in.size() > 4000 && (p.channel == proto::CH_STATE || p.channel == proto::CH_VOICE)) break;
                     m_in.push_back(std::move(p));
                     break;
                 }
@@ -258,10 +265,21 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
     }
 
     if (connected) {
+        // what the game queued last goes first (the partner's profile on leaving): enet_peer_disconnect drops the
+        // queues, enet_peer_disconnect_later sends them and then disconnects
+        {
+            std::lock_guard<std::mutex> lock(m_outMutex);
+            outLocal.swap(m_out);
+        }
+        for (auto& p : outLocal) {
+            ENetPacket* pkt = net::MakePacket(p.data.data(), p.data.size(), p.channel);
+            if (enet_peer_send(peer, p.channel, pkt) != 0) enet_packet_destroy(pkt);
+        }
+        outLocal.clear();
         // graceful quit: data = 1 tells the server it was not a timeout
-        enet_peer_disconnect(peer, 1);
+        enet_peer_disconnect_later(peer, 1);
         ENetEvent ev;
-        uint64_t deadline = GetTickCount64() + 500;
+        uint64_t deadline = GetTickCount64() + 1000;
         while (GetTickCount64() < deadline && enet_host_service(client, &ev, 50) >= 0) {
             if (ev.type == ENET_EVENT_TYPE_RECEIVE) enet_packet_destroy(ev.packet);
             if (ev.type == ENET_EVENT_TYPE_DISCONNECT) break;

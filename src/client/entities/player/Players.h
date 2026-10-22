@@ -38,6 +38,8 @@ struct RemotePlayer {
     uint64_t jetpackMs = 0;     // when it was last given the jetpack
     std::vector<uint8_t> stats; // owner's CStats block (G_PLAYER_STATS): used while the ped is processed
     uint64_t heardMs = 0;       // its last voice frame was played (set by the voice feature)
+    bool lookStale = false;     // a script here took its special character's slot: it went back to CJ, the look again
+    uint64_t duckOffMs = 0;     // since when the copy's crouch differs from its owner's (a lost crouch press)
 };
 
 class Players : public Module {
@@ -57,6 +59,8 @@ public:
 
     RemotePlayer* FindByPed(game::CPed* ped);
     RemotePlayer* Get(uint8_t id);
+    // the copy's model as SET_PLAYER_MODEL changes a player's (0: CJ in his clothes); false if it cannot be loaded
+    static bool SetModel(game::CPlayerPed* ped, int model);
     const std::map<uint8_t, RemotePlayer>& All() const { return m_remote; }
     // "G": enter the nearest vehicle as a passenger (prefers the partner's car).
     void TryEnterAsPassenger();
@@ -98,6 +102,9 @@ private:
 
 // helpers shared with other modules
 int ActivePrimaryTaskType(game::CPed* ped, void** taskOut = nullptr);
+// The people on their way into v stop, before v is deleted: some of their tasks use it unchecked once it is gone (the
+// door opened from outside, MTA guards 0x646026).
+void StopEntering(game::CVehicle* v);
 int PassengerSeatOf(game::CVehicle* v, game::CPed* ped);
 // An enter-car task keeps the door it goes to (node 8..11), not the passenger seat (the script command turns a seat
 // into a door): the seat back for the network.

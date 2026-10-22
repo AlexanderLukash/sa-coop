@@ -67,17 +67,53 @@ void* FindMissionScript() {
 // The save points' thread (PSAVE1) raises the mission flag over its save menu: no mission either (the partner's screen
 // went dark with the host's save and "the host started a mission" came up).
 bool g_saveFlag = false;  // the flag up is PSAVE1's
+
+// The missions of side activities (main.scm's 3..10 and 113..133: the arcade and pool games, the shooting range, the
+// gyms, the schools, the races, the vehicle jobs) are each player's own, as in a game of one's own. Counted as the host's
+// story they paid the partner the host's taxi fares, refused the partner's own activities while they ran and filled its
+// chat with "started a mission".
+bool SideMission(void* script) {
+    static const char* const kSide[] = {"none", "dual", "shtr", "grav", "otb", "pool2", "lowr", "zero5",
+                                        "shrange", "gymls", "gymsf", "gymlv", "truck", "quarry", "boat", "bskool",
+                                        "taxiodd", "ambulan", "firetru", "copcar", "burgjb", "freight", "pimp", "blood",
+                                        "kicksta", "tria", "bcour", "mtbiker", "stunt"};
+    const char* name = Field<char[8]>(script, 0x08);
+    for (const char* side : kSide)
+        if (!_strnicmp(name, side, 8)) return true;
+    return false;
+}
+
 bool HostOnMission() {
     void* s = FindMissionScript();
-    if (s && !strncmp(Field<char[8]>(s, 0x08), "buypro1", 8)) return false;
+    if (s && (!strncmp(Field<char[8]>(s, 0x08), "buypro1", 8) || SideMission(s))) return false;
     if (!core::IsOnMission()) g_saveFlag = false;
     return s || (core::IsOnMission() && !g_saveFlag);
+}
+
+// A save can bring the mission flag up with nothing in it left to lower it: a save house's save has it up and PSAVE1
+// lowers it a second after the load, a quick save of a mod's or one made while dead keeps it. With it up the game shows
+// no mission markers and no save disks, launches no story mission, and the partners see the host on a mission for good
+// (both players of a session lost the story after a host swap). Lowered when a minute after the load nothing holds it.
+uint64_t g_inheritedFlagMs = 0;
+void HealInheritedFlag() {
+    if (!g_inheritedFlagMs) return;
+    if (!core::IsOnMission() || FindMissionScript()) {
+        g_inheritedFlagMs = 0;  // its holder let it go, or a mission runs
+    } else if (NowMs() - g_inheritedFlagMs > 60000) {
+        Ref<int32_t>(addr::ScriptSpace + (uintptr_t)Ref<int32_t>(0xA476AC)) = 0;  // CTheScripts::OnAMissionFlag: $ONMISSION
+        g_inheritedFlagMs = 0;
+        LOGW("The loaded world kept the mission flag up with no script holding it: lowered");
+    }
 }
 
 void Fade(float seconds, int16_t dir) { CallMethod<0x50AC20>((void*)addr::TheCamera, seconds, dir); }  // dir: 0 out, 1 in
 float FadeAlpha() { return Ref<float>(addr::TheCamera + 0xBFC); }
 bool Fading() { return Ref<uint8_t>(addr::TheCamera + 0x51) != 0; }
 int16_t FadeDirection() { return Ref<int16_t>(addr::TheCamera + 0xC30); }
+// Dark or going dark. A fade-out asked in this frame's messages has not moved the alpha yet (CCamera::ProcessFade runs
+// in CGame::Process, after them): the host's "out" and "in" handled together (a skipped scene: DO_FADE 0 0, and two
+// frames later the fade in) dropped the "in", the "out" went on, and the partner's screen stayed black for good.
+bool Darkening() { return FadeAlpha() > 1.0f || (Fading() && FadeDirection() == 0); }
 float FadeDuration() { return Ref<float>(addr::TheCamera + 0xC04); }
 bool TheCameraWide() { return Ref<uint8_t>(addr::TheCamera + 0x3D) != 0; }
 void SetWideScreen(bool on) {
@@ -121,7 +157,9 @@ struct BlipRecord {  // what the host sends for one blip
         display = r.U8();
     }
     bool operator==(const BlipRecord& o) const {
-        return type == o.type && entKind == o.entKind && entId == o.entId && (pos - o.pos).Length() < 0.5f &&
+        // an entity's blip goes with the copy of the entity: its place counts only for a partner without that copy, and
+        // every moving car or person with a blip went out again every 250 ms on the reliable channel
+        return type == o.type && entKind == o.entKind && entId == o.entId && (pos - o.pos).Length() < (entKind ? 20.0f : 0.5f) &&
                colour == o.colour && size == o.size && sprite == o.sprite && flags25 == o.flags25 && display == o.display;
     }
 };
@@ -251,12 +289,14 @@ void __cdecl HookScriptClearArea(CVector* at, float radius, uint8_t flag) {  // 
 
 std::set<int> g_missionWeapons;  // partner: what the host's mission gave (only those it takes back)
 std::map<int, std::pair<int, int>> g_replaced;  // partner: its own weapon a given one pushed out of the slot (type, ammo)
+// The partner takes the host's mission state only while playing the host's world: one still in its own game (waiting
+// for the world, or for the host's prologue) got the host's cutscenes, texts, weapons and rewards in it.
 void HandleMissionWeapon(uint8_t from, Reader& r) {
     uint8_t op = r.U8();
     int weapon = r.U8();
     int ammo = r.I32();
     bool inHand = r.U8() != 0;
-    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || weapon <= 0 || weapon > 46) return;
+    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld() || weapon <= 0 || weapon > 46) return;
     CPlayerPed* me = FindPlayerPed(0);
     int h = GetPedRef(me);
     auto give = [&](int type, int count) {
@@ -271,8 +311,10 @@ void HandleMissionWeapon(uint8_t from, Reader& r) {
         give(weapon, ammo);
         Cmd(0x017B).I(h).I(weapon).I(std::clamp(ammo, 1, 99999)).Run();  // SET_CHAR_AMMO: the host's count, not ours + it
         if (inHand) Cmd(0x01B9).I(h).I(weapon).Run();  // SET_CURRENT_CHAR_WEAPON
-        for (int i = 0; i < NUM_WEAPON_SLOTS; ++i)     // a slot holds one weapon: the partner's own one is put back later
-            if (was.type[i] > 0 && was.type[i] != weapon && me->Weapons()[i].type == weapon && !g_replaced.count(weapon))
+        // a slot holds one weapon: the partner's own one is put back later, one of the same kind too (its ammo was
+        // overwritten with the mission's, and taking the mission's took the partner's own gun)
+        for (int i = 0; i < NUM_WEAPON_SLOTS; ++i)
+            if (was.type[i] > 0 && me->Weapons()[i].type == weapon && !g_replaced.count(weapon))
                 g_replaced[weapon] = {was.type[i], was.ammo[i]};
         g_missionWeapons.insert(weapon);
     } else if (g_missionWeapons.erase(weapon)) {
@@ -296,6 +338,10 @@ bool MarkerAt(const CVector& p, Area& out) {
     for (int i = 0; i < kNumTraces; ++i) {
         uintptr_t t = Trace(i);
         if (!(Ref<uint8_t>(t + 0x25) & 2) || ((Ref<uint8_t>(t + 0x26) >> 2) & 0xF) != 5) continue;  // BLIP_CONTACT_POINT
+        // a save house's or a property's marker is a contact point too: the host there held no mission, yet the partner
+        // was told it waited
+        int8_t sprite = Ref<int8_t>(t + 0x24);
+        if (sprite == 31 || sprite == 32 || sprite == 35) continue;  // RADAR_SPRITE_PROPERTYG, PROPERTYR, SAVEGAME
         CVector c = Ref<CVector>(t + 0x08);
         if ((c - p).Length2D() < 2.0f && std::fabs(c.z - p.z) < 3.0f) {
             out = {0x40000002u, c.x - 1.5f, c.y - 1.5f, c.x + 1.5f, c.y + 1.5f, c.z, NowMs()};
@@ -317,7 +363,10 @@ bool PartnersAtMarker(CPed* host) {
     if (!MarkerAt(host->GetPosition(), marker)) return true;
     for (auto& [id, peer] : Net().Peers()) {
         RemotePlayer* rp = Players::Instance().Get(id);
-        if (!rp || !rp->ped || !InArea(marker, rp->ped->GetPosition(), 1.0f)) {  // two can not stand on one spot
+        // a partner whose game sends nothing for 5 s (in the pause menu, loading, hung) cannot come: the host was held
+        // at the marker for good. Such a player is away in SA-MP and MTA too.
+        if (!rp || !rp->hasState || NowMs() - rp->stateRecvMs > 5000) continue;
+        if (!rp->ped || !InArea(marker, rp->ped->GetPosition(), 1.0f)) {  // two can not stand on one spot
             g_waitMs = NowMs();
             g_waitArea = marker;
             return false;
@@ -339,6 +388,7 @@ bool __fastcall HookCanPlayerStartMission(CPlayerPed* player, void* edx) {
         "trace", "hotr", "kicks", "bloodr",   // race tournament and driving school, hotring, Kick Start, Blood Bowl
         "tri", "psch", "bikes", "bschoo",     // TRIA, flight school, bike school, boat school
         "shoot", "trucks", "quarrys",         // Ammu-Nation range, trucking, quarry
+        "trainsl",                            // the airports' and stations' travel
         "psave1",                             // the save points: each saves his own game, nobody waits for the other
     };
     const char* thread = Field<char[8]>(g_currentScript, 0x08);
@@ -455,7 +505,10 @@ ClearFn g_origClear;
 VoidFn g_origClearSmall;
 
 void SendText(uint8_t kind, const char* text, uint32_t time, uint16_t flag, const int* nums, uint8_t bools) {
-    if (!Replicating()) return;  // cutscene subtitles too: the mission script prints them
+    if (!Replicating()) return;
+    // a running cutscene prints its subtitles itself, outside any script (CCutsceneMgr's text list, AddMessageJumpQ at
+    // 0x5B187E), and so does the partner's copy of it: sent too, each line came twice
+    if (Ref<uint8_t>(0xB5F851) && !CurrentScript()) return;  // CCutsceneMgr::ms_running
     Writer w(proto::G_TEXT);
     w.U8(kind);
     w.Str(text ? text : "", 399);
@@ -538,7 +591,7 @@ void HandleText(uint8_t from, Reader& r) {
     uint8_t bools = r.U8();
     uint32_t hash = r.U32();
     std::string table = r.Str(8);
-    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady()) return;
+    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld()) return;
     if (const char* own = GxtLocal(hash, table)) text = own;
     const char* t = text.empty() ? nullptr : PoolText(text);
     switch (kind) {
@@ -583,7 +636,8 @@ void __cdecl HookHighlight(uint32_t id, float x1, float y1, float x2, float y2, 
 // PlaceMarkerSet(id, type 1, position, radius, 255, 0, 0, 228, pulse 2048, 0.1, no rotation) from its command
 using PlaceMarkerSetFn = void(__cdecl*)(uint32_t, uint16_t, CVector*, float, uint8_t, uint8_t, uint8_t, uint8_t, uint16_t,
                                         float, int16_t);
-PlaceMarkerSetFn g_origDrawSphere = nullptr;
+// the game's own until redirected: a site another mod changed is left alone, and this is still called
+PlaceMarkerSetFn g_origDrawSphere = (PlaceMarkerSetFn)0x725BA0;
 void __cdecl HookDrawSphere(uint32_t id, uint16_t type, CVector* pos, float radius, uint8_t r, uint8_t g, uint8_t b,
                             uint8_t a, uint16_t pulse, float pulseFraction, int16_t rotate) {
     if (Net().Online() && Net().IsHost() && pos) {
@@ -626,6 +680,11 @@ void HandleMarkers(uint8_t from, Reader& r) {
              (int)std::count_if(areas.begin(), areas.end(), [](const Area& a) { return a.kind == AREA_SPHERE; }));
     g_partnerAreas = std::move(areas);
     g_partnerAreasMs = NowMs();
+    static uint64_t loggedMs = 0;
+    if (!g_partnerAreas.empty() && g_partnerAreasMs - loggedMs >= 5000) {
+        loggedMs = g_partnerAreasMs;
+        LOGD("Host markers: %zu, still drawn", g_partnerAreas.size());
+    }
 }
 
 // Race checkpoints (CREATE_CHECKPOINT: CTheScripts::ScriptCheckpointArray, 20 x {used, id, CCheckpoint*}) and script
@@ -710,7 +769,7 @@ void HandleMarked(uint8_t from, Reader& r) {
         m.size = r.F32();
         if (m.type <= 8 && (m.slot < 20 || (m.slot >= 32 && m.slot < 48))) now.push_back(m);
     }
-    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady()) return;
+    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld()) return;
     for (auto it = g_placed.begin(); it != g_placed.end();) {  // gone or changed
         auto same = std::find_if(now.begin(), now.end(), [&](const Marked& m) { return m == it->second.first; });
         if (same != now.end()) {
@@ -1015,12 +1074,23 @@ void HandleCutscene(uint8_t from, Reader& r) {
     std::string name = r.Str(32);
     int32_t area = r.I32();
     if (op == CS_SKIP_VOTE || op == CS_SKIP_STATE) return HandleSkip(from, op, r);
-    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady()) return;
+    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld()) return;
     if (op == CS_LOAD) {
         // the previous one is cleared first, even when its end came in the same frame: otherwise our ped stays
         // where the previous scene put it (an interior's exit marker fires and takes the camera)
         if (g_csState == 2) PartnerEndCutscene();
         if (g_csState != 0) PartnerClearCutscene();
+        // A partner in an aircraft or a boat, or in the air on foot (a parachute, a jetpack), stays out of the scene: its
+        // loading sets the player out of the vehicle (CCutsceneMgr::LoadCutsceneData_preload), and after it the player
+        // came back where it had been, in mid-air or in the water, with the aircraft gone on.
+        CPlayerPed* me = FindPlayerPed(0);
+        int type = me->InVehicle() && me->Vehicle() ? me->Vehicle()->VehicleSubClass() : -1;
+        bool flying = type == VEHICLE_TYPE_HELI || type == VEHICLE_TYPE_PLANE || type == VEHICLE_TYPE_BOAT ||
+                      type == VEHICLE_TYPE_FHELI || type == VEHICLE_TYPE_FPLANE || (type < 0 && !(me->PedFlags() & 1));  // bIsStanding
+        if (flying) {
+            LOGI("Host cutscene %s: not here, our player is in the air or on the water", name.c_str());
+            return;
+        }
         LOGI("Host cutscene %s: loading here", name.c_str());
         // the loading sets us out of a vehicle (CCutsceneMgr::LoadCutsceneData_preload): we get back in afterwards
         if (CPlayerPed* me = FindPlayerPed(0); me->InVehicle() && me->Vehicle() && g_csCar < 0) {
@@ -1190,7 +1260,7 @@ std::map<uint8_t, BlipRecord> g_partnerBlipRecords;  // to retry entity attachme
 
 void HandleBlip(uint8_t from, Reader& r) {
     uint8_t op = r.U8();
-    if (from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady()) return;
+    if (from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld()) return;
     if (op == BLIP_SET) {
         BlipRecord b;
         b.Read(r);
@@ -1219,10 +1289,18 @@ void HandleBlip(uint8_t from, Reader& r) {
 bool g_scriptBlack = false;  // the latest script fade of the host went to black
 float g_scriptFadeSec = 0.5f;
 
-void HostSendScreen(bool active) {
+// changesOnly: the check every 200 ms of a mission sends a change at once and the same state every 2 s (it went out every
+// 200 ms on the reliable channel, ahead of real events when packets were lost)
+void HostSendScreen(bool active, bool changesOnly = false) {
     bool black = g_scriptBlack && (FadeAlpha() > 100.0f || (Fading() && FadeDirection() == 0));  // dark or going dark
+    uint8_t flags = (active ? FADE_ACTIVE : 0) | (TheCameraWide() ? FADE_WIDE : 0) | (black ? FADE_BLACK : 0);
+    static uint8_t sentFlags = 0xFF;
+    static uint64_t sentMs = 0;
+    if (changesOnly && flags == sentFlags && NowMs() - sentMs < 2000) return;
+    sentFlags = flags;
+    sentMs = NowMs();
     Writer w(proto::G_FADE);
-    w.U8((active ? FADE_ACTIVE : 0) | (TheCameraWide() ? FADE_WIDE : 0) | (black ? FADE_BLACK : 0));
+    w.U8(flags);
     w.F32(g_scriptFadeSec);
     Net().Send(proto::CH_RELIABLE, w);
 }
@@ -1239,9 +1317,9 @@ void ScriptFaded(int16_t dir, float seconds) {
 void HandleScreen(uint8_t from, Reader& r) {
     uint8_t flags = r.U8();
     float duration = r.F32();
-    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady()) return;
+    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld()) return;
     if (!(flags & FADE_ACTIVE)) {
-        if (g_weFaded && FadeAlpha() > 1.0f) Fade(0.5f, 1);
+        if (g_weFaded && Darkening()) Fade(0.5f, 1);
         if (g_weWide && g_csState == 0) SetWideScreen(false);
         g_weFaded = g_weWide = false;
         return;
@@ -1259,10 +1337,10 @@ void HandleScreen(uint8_t from, Reader& r) {
         }
         g_weFaded = true;
     } else if (g_weFaded) {
-        if (FadeAlpha() > 1.0f && !(Fading() && FadeDirection() == 1)) {
+        if (Darkening() && !(Fading() && FadeDirection() == 1)) {
             Fade(duration, 1);
             LOGD("Host's script fade: in");
-        } else if (FadeAlpha() <= 1.0f) {
+        } else if (!Darkening()) {
             g_weFaded = false;
         }
     }
@@ -1284,7 +1362,8 @@ void HostSendOnscreen() {
         var(Ref<uint32_t>(c + 0x04));
     }
     w.Str(MissionTable(), 8);  // the labels are GXT keys, usually of the mission's table
-    Net().Send(proto::CH_STATE, w);
+    // nothing shown any more goes once, so reliably: lost, the partner kept the last timer until the mission's end
+    Net().Send(any ? proto::CH_STATE : proto::CH_RELIABLE, w);
     g_lastOnscreen = std::move(block);
 }
 
@@ -1293,11 +1372,11 @@ void HandleOnscreen(uint8_t from, Reader& r) {
     int32_t values[9];
     for (int32_t& v : values) v = r.I32();
     std::string table = r.Str(8);
-    if (!r.Ok() || block.size() != kOnscreenSize || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady()) return;
+    if (!r.Ok() || block.size() != kOnscreenSize || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld()) return;
     UseMissionTable(table);
     int32_t mainSize = Ref<int32_t>(kMainScriptSize);
-    auto set = [&](uint32_t off, int32_t v) {
-        if (off && off + 4 <= (uint32_t)mainSize) Ref<int32_t>(addr::ScriptSpace + off) = v;
+    auto set = [&](uint32_t off, int32_t v) {  // off from the network: off + 4 would wrap past 0xFFFFFFFB
+        if (off && mainSize >= 4 && off <= (uint32_t)mainSize - 4) Ref<int32_t>(addr::ScriptSpace + off) = v;
     };
     uint8_t* b = block.data();
     set(*(uint32_t*)(b + 0x00), values[0]);
@@ -1327,15 +1406,24 @@ void HandleMissionStart(uint8_t from, Reader& r) {
 }
 
 void PartnerMissionCleanup() {
-    g_missionWeapons.clear();  // what the mission did not take back stays (the host keeps it too)
+    // what the mission did not take back stays (the host keeps it too); a gun of the partner's own it went over keeps
+    // the larger count (Emmet's pistol is left with 10)
+    if (CPlayerPed* me = core::IsPlayerReady() ? FindPlayerPed(0) : nullptr)
+        for (auto& [weapon, own] : g_replaced)
+            for (int i = 0; i < NUM_WEAPON_SLOTS; ++i)
+                if (own.first == weapon && me->Weapons()[i].type == weapon && me->Weapons()[i].ammoTotal < own.second)
+                    Cmd(0x017B).I(GetPedRef(me)).I(weapon).I(std::min(own.second, 99999)).Run();  // SET_CHAR_AMMO
+    g_missionWeapons.clear();
     g_replaced.clear();
     ClearPartnerBlips();
     g_partnerBlipRecords.clear();
     g_partnerAreas.clear();
     ClearPartnerMarked();
     ClearPartnerOnscreen();
+    // a cutscene loaded and never started (the mission failed in between) hid the player and took its controls too
     if (g_csState == 2) PartnerEndCutscene();
-    if (g_weFaded && FadeAlpha() > 1.0f) Fade(0.5f, 1);
+    if (g_csState != 0) PartnerClearCutscene();
+    if (g_weFaded && Darkening()) Fade(0.5f, 1);
     if (g_weWide) SetWideScreen(false);
     g_weFaded = g_weWide = false;
 }
@@ -1351,15 +1439,25 @@ void HandleMissionEnd(uint8_t from, Reader&) {
 
 void HandleReward(uint8_t from, Reader& r) {
     int32_t money = r.I32();
-    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || money <= 0 || money > 10000000) return;
+    if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld() || money <= 0 || money > 10000000) return;
     PlayerInfos()[0].money += money;
     ui::TheChat().AddSystem(Format(TR("Награда за миссию: $%d.", "Mission reward: $%d."), money));
 }
 
 // ---------------------------------------------------------------- module
+void SendWait(bool waiting) {
+    Writer w(proto::G_MISSION_WAIT);
+    w.U8(waiting);
+    if (waiting)
+        for (float f : {g_waitArea.x1, g_waitArea.y1, g_waitArea.x2, g_waitArea.y2, g_waitArea.z}) w.F32(f);
+    Net().Send(proto::CH_RELIABLE, w);
+}
+
 // host: a partner's game (re)started — send the running mission's state again
 void MissionsResync() {
-    if (!Net().IsHost() || !g_active) return;
+    if (!Net().IsHost()) return;
+    if (g_waitSent) SendWait(true);  // waiting at a marker: sent only on change, a partner new here has not seen it
+    if (!g_active) return;
     Writer w(proto::G_MISSION_START);
     w.Str(g_missionName, 16);
     Net().Send(proto::CH_RELIABLE, w);
@@ -1368,10 +1466,15 @@ void MissionsResync() {
     g_lastAreasMsg.clear();
     g_lastOnscreen.clear();
     HostSendScreen(true);  // the fade it joins into: a new game starts black until its prologue fades in
-    if (CutsceneRunning() && g_cutsceneName[0]) {
+    // A cutscene loaded and not started yet goes too (CCutsceneMgr::ms_cutsceneLoadStatus): its start came alone and was
+    // ignored. The start with its interior: area 0 hid the interior the scene plays in.
+    bool loaded = Ref<int32_t>(0xB5F84C) != 0;
+    if ((CutsceneRunning() || loaded) && g_cutsceneName[0]) {
         SendCutscene(CS_LOAD, g_cutsceneName);
-        SendCutscene(CS_START);
-        if (scene::Spot s; scene::CurrentSpot(s)) SendSpot(s, 0);
+        if (CutsceneRunning()) {
+            SendCutscene(CS_START, "", CurrentArea());
+            if (scene::Spot s; scene::CurrentSpot(s)) SendSpot(s, 0);
+        }
     }
 }
 
@@ -1419,7 +1522,9 @@ public:
     }
 
     void OnPostProcess() override {
-        if (!Net().Online() || !core::IsPlayerReady()) return;
+        if (!core::IsPlayerReady()) return;
+        HealInheritedFlag();  // in a game of one's own too: such a save is broken there as well
+        if (!Net().Online()) return;
         if (Net().IsHost()) HostUpdate();
         else PartnerUpdate();
     }
@@ -1435,6 +1540,14 @@ public:
             ui::TheChat().AddSystem(TR("Сюжетные миссии запускает хост, а вы проходите их вместе с ним.",
                                        "The host starts the story missions, and you play them together."));
     }
+    void OnPeerLeave(uint8_t id) override {
+        // the host gone in the middle of its mission (its game crashed) while a dedicated server goes on: its fade-out
+        // had no fade-in to follow, and the partner's screen stayed dark
+        if (Net().IsHost() || id != Net().HostId() || !core::IsPlayerReady()) return;
+        if (g_csState == 2) PartnerEndCutscene();
+        if (g_csState != 0) PartnerClearCutscene();
+        PartnerMissionCleanup();
+    }
     void OnSessionEnd() override {
         if (core::IsPlayerReady()) {  // the host's cutscene, blips, markers and fades stay no longer
             if (g_csState == 2) PartnerEndCutscene();
@@ -1445,10 +1558,25 @@ public:
     }
     void OnGameStarted() override {
         Reset();
+        g_inheritedFlagMs = core::IsOnMission() ? NowMs() : 0;
         g_lastPassed.assign((const char*)0xB78A00, strnlen((const char*)0xB78A00, 8));  // what the loaded game had
         g_progressAt = 0;
     }
-    void OnGameShutdown() override { Reset(); }
+    void OnGameShutdown() override {
+        // the host's world goes (a game loaded, a restart): its cutscene and mission end for the partners too, who
+        // stayed frozen in the cutscene, waiting for an end that never came, and then at the next mission marker
+        if (Net().Online() && Net().IsHost()) {
+            if (g_hostCutscene) SendCutscene(CS_END);
+            if (g_active) {
+                Writer w(proto::G_BLIP);
+                w.U8(BLIP_CLEAR);
+                Net().Send(proto::CH_RELIABLE, w);
+                Net().Send(proto::CH_RELIABLE, Writer(proto::G_MISSION_END));
+            }
+            if (g_waitSent) SendWait(false);
+        }
+        Reset();
+    }
 
 private:
     static void Reset() {
@@ -1478,6 +1606,19 @@ private:
         void* script = FindMissionScript();
         bool active = HostOnMission();
         std::string name = script ? std::string(Field<char[8]>(script, 0x08), strnlen(Field<char[8]>(script, 0x08), 8)) : "";
+        // the flag up with no mission script for long (a modded build had it so for a whole session): the story's markers
+        // stay hidden and the partners count the host as on a mission. Said once in the log.
+        static uint64_t flagOnlySince = 0;
+        static bool flagOnlyLogged = false;
+        if (!active || script) {
+            flagOnlySince = 0;
+            flagOnlyLogged = false;
+        } else if (!flagOnlySince) {
+            flagOnlySince = NowMs();
+        } else if (!flagOnlyLogged && NowMs() - flagOnlySince > 60000) {
+            flagOnlyLogged = true;
+            LOGW("The mission flag ($1636) has been up for a minute with no mission script running");
+        }
         if (active && !g_active) {
             // blips that exist now are not the mission's
             g_baseline.clear();
@@ -1537,11 +1678,7 @@ private:
             g_waitSent = waiting;
             LOGI(waiting ? "Mission marker at %.1f,%.1f: waiting for the partner" : "Mission marker at %.1f,%.1f: not waiting any more",
                  (g_waitArea.x1 + g_waitArea.x2) * 0.5f, (g_waitArea.y1 + g_waitArea.y2) * 0.5f);
-            Writer w(proto::G_MISSION_WAIT);
-            w.U8(waiting);
-            if (waiting)
-                for (float f : {g_waitArea.x1, g_waitArea.y1, g_waitArea.x2, g_waitArea.y2, g_waitArea.z}) w.F32(f);
-            Net().Send(proto::CH_RELIABLE, w);
+            SendWait(waiting);
         }
 
         HostSkipUpdate();
@@ -1574,7 +1711,7 @@ private:
         uint64_t now = NowMs();
         if (now - g_lastFadeMs >= 200) {
             g_lastFadeMs = now;
-            HostSendScreen(true);
+            HostSendScreen(true, true);
         }
         if (now - g_lastTick < 250) return;
         g_lastTick = now;
@@ -1603,14 +1740,36 @@ private:
             w.F32(a.y2);
             w.F32(a.z);
         }
+        // the partner draws them only within 1 s of the latest list (a host gone or paused takes them away): an unchanged
+        // list goes again every 500 ms, or a fixed destination's marker went out after a second there
+        static uint64_t repeatedMs = 0;
         if (w.Buffer() != g_lastAreasMsg) {
             g_lastAreasMsg = w.Buffer();
+            repeatedMs = now;
             Net().Send(proto::CH_RELIABLE, w);
+        } else if (!live.empty() && now - repeatedMs >= 500) {
+            repeatedMs = now;
+            Net().Send(proto::CH_STATE, w);
         }
     }
 
     static void PartnerUpdate() {
         UpdatePartnerCutscene();
+        // The host's vote to skip while no cutscene runs here (it never started): nothing here can answer it, and the
+        // host waited 15 s for this player. A scene a little late here gets 3 s to start and be watched.
+        static uint64_t voteWithoutScene = 0;
+        if (!g_skipOpen || CutsceneRunning() || g_skipYes.count(Net().MyId())) voteWithoutScene = 0;
+        else if (!voteWithoutScene) voteWithoutScene = NowMs();
+        else if (NowMs() - voteWithoutScene > 3000) SkipVote(Net().MyId(), true);
+        // our own missions (a mini-game, a side job), for the log: reports of a partner stuck in one had nothing on it
+        static std::string own;
+        void* script = FindMissionScript();
+        std::string name = script ? std::string(Field<char[8]>(script, 0x08), strnlen(Field<char[8]>(script, 0x08), 8)) : "";
+        if (name != own) {
+            if (name.empty()) LOGI("Own mission ended (%s)", own.c_str());
+            else LOGI("Own mission started (%s)", name.c_str());
+            own = name;
+        }
         if (g_hostWaits) g_origHighlight(g_waitArea.id, g_waitArea.x1, g_waitArea.y1, g_waitArea.x2, g_waitArea.y2, g_waitArea.z);
         // markers are drawn every frame while the host keeps them (stale after 1 s: host gone/paused)
         if (NowMs() - g_partnerAreasMs < 1000)

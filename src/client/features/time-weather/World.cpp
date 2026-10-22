@@ -32,11 +32,33 @@ constexpr int kNumWeatherTypes = 23;
 // CGameLogic::PassTime moves the clock on after a death or an arrest (12 h), a save (6 h), a trip or a train skip. The
 // world's clock is the host's: on the partner the host's clock took it back a second later and the light jumped twice
 // (a moment of night after a respawn by day). Its days passed and its pickups still count.
+// The host's death or arrest made night fall for everybody in the middle of the day: while partners are in the game,
+// that 12 h jump is left out on the host too. A save still passes 6 h: that is how players wait for a mission's hour.
 using SetClockFn = void(__cdecl*)(uint8_t, uint8_t, uint8_t);
 SetClockFn g_origSetClock = nullptr;
+bool g_respawning = false;  // PassTime after a death or an arrest
+
+bool PartnersIn() {
+    for (auto& [id, peer] : Net().Peers())
+        if (id != Net().MyId()) return true;
+    return false;
+}
+
 void __cdecl HookPassTimeClock(uint8_t hours, uint8_t minutes, uint8_t day) {
     if (Net().Online() && !Net().IsHost() && flow::InHostWorld()) return;
+    if (g_respawning && Net().IsHost() && PartnersIn()) {
+        LOGI("Respawn: the clock stays at %02d:%02d (partners in the game)", ClockHours(), ClockMinutes());
+        return;
+    }
     g_origSetClock(hours, minutes, day);
+}
+
+using PassTimeFn = void(__cdecl*)(uint32_t);
+PassTimeFn g_origPassTime = (PassTimeFn)0x4414C0;  // CClock::PassTime: all three sites call it
+void __cdecl HookRespawnPassTime(uint32_t minutes) {
+    g_respawning = true;
+    g_origPassTime(minutes);
+    g_respawning = false;
 }
 
 class World : public Module {
@@ -45,6 +67,8 @@ public:
 
     void OnInstallHooks() override {
         mem::RedirectCallFn(0x441534, &HookPassTimeClock, &g_origSetClock);  // CGameLogic::PassTime -> CClock::SetGameClock
+        // PassTime(720): CGameLogic::Update after a death and after an arrest, CGameLogic::ResetStuffUponResurrection
+        for (uintptr_t at : {0x442FCF, 0x44337A, 0x4429C5}) mem::RedirectCallFn(at, &HookRespawnPassTime, &g_origPassTime);
         Net().SetHandler(proto::G_WORLD_STATE, [](uint8_t from, Reader& r) { Handle(from, r); });
     }
 

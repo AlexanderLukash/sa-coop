@@ -102,7 +102,7 @@ void __cdecl HookManagePed(CPed* ped, const CVector* centre) {
         CVector p = ped->GetPosition();
         float local = (p - *centre).Length2D();
         uint8_t who = 0;
-        if (const CVector* r = NearestRemote(p, local, ped->AreaCode(), &who)) {
+        if (const CVector* r = NearestRemote(p, local, AreaOf(ped), &who)) {
             // far from this game's player and clearly nearer the other one: the other game keeps it (the margin keeps a
             // ped from going back and forth between two players standing together)
             if (local > 60.0f && (p - *r).Length2D() < local - 30.0f && CanTake(who) && Peds::Instance().QueueGiveAway(ped, who))

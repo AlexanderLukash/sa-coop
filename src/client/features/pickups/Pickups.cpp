@@ -15,6 +15,7 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "entities/session/Flow.h"
 #include "common/lib/util/Util.h"
 #include "entities/mission/Mission.h"
 #include "shared/api/net-session/Session.h"
@@ -90,7 +91,7 @@ bool __fastcall HookPickupUpdate(void* pickup, void* edx, CPlayerPed* player, CV
     uint8_t before[0x20];
     memcpy(before, pickup, sizeof(before));  // Remove() clears the type and the object
     bool taken = g_origPickupUpdate(pickup, edx, player, veh, playerId);
-    if (!Net().Online() || g_applying || player != FindPlayerPed(0) || !Shared(type, Model((uintptr_t)before)))
+    if (!flow::InSharedWorld() || g_applying || player != FindPlayerPed(0) || !Shared(type, Model((uintptr_t)before)))
         return taken;
     if (taken) {
         SendEvent(EV_TAKEN, (uintptr_t)before, type);
@@ -109,14 +110,15 @@ void __cdecl HookPictureTaken() {
         if (Type(Pickup(i)) == PU_SNAPSHOT)
             snapshots.emplace_back(i, std::vector<uint8_t>((uint8_t*)Pickup(i), (uint8_t*)Pickup(i) + 0x20));
     g_origPictureTaken();
-    if (!Net().Online()) return;
+    if (!flow::InSharedWorld()) return;
     for (auto& [i, bytes] : snapshots)
         if (Type(Pickup(i)) != PU_SNAPSHOT) SendEvent(EV_PHOTOGRAPHED, (uintptr_t)bytes.data(), PU_SNAPSHOT);
 }
 
 // a tag painted here (CWorld::SprayPaintWorld's call of CTagManager::SetAlpha)
 using SetAlphaFn = void(__cdecl*)(CEntity*, uint8_t);
-SetAlphaFn g_origSetAlpha = nullptr;
+// the game's own until redirected: a site another mod changed is left alone, and this is still called
+SetAlphaFn g_origSetAlpha = (SetAlphaFn)0x49CEC0;
 int TagIndex(CEntity* e) {
     int n = std::min(Ref<int32_t>(kNumTags), 150);
     for (int i = 0; i < n; ++i)
@@ -127,7 +129,7 @@ void __cdecl HookSprayTag(CEntity* tag, uint8_t alpha) {
     int i = TagIndex(tag);
     uint8_t was = i >= 0 ? Ref<uint8_t>(kTags + (uintptr_t)i * 8 + 4) : 0;
     g_origSetAlpha(tag, alpha);
-    if (!Net().Online() || g_applying || !tag || was > 228 || alpha <= 228) return;  // counts as sprayed above 228
+    if (!flow::InSharedWorld() || g_applying || !tag || was > 228 || alpha <= 228) return;  // counts as sprayed above 228
     CVector pos = tag->GetPosition();
     Writer w(proto::G_PICKUP_EVENT);
     w.U8(EV_TAG);
@@ -139,7 +141,7 @@ void __cdecl HookSprayTag(CEntity* tag, uint8_t alpha) {
 using GenerateFn = int(__cdecl*)(float, float, float, uint32_t, int, uint32_t, uint32_t, int, char*);
 GenerateFn g_origGenerate = nullptr;
 bool Announced(int type, int model) {
-    if (g_applying || !Net().Online() || !core::IsPlayerReady() || PlayerInFocus() != 0) return false;  // the remote
+    if (g_applying || !flow::InSharedWorld() || !core::IsPlayerReady() || PlayerInFocus() != 0) return false;  // the remote
     if (!Shared((uint8_t)type, model)) return false;                                  // player's drops are its game's
     if (void* script = CurrentScript())  // a script: only the host's mission is not run by both games
         return Net().IsHost() && Field<uint8_t>(script, 0xDC) && HostReplicating();  // CRunningScript::m_bIsMission
@@ -177,9 +179,16 @@ void Take(int i, uint8_t type) {
         Ref<uint8_t>(p + 0x1D) |= 1;
         return;
     }
+    // The other player's find counts here too, as CPickups::PickedUpHorseShoe / PickedUpOyster count it (its luck share
+    // of all of them for a horseshoe). The $100, the $100 000 for the last one and the message are the finder's: this
+    // game paid them as well.
     int model = Model(p);
-    if (model == ModelIndexVar(0x8CD754)) Call<0x455390>();  // CPickups::PickedUpHorseShoe: the count, the luck, $100
-    else if (model == ModelIndexVar(0x8CD750)) Call<0x4552D0>();  // CPickups::PickedUpOyster
+    if (model == ModelIndexVar(0x8CD754)) {
+        Call<0x55C180>((uint16_t)241, 1.0f);  // CStats::IncrementStat: horseshoes collected
+        Call<0x55C180>((uint16_t)233, 1000.0f / std::max(Call<0x558E40, float>((uint16_t)242), 1.0f));  // luck / all of them
+    } else if (model == ModelIndexVar(0x8CD750)) {
+        Call<0x55C180>((uint16_t)243, 1.0f);  // oysters collected
+    }
     CallMethod<0x4556C0>((void*)p);  // CPickup::Remove
     Call<0x455240>(i);                // CPickups::AddToCollectedPickupsArray: HAS_PICKUP_BEEN_COLLECTED
 }
@@ -188,7 +197,7 @@ void HandleEvent(uint8_t from, Reader& r) {
     uint8_t what = r.U8();
     if (what == EV_TAG) {
         Vec3 v = r.Vec();
-        if (!r.Ok() || !core::IsPlayerReady()) return;
+        if (!r.Ok() || !core::IsPlayerReady() || !flow::InSharedWorld()) return;
         int n = std::min(Ref<int32_t>(kNumTags), 150);
         for (int i = 0; i < n; ++i) {
             auto* tag = Ref<CEntity*>(kTags + (uintptr_t)i * 8);
@@ -207,7 +216,7 @@ void HandleEvent(uint8_t from, Reader& r) {
     int16_t pos[3];
     for (auto& c : pos) c = r.I16();
     uint8_t type = r.U8();
-    if (!r.Ok() || !core::IsPlayerReady()) return;
+    if (!r.Ok() || !core::IsPlayerReady() || !flow::InSharedWorld()) return;
     int i = Find(model, pos, type);
     if (i < 0) return;
     uintptr_t p = Pickup(i);
@@ -232,7 +241,10 @@ void HandleCreate(uint8_t from, Reader& r) {
     uint32_t ammo = r.U32();
     uint16_t perDay = r.U16();
     bool empty = r.U8() != 0;
-    if (!r.Ok() || !core::IsPlayerReady() || !Shared(type, model) || Find(model, pos, type) >= 0) return;
+    // a model of a mod this game lacks crashes the streamer, then CPickup::GiveUsAPickUpObject (0x456809)
+    if (!r.Ok() || !core::IsPlayerReady() || !flow::InSharedWorld() || !Shared(type, model) || !IsObjectModel(model) ||
+        Find(model, pos, type) >= 0)
+        return;
     if (!IsModelLoaded(model)) RequestModel(model);
     g_applying = true;
     g_origGenerate(pos[0] / 8.0f, pos[1] / 8.0f, pos[2] / 8.0f, (uint32_t)model, type, ammo, perDay, empty, nullptr);

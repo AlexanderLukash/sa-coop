@@ -39,6 +39,7 @@ struct NetVehicle {
     bool script = false;       // a script's car in the game that announced it
     uint8_t origBy = 0;        // what this game had it created by before it became a mirror here (0: spawned as one)
     bool heldHere = false;     // a script of this game held it when it became a mirror here
+    bool crashProofHere = false;  // made collision-proof here as a mirror (taken off when it is this game's again)
 
     bool hasState = false;
     VehicleState state;
@@ -56,6 +57,7 @@ public:
     void ForgetOwnedBy(uint8_t owner);  // its game started over: its mirrors go, the others are this game's again
     const char* Name() const override { return "Vehicles"; }
     void OnInstallHooks() override;
+    void OnSessionStart() override;
     void OnSessionEnd() override;
     void OnPeerLeave(uint8_t id) override;
     void OnGameStarted() override;
@@ -66,6 +68,9 @@ public:
     static Vehicles& Instance();
 
     NetVehicle* Find(uint16_t netId);
+    // the record's vehicle is still there (one deleted in the last frame stays listed until OnPreProcess, after the
+    // network handlers that use its handle)
+    static bool Alive(const NetVehicle& nv) { return nv.veh && game::GetVehicle(nv.handle) == nv.veh; }
     NetVehicle* Find(game::CVehicle* v);
     // Makes a local vehicle known to the other player (announces it) and returns its record.
     NetVehicle* EnsureNetworked(game::CVehicle* v);

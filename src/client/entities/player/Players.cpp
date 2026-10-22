@@ -36,6 +36,7 @@ struct Reg {
 
 constexpr int kRemoteSlot = 1;  // CWorld::Players index used for the remote player while it is processed
 constexpr int kLastWeapon = 46;  // eWeaponType: the parachute
+constexpr int kCellphone = 330;  // MODEL_CELLPHONE
 constexpr float kTeleportDist = 5.0f;
 
 // ------------------------------------------------------------------ context switching
@@ -201,10 +202,50 @@ using GangDriveByFn = bool(__fastcall*)(void*, void*, CPed*);
 GangDriveByFn g_origGangDriveBy = nullptr;
 bool __fastcall HookGangDriveByProcess(void* task, void* edx, CPed* ped) {
     auto ours = g_ourDriveBy.find(ped);
-    if (ours != g_ourDriveBy.end() && !AimFromSeat(GetPad(0))) Field<uint8_t>(task, 8) = 1;  // m_bIsFinished: let go
+    // let go: the task's own way out, command 7 (m_nNextCommand; a player's pad sets only 1 and 2 below 4). The rest of
+    // the lean-out animation brings the passenger back in, and the task finishes when it is over. Finishing it at once
+    // (m_bIsFinished) left the passenger leaning out of the window with the gun until two clicks.
+    if (ours != g_ourDriveBy.end() && !AimFromSeat(GetPad(0))) Field<int8_t>(task, 0x0F) = 7;
     bool done = g_origGangDriveBy(task, edx, ped);
     if (done && ours != g_ourDriveBy.end()) g_ourDriveBy.erase(ours);
     return done;
+}
+
+// Two players dead or busted at about the same time come back at the same hospital or police station door, one inside
+// the other: the one whose game was done first stood stuck in the other, still in its respawn view, until that ended.
+// Ours comes back 1.5 m to the right when the other player's copy is at that door already (both at once: KeepApart).
+using RestoreFn = void(__cdecl*)(CPlayerPed*, CVector, float);
+RestoreFn g_origRestore = nullptr;
+void __cdecl HookRestorePlayer(CPlayerPed* player, CVector pos, float heading) {
+    if (Net().Online() && player == FindPlayerPed(0))
+        for (auto& [id, rp] : Players::Instance().All()) {
+            if (!rp.ped) continue;
+            CVector d = rp.ped->GetPosition() - pos;
+            if (d.Length2D() > 1.5f || std::fabs(d.z) > 3.0f) continue;
+            float h = heading * 0.0174533f;  // degrees: 0 faces north, the right is (cos, sin)
+            pos = pos + CVector{std::cos(h), std::sin(h), 0.0f} * 1.5f;
+            LOGI("Respawn 1.5 m aside: player %d stands at the door", id);
+            break;
+        }
+    g_origRestore(player, pos, heading);
+}
+
+// DELETE_CHAR deletes whoever it is given (CTheScripts::RemoveThisPed). A mission that clears "the player's car" for
+// the people it brings deletes its passengers: in "Sweet's Girl" the host rode with the partner driving, the host's own
+// CJ was deleted, and the host's game crashed on its next look at him (the partner's screen stayed dark). A player, ours
+// or the other one's copy, only gets out of the car; vanilla scripts never delete a player.
+using RemovePedFn = void(__cdecl*)(CPed*);
+RemovePedFn g_origRemoveThisPed = nullptr;
+void __cdecl HookDeleteChar(CPed* ped) {
+    if (ped && ped->IsPlayer()) {
+        if (ped->InVehicle()) {
+            CVector p = ped->GetPosition();
+            Cmd(0x0362).I(GetPedRef(ped)).F(p.x).F(p.y).F(p.z + 1.0f).Run();  // WARP_CHAR_FROM_CAR_TO_COORD
+        }
+        LOGW("A script deleted a player (%s): out of its car instead", ped == FindPlayerPed(0) ? "ours" : "a copy");
+        return;
+    }
+    g_origRemoveThisPed(ped);
 }
 
 using ProcessControlFn = void(__fastcall*)(CPlayerPed*, void*);
@@ -491,6 +532,19 @@ int ActivePrimaryTaskType(CPed* ped, void** taskOut) {
     return -1;
 }
 
+void StopEntering(CVehicle* v) {
+    CPoolHeader* pool = PedPool();
+    for (int i = 0; pool && i < pool->size; ++i) {
+        if (pool->byteMap[i] < 0) continue;
+        auto* ped = (CPed*)(pool->objects + (size_t)i * kPedPoolElemSize);
+        void* task = nullptr;
+        int type = ActivePrimaryTaskType(ped, &task);
+        bool entering = type == TASK_ENTER_CAR_AS_PASSENGER || type == TASK_ENTER_CAR_AS_DRIVER ||
+                        type == TASK_ENTER_CAR_AS_PASSENGER_TIMED || type == TASK_ENTER_CAR_AS_DRIVER_TIMED;
+        if (entering && Field<CVehicle*>(task, 0x0C) == v) CallMethod<0x601640>(ped->Intelligence(), true);  // FlushImmediately
+    }
+}
+
 int PassengerSeatOf(CVehicle* v, CPed* ped) {
     if (!v || !ped) return -2;
     if (v->Driver() == ped) return -1;
@@ -527,6 +581,8 @@ void Players::OnInstallHooks() {
     mem::Nop(0x644A27, 28);  // the SMG slot holds a weapon with ammo (PassengerDriveBy checks the gun in hand)
     mem::Nop(0x644A69, 6);   // jne: the camera is MODE_TWOPLAYER_IN_CAR_AND_SHOOTING
     mem::HookFn(0x62D3B0, &HookGangDriveByProcess, &g_origGangDriveBy, "CTaskSimpleGangDriveBy::ProcessPed");
+    mem::HookFn(0x442060, &HookRestorePlayer, &g_origRestore, "CGameLogic::RestorePlayerStuffDuringResurrection");
+    mem::RedirectCallFn(0x4677A5, &HookDeleteChar, &g_origRemoveThisPed);  // DELETE_CHAR -> CTheScripts::RemoveThisPed
     mem::HookFn(0x609FF0, &HookGetPlayerInfoForThisPlayerPed, &g_origGetPlayerInfo,
                 "CPlayerPed::GetPlayerInfoForThisPlayerPed");
     mem::HookFn(0x706970, &HookGetRealTimeShadow, &g_origGetShadow, "CRealTimeShadowManager::GetRealTimeShadow");
@@ -556,6 +612,28 @@ RemotePlayer* Players::FindByPed(CPed* ped) {
 RemotePlayer* Players::Get(uint8_t id) {
     auto it = m_remote.find(id);
     return it == m_remote.end() ? nullptr : &it->second;
+}
+
+// as SET_PLAYER_MODEL (0x47A820) changes it: a new clump, the walk set kept. A special character (290-299) must be
+// in memory already: it is loaded by name (Peds::SpecialModelFor). For the other players' copies only.
+bool Players::SetModel(CPlayerPed* ped, int model) {
+    if (ped->ModelIndex() == model) return true;
+    bool special = model >= 290 && model <= 299;
+    if (model != 0 && (!IsPedModel(model) || (special ? !IsModelLoaded(model) : !LoadModelNow(model)))) return false;
+    int32_t walk = Field<int32_t>(ped, 0x4D4);  // CPed::m_nAnimGroup
+    // The copy's tasks hold animations of the old clump (a car door's, a fight's, the look-at's bones) and touched them
+    // freed later: SET_PLAYER_MODEL is for an idle player. Flushed first, out of a car first (the flush takes the drive
+    // task, the next state seats it again).
+    if (ped->InVehicle()) {
+        CVector p = ped->GetPosition();
+        Cmd(0x0362).I(GetPedRef(ped)).F(p.x).F(p.y).F(p.z + 1.0f).Run();  // WARP_CHAR_FROM_CAR_TO_COORD
+    }
+    CallMethod<0x601640>(ped->Intelligence(), true);  // CPedIntelligence::FlushImmediately
+    CallVirtual<8>(ped);                        // CEntity::DeleteRwObject
+    Field<uint16_t>(ped, 0x22) = 0xFFFF;        // CEntity::m_nModelIndex: SetModelIndex rebuilds only a new one
+    CallVirtual<5>(ped, (uint32_t)model);       // CPed::SetModelIndex
+    Field<int32_t>(ped, 0x4D4) = walk;
+    return true;
 }
 
 void Players::OnSessionStart() { m_lastSend = 0; }
@@ -605,7 +683,8 @@ void Players::OnGameStarted() {
                 Cmd(0x01B2).I(h).I(s.weapons[i]).I(std::max(s.ammo[i], 1)).Run();  // GIVE_WEAPON_TO_CHAR
             }
         Cmd(0x01B9).I(h).I(s.activeWeapon).Run();  // SET_CURRENT_CHAR_WEAPON
-        if (s.carModel > 0 && IsVehicleModel(s.carModel) && LoadModelNow(s.carModel)) {  // the car left next to it
+        if (s.carModel > 0 && IsVehicleModel(s.carModel) && HasRoom(VehiclePool(), kKeepVehicles, "vehicle") &&
+            LoadModelNow(s.carModel)) {  // the car left next to it
             int car = -1;
             Cmd(0x00A5).I(s.carModel).F(s.carX).F(s.carY).F(s.carZ).Out(&car).Run();  // CREATE_CAR
             if (CVehicle* v = GetVehicle(car)) {
@@ -647,6 +726,7 @@ void Players::SpawnRemote(RemotePlayer& rp) {
     if (rp.ped || !rp.hasState || !core::IsPlayerReady()) return;
     CPlayerInfo* slot = PlayerInfo(kRemoteSlot);
     if (slot->ped) return;  // slot busy (should not happen)
+    if (!HasRoom(PedPool(), 2, "ped")) return;  // the other player above everything else, still not into the last slots
     const CVector p = rp.state.pos;
     int playerIndex = -1, handle = -1;
     // made high above its place: CREATE_PLAYER clears the space around itself of this game's random peds and cars
@@ -668,6 +748,9 @@ void Players::SpawnRemote(RemotePlayer& rp) {
     ped->SetStreamingDontDelete(true);
     ped->AreaCode() = rp.state.area;
     rp.ped = ped;
+    // CEntity::RegisterReference: the engine nulls it when it deletes the copy itself (with a car a mission deletes:
+    // CWorld::Process removes the people of a deleted car), before the network handlers of the next frame use it
+    CallMethod<0x571B70>(ped, (CEntity**)&rp.ped);
     rp.pedHandle = handle;
     rp.padNew = rp.padOld = CControllerState{};
     // radar blip
@@ -689,9 +772,14 @@ void Players::DestroyRemote(RemotePlayer& rp) {
     }
     if (rp.ped && IsPedValid(rp.ped)) {
         CPed* ped = rp.ped;
+        if (ped->InVehicle()) {  // the car kept it in its seat count (CTheScripts::RemoveThisPed takes it out first too)
+            CVector p = ped->GetPosition();
+            Cmd(0x0362).I(rp.pedHandle).F(p.x).F(p.y).F(p.z + 1.0f).Run();  // WARP_CHAR_FROM_CAR_TO_COORD
+        }
         if (PlayerInfo(kRemoteSlot)->ped == ped) PlayerInfo(kRemoteSlot)->ped = nullptr;
         if (CPlayerPed* me = FindPlayerPed(0); me && Field<CEntity*>(me, 0x128) == ped) Field<CEntity*>(me, 0x128) = nullptr;  // KeepApart
         WorldRemove(ped);
+        Call<0x565510>(ped);            // CWorld::RemoveReferencesToDeletedObject: who stood on it or touched it
         CallVirtual<0, void>(ped, 1u);  // scalar deleting destructor (returns the slot to the ped pool)
         LOGI("Remote player %d removed", rp.id);
     }
@@ -778,7 +866,8 @@ void Players::HandleEnterCar(uint8_t from, Reader& r) {
     if (!r.Ok() || from == Net().MyId()) return;
     RemotePlayer* rp = Get(from);
     NetVehicle* nv = Vehicles::Instance().Find(netId);
-    if (!rp || !rp->ped || !nv || !nv->veh) return;
+    // a car deleted in the last frame is still listed (Vehicles drops it in its OnPreProcess, after the messages)
+    if (!rp || !rp->ped || !nv || !Vehicles::Alive(*nv)) return;
     rp->enterTaskMs = NowMs();
     if (seat < 0)
         Cmd(0x05CB).I(rp->pedHandle).I(nv->handle).I(10000).Run();  // TASK_ENTER_CAR_AS_DRIVER
@@ -842,6 +931,34 @@ void Players::ApplyState(RemotePlayer& rp) {
     ped->Health() = (float)st.health;
     ped->Armour() = (float)st.armour;
     if (!Ref<uint8_t>(0xB5F851)) ped->AreaCode() = st.area;  // CCutsceneMgr::ms_running: the scene sets it (Missions)
+
+    // crouching toggles on the crouch button's press, which the copy replays from the owner's pad: a press lost on the
+    // way (or a press and its release in one frame) left the copy standing while its owner crouched, and every next
+    // press the other way round. A difference that lasts is the owner's state put right.
+    bool duck = (st.flags & OnFootState::F_DUCKING) != 0;
+    if (duck == ped->IsDucking() || rp.mode != RemotePlayer::Mode::OnFoot) {
+        rp.duckOffMs = 0;
+    } else if (!rp.duckOffMs) {
+        rp.duckOffMs = NowMs();
+    } else if (NowMs() - rp.duckOffMs > 400 && ped->Intelligence()) {
+        if (duck) CallMethod<0x601230>(ped->Intelligence(), (uint16_t)0);  // CPedIntelligence::SetTaskDuckSecondary
+        else CallMethod<0x601390>(ped->Intelligence());                    // CPedIntelligence::ClearTaskDuckSecondary
+        rp.duckOffMs = 0;
+        LOGD("Remote player %d: crouch %s to match its owner", rp.id, duck ? "on" : "off");
+    }
+
+    // a phone call (CTaskComplexUseMobilePhone): the phone is put in the hand as a weapon's model, and the weapon's
+    // comes back after it (CPed__removeCellphone); the animations go with Anims
+    bool phone = (st.flags & OnFootState::F_PHONE) != 0;
+    if (phone != (Field<int32_t>(ped, 0x740) == kCellphone) && LoadModelNow(kCellphone)) {
+        if (phone) {
+            CallMethod<0x5E5ED0>(ped, kCellphone);  // CPed::AddWeaponModel
+        } else {
+            CallMethod<0x5E3990>(ped, kCellphone);                       // CPed::RemoveWeaponModel
+            CallMethod<0x5E6280>(ped, (int)ped->ActiveWeapon().type);  // CPed::SetCurrentWeapon: its gun again
+        }
+        LOGI("Remote player %d: phone %s", rp.id, phone ? "out" : "away");
+    }
 
     // the jetpack flies by the player's buttons, which this ped gets: it only needs one. Dropping it (the enter key)
     // happens here as there; whatever is left over goes with the flag
@@ -944,12 +1061,13 @@ void Players::RideTrain(RemotePlayer& rp) {
     }
     if (CPed* d = train->Driver(); d && d->IsPlayer()) return;          // taken here
     else if (d) Cmd(0x009B).I(GetPedRef(d)).Run();                       // DELETE_CHAR: the copy's own driver
+    Field<uint8_t>(train, 0x42A) |= 2;  // bHasBeenOwnedByPlayer: a player warped in reports a car theft (0x64BBBA) on ours
     Cmd(0x036A).I(rp.pedHandle).I(GetVehicleRef(train)).Run();          // WARP_CHAR_INTO_CAR
 }
 
 void Players::ApplyVehicleSeat(RemotePlayer& rp) {
     NetVehicle* nv = Vehicles::Instance().Find(rp.vehNetId);
-    if (!nv || !nv->veh) return;  // the vehicle announcement has not arrived yet
+    if (!nv || !Vehicles::Alive(*nv)) return;  // the vehicle announcement has not arrived yet
     CPlayerPed* ped = rp.ped;
     int seat = PassengerSeatOf(nv->veh, ped);
     bool seated = ped->InVehicle() && ped->Vehicle() == nv->veh && seat == rp.seat;
@@ -960,9 +1078,13 @@ void Players::ApplyVehicleSeat(RemotePlayer& rp) {
         CVector p = ped->GetPosition();
         Cmd(0x0362).I(rp.pedHandle).F(p.x).F(p.y).F(p.z).Run();  // WARP_CHAR_FROM_CAR_TO_COORD
     }
+    // a player warped in as the driver of a car no player owned yet reports a car theft against FindPlayerPed, ours here
+    // (CTaskSimpleCarSetPedInAsDriver, 0x64BBBA), and makes it a player's car: the local pad drove it until the next frame
+    Field<uint8_t>(nv->veh, 0x42A) |= 2;  // CVehicle::bHasBeenOwnedByPlayer
     if (rp.seat < 0) {
         if (nv->veh->Driver() && nv->veh->Driver() != ped) return;  // seat taken locally
         Cmd(0x036A).I(rp.pedHandle).I(nv->handle).Run();  // WARP_CHAR_INTO_CAR
+        if (nv->veh->Driver() == ped) nv->veh->SetStatus(3);  // STATUS_PHYSICS: its owner's state moves it
     } else {
         if (SeatOrAny(nv->veh, rp.seat) < 0 || nv->veh->Passengers()[rp.seat]) return;  // no such seat, or taken
         Cmd(0x0430).I(rp.pedHandle).I(nv->handle).I(rp.seat).Run();  // WARP_CHAR_INTO_CAR_AS_PASSENGER
@@ -1049,7 +1171,8 @@ void Players::SendVehicleState(CVehicle* v) {
     OnFootState common;
     FillCommon(common, me);
     uint64_t now = NowMs();
-    bool padChanged = !(common.pad == m_lastSentPad);
+    // a button goes at once; a stick that moves (a gamepad's never rests) sent every frame: 33 ms at most, as SA-MP's rates
+    bool padChanged = common.pad.buttons != m_lastSentPad.buttons || (!(common.pad == m_lastSentPad) && now - m_lastSend >= 33);
     bool driver = v->Driver() == me;
     uint64_t interval = driver ? 33 : 100;
     if (!padChanged && now - m_lastSend < interval) return;
@@ -1080,9 +1203,10 @@ void Players::SendVehicleState(CVehicle* v) {
 void Players::OnPreProcess() {
     if (!Net().Online() || !core::IsPlayerReady()) return;
     for (auto& [id, rp] : m_remote) {
-        if (rp.ped && !IsPedValid(rp.ped)) {
+        if ((rp.ped && !IsPedValid(rp.ped)) || (!rp.ped && rp.pedHandle >= 0)) {  // the engine deleted it
             LOGW("Remote player %d ped vanished, respawning", id);
             rp.ped = nullptr;
+            rp.pedHandle = -1;
             rp.blip = 0;
         }
         // states older than 5 s mean the player is loading / in the menu; a cutscene here keeps its ped in the scene
@@ -1128,7 +1252,8 @@ void Players::SendLocalState() {
     st.flags = (me->IsDucking() ? OnFootState::F_DUCKING : 0) | (me->IsInTheAir() ? OnFootState::F_IN_AIR : 0) |
                (HasJetpack(me) ? OnFootState::F_JETPACK : 0) |
                (me->Health() <= 0.0f ? OnFootState::F_DEAD : 0) |
-               (me->InVehicle() && me->Vehicle() && me->Vehicle()->IsTrain() ? OnFootState::F_IN_TRAIN : 0);
+               (me->InVehicle() && me->Vehicle() && me->Vehicle()->IsTrain() ? OnFootState::F_IN_TRAIN : 0) |
+               (Field<int32_t>(me, 0x740) == kCellphone ? OnFootState::F_PHONE : 0);  // CPed::m_nWeaponModelId
     st.area = me->AreaCode();
     st.moveState = (uint8_t)me->MoveState();
     st.wanted = WantedLevel(me);
@@ -1150,8 +1275,8 @@ void Players::SendLocalState() {
     c.chairY = cam::CrosshairMultY();
 
     uint64_t now = NowMs();
-    bool padChanged = !(st.pad == m_lastSentPad);
-    if (!padChanged && now - m_lastSend < 33) return;  // ~30 Hz, immediately on input changes
+    bool padChanged = st.pad.buttons != m_lastSentPad.buttons;  // a stick alone waits for the 30 Hz below (see SendVehicleState)
+    if (!padChanged && now - m_lastSend < 33) return;  // ~30 Hz, immediately on a button
     m_lastSend = now;
     m_lastSentPad = st.pad;
     Writer wr(proto::G_PLAYER_ONFOOT);
@@ -1207,6 +1332,7 @@ void Players::FollowHost() {
     float h = me->CurrentRotation();
     CVector p = mpos + CVector{std::cos(h) * 1.3f, std::sin(h) * 1.3f, -0.5f};  // at the partner's right hand
     int car = -1;
+    if (!HasRoom(VehiclePool(), kKeepVehicles, "vehicle")) return;
     Cmd(0x00A5).I(model).F(p.x).F(p.y).F(p.z).Out(&car).Run();  // CREATE_CAR
     if (car < 0) return;
     Cmd(0x0175).I(car).F(h * 57.29578f).Run();  // SET_CAR_HEADING

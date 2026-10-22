@@ -247,6 +247,8 @@ void HandleDamage(uint8_t from, Reader& r) {
     int piece = r.U8(), dir = r.U8();
     Vec3 p = r.Vec();
     if (!r.Ok() || owner != Net().MyId() || !core::IsPlayerReady() || damage <= 0.0f || damage > 10000.0f) return;
+    // the weapon info (80 entries), the ped pieces (to the head, 9) and the four hit directions are read at these unchecked
+    if (weapon > 58 /* WEAPON_FLARE */ || piece > 9 || dir > 3) return;
     if (cam::WideScreenOn()) return;  // a scripted scene: the other game's hits are dropped (see the top of the file)
     const RemotePlayer* rp = Players::Instance().Get(from);
     CEntity* attacker = rp ? rp->ped : nullptr;

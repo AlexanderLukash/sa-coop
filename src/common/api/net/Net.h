@@ -27,7 +27,8 @@ inline ENetPacket* MakePacket(const void* data, size_t size, uint8_t channel) {
 
 inline void Send(ENetPeer* peer, uint8_t channel, const Writer& w) {
     if (!peer) return;
-    enet_peer_send(peer, channel, MakePacket(w.Data(), w.Size(), channel));
+    ENetPacket* p = MakePacket(w.Data(), w.Size(), channel);
+    if (p && enet_peer_send(peer, channel, p) != 0) enet_packet_destroy(p);  // a peer going away takes nothing
 }
 
 }  // namespace coop::net

@@ -38,6 +38,8 @@ struct Player {
     uint8_t status = proto::STATUS_MENU;
     uint64_t connectTime = 0;
     bool follower = false;  // joined the host after a new game's prologue, in a new game of its own: wants the first save
+    // plays a world that may not be the host's game now (the stored one, the host loaded another save): wants the next
+    bool staleWorld = false;
     // world upload in progress (host only)
     std::vector<uint8_t> upload;
     uint32_t uploadCrc = 0;
@@ -67,7 +69,7 @@ private:
     void HandleWorldEnd(Player& p);
     void SendWorld(Player& p);
     void RequestWorld(Player& p);
-    void FlushWorldRequests();
+    void FlushWorldRequests(bool fresh);  // fresh: the host's upload of now, else the stored world
     void HostStartedNewGame();
     void FollowersJoin();
     void TellToWait(Player& p);

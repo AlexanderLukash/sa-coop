@@ -166,7 +166,9 @@ NetVehicle* Vehicles::Find(CVehicle* v) {
 bool Vehicles::IsMirror(const NetVehicle& nv) const { return nv.owner != Net().MyId(); }
 
 NetVehicle* Vehicles::EnsureNetworked(CVehicle* v) {
-    if (!v || !IsVehicleValid(v)) return nullptr;
+    // a train is the Trains module's (CREATE_CAR made a train off its rails in the other game): a player getting into its
+    // cab announced it as a car
+    if (!v || !IsVehicleValid(v) || !IsSyncableVehicle(v)) return nullptr;
     if (NetVehicle* nv = Find(v)) return nv;
     if (!Net().Online()) return nullptr;
     uint16_t id;
@@ -250,7 +252,8 @@ void Vehicles::ApplyLook(NetVehicle& nv) {
         int16_t want = nv.look.upgrades[slot], have = v->Upgrades()[slot];
         if (want == have) continue;
         if (have >= 0) Cmd(0x06E8).I(h).I(have).Run();  // REMOVE_VEHICLE_MOD
-        if (want < 0) continue;
+        // a part of a mod this game lacks crashes the streamer; IsValidModForVehicle: what a mod shop here offers it
+        if (want < 0 || !IsValidModel(want) || !Call<0x49B010, bool>(want, v)) continue;
         Cmd(0x06E9).I(want).Run();                          // REQUEST_VEHICLE_MOD
         if (!Cmd(0x06EA).I(want).Run()) continue;           // HAS_VEHICLE_MOD_LOADED: try again next frame
         int dummy = 0;
@@ -258,7 +261,9 @@ void Vehicles::ApplyLook(NetVehicle& nv) {
     }
     int pj = -1;
     Cmd(0x0988).I(h).Out(&pj).Run();  // GET_CURRENT_VEHICLE_PAINTJOB
-    if (nv.look.paintjob >= 0 && pj != nv.look.paintjob) Cmd(0x06ED).I(h).I(nv.look.paintjob).Run();  // GIVE_VEHICLE_PAINTJOB
+    // CVehicle::SetRemap reads the model's four paintjobs at that index, unchecked
+    if (nv.look.paintjob >= 0 && nv.look.paintjob < 4 && pj != nv.look.paintjob)
+        Cmd(0x06ED).I(h).I(nv.look.paintjob).Run();  // GIVE_VEHICLE_PAINTJOB
     if (HasDamageManager(v)) ApplyDamage(v, nv.look.damage);
     else if (v->VehicleSubClass() == VEHICLE_TYPE_BIKE) memcpy((uint8_t*)v + kBikeTyres, nv.look.bikeTyres, 2);
     // the lock it had when it became known stayed: a mission car locked then held the partner who got in, after the
@@ -292,6 +297,9 @@ CVehicle* Vehicles::FindAdoptable(uint16_t model, const CVector& pos) {
         if (me && me->InVehicle() && me->Vehicle() == v) continue;
         // a script's car stays its own: released as an ordinary car later, its script lost it and crashed
         if (v->CreatedBy() == VEHICLE_CREATED_MISSION) continue;
+        // a parked car both games have (a car generator's): one with people in it or on the move is this game's traffic,
+        // its driver kept driving it against the copy's states
+        if (v->Driver() || v->NumPassengers() || v->MoveSpeed().Length() > 0.01f) continue;
         float d = (v->GetPosition() - pos).Length();
         if (d < bestD) {
             bestD = d;
@@ -306,6 +314,7 @@ CVehicle* Vehicles::SpawnMirror(const VehicleSpawn& sp) {
         RequestModel(sp.model, 0);  // streamed in the background, CreateMirror is retried every frame
         return nullptr;
     }
+    if (!HasRoom(VehiclePool(), kKeepVehicles, "vehicle")) return nullptr;
     int handle = -1;
     Cmd(0x00A5).I(sp.model).F(sp.pos.x).F(sp.pos.y).F(sp.pos.z).Out(&handle).Run();  // CREATE_CAR
     CVehicle* v = GetVehicle(handle);
@@ -327,7 +336,9 @@ void Vehicles::HandleCreate(uint8_t from, Reader& r) {
     if (!sp.Read(r) || from == Net().MyId()) return;
     if (!core::IsPlayerReady()) return;
     if (NetVehicle* existing = Find(sp.netId)) {
-        existing->owner = sp.owner;
+        // announced again: its owner may have changed. Not a car of ours or another model: the id came twice (a game
+        // that started over counts its ids from the start), and it handed our car to the other player.
+        if (IsMirror(*existing) && existing->model == sp.model) existing->owner = sp.owner;
         return;
     }
     if (!IsVehicleModel(sp.model)) {
@@ -376,6 +387,7 @@ void Vehicles::Forget(uint16_t netId, bool deleteVehicle) {
                 CVector p = rp.ped->GetPosition();
                 Cmd(0x0362).I(rp.pedHandle).F(p.x).F(p.y).F(p.z).Run();  // WARP_CHAR_FROM_CAR_TO_COORD
             }
+        StopEntering(nv.veh);
         Cmd(0x00A6).I(GetVehicleRef(nv.veh)).Run();  // DELETE_CAR
     }
     m_byPtr.erase(nv.veh);
@@ -395,6 +407,8 @@ void Vehicles::Protect(NetVehicle& nv) {
 // game stays a mission car: dropping it here would make the owner drop it in the middle of its mission)
 void Vehicles::Release(NetVehicle& nv) {
     CVehicle* v = nv.veh;
+    if (nv.crashProofHere && IsVehicleValid(v)) v->PhysicalFlags() &= ~CPhysical::PF_COLLISION_PROOF;
+    nv.crashProofHere = false;
     uint8_t by = nv.createdByUs ? (nv.script ? VEHICLE_CREATED_MISSION : VEHICLE_CREATED_RANDOM) : nv.origBy;
     if (IsVehicleValid(v) && by && v->CreatedBy() != by && !ScriptHolds(v)) SetVehicleCreatedBy(v, by);
     nv.origBy = 0;
@@ -438,6 +452,7 @@ void Vehicles::HandleClear(uint8_t from, Reader& r) {
             continue;
         }
         LOGI("Vehicle %04X (model %d) cleared away by the host's mission", id, nv->model);
+        StopEntering(nv->veh);
         Cmd(0x00A6).I(nv->handle).Run();  // DELETE_CAR: its removal goes out with the other vanished ones (Update)
     }
 }
@@ -555,12 +570,23 @@ void Vehicles::HandleOwner(uint8_t from, Reader& r) {
     CPlayerPed* me = FindPlayerPed(0);
     bool iDrive = me && nv->veh && me->InVehicle() && me->Vehicle() == nv->veh && nv->veh->Driver() == me;
     if (iDrive && owner != Net().MyId()) {
-        // we are driving it right now: keep ownership, tell the others again
-        Writer w(proto::G_VEH_OWNER);
-        w.U16(id);
-        w.U8(Net().MyId());
-        Net().Send(proto::CH_RELIABLE, w);
-        return;
+        if (owner > Net().MyId() || from != owner) {
+            // we are driving it right now: keep ownership, tell the others again
+            Writer w(proto::G_VEH_OWNER);
+            w.U16(id);
+            w.U8(Net().MyId());
+            Net().Send(proto::CH_RELIABLE, w);
+            return;
+        }
+        // It drives it too, in its game (both took the seat at once, or it pulled us out and our game never saw it).
+        // Each kept answering the other's claim while both drove, each showed the other standing frozen beside the car.
+        // The lower id keeps it (the host); our player gives way and sits beside it if there is room.
+        int h = GetPedRef(me);
+        CVector p = me->GetPosition();
+        Cmd(0x0362).I(h).F(p.x).F(p.y).F(p.z + 1.0f).Run();  // WARP_CHAR_FROM_CAR_TO_COORD
+        if (SeatOrAny(nv->veh, 0) == 0 && !nv->veh->Passengers()[0])
+            Cmd(0x0430).I(h).I(nv->handle).I(0).Run();  // WARP_CHAR_INTO_CAR_AS_PASSENGER
+        LOGI("Vehicle %04X: player %d drives it as well, ours gives way", id, owner);
     }
     bool wasMine = nv->owner == Net().MyId();
     nv->owner = owner;
@@ -587,15 +613,19 @@ void Vehicles::HandleScriptFree(uint8_t from, Reader& r) {
 // The parts a driver moves: nozzles, hoists and forks (m_wMiscComponentAngle), the landing gear, a turret. Nothing ticks
 // them on a vehicle without a player's status, so the owner's values stand here.
 void ApplyParts(CVehicle* v, const VehicleState& st) {
-    if (st.extras & VehicleState::X_MISC) Field<uint16_t>(v, 0x86C) = st.misc;
-    if (st.extras & VehicleState::X_GEAR) {
+    // only what this vehicle has as well (VehicleState::Capture's rules): a net id that meant another vehicle here wrote
+    // a plane's gear (CPlane::SetGearUp) or a tank's turret into a bike or a boat
+    int type = v->VehicleSubClass(), model = v->ModelIndex();
+    if ((st.extras & VehicleState::X_MISC) && (type <= VEHICLE_TYPE_PLANE || type == VEHICLE_TYPE_TRAILER))
+        Field<uint16_t>(v, 0x86C) = st.misc;
+    if ((st.extras & VehicleState::X_GEAR) && type == VEHICLE_TYPE_PLANE) {
         float& gear = Field<float>(v, 0x9CC);
         if (st.gear >= 1.0f && gear < 1.0f) CallMethod<0x6CAC20>(v);         // CPlane::SetGearUp: no wheels
         else if (st.gear == 0.0f && gear != 0.0f) CallMethod<0x6CAC70>(v);  // CPlane::SetGearDown
         gear = st.gear;
         Field<float>(v, 0x994) = std::clamp(st.gas - st.brake, -1.0f, 1.0f);  // m_fAccelerationBreakStatus: jet flames
     }
-    if (st.extras & VehicleState::X_TURRET) {
+    if ((st.extras & VehicleState::X_TURRET) && (model == 432 || model == 601 || model == 407)) {
         Field<float>(v, 0x94C) = st.turretYaw;
         Field<float>(v, 0x950) = st.turretPitch;
     }
@@ -638,15 +668,23 @@ void Vehicles::ApplyMirror(NetVehicle& nv, float dt) {
         Net().Send(proto::CH_RELIABLE, w);
     }
     if (v->CreatedBy() != VEHICLE_CREATED_MISSION) Protect(nv);  // a script let it go meanwhile (its mission ended)
-    if (v->Status() == STATUS_WRECKED) return;  // burnt out: nothing left to follow
-    if (st.flags & VehicleState::F_WRECKED) {
+    // A crash dents and burns a car in its owner's game. Here one heavy hit (a Rhino's ram counts 15 times) blew the copy
+    // up at once (CAutomobile::VehicleDamage), its people died here with it, and the wreck stayed while the car drove on.
+    if (!(v->PhysicalFlags() & CPhysical::PF_COLLISION_PROOF)) {
+        v->PhysicalFlags() |= CPhysical::PF_COLLISION_PROOF;
+        nv.crashProofHere = true;
+    }
+    // burnt out: only where it lies is followed. Each game's blast throws the wreck its own way, and the copy stayed
+    // where its own blast threw it (cars on their roofs here, on their wheels there)
+    bool wreck = v->Status() == STATUS_WRECKED;
+    if (!wreck && (st.flags & VehicleState::F_WRECKED)) {
         Cmd(0x020B).I(nv.handle).Run();  // EXPLODE_CAR: it blew up in the owner's game
         return;
     }
     // towed in its owner's game: hooked here to the copy of its tower too. A tow truck or a tractor hooks a car only by
     // its driver's pad (CAutomobile::TowTruckControl); linked, the two stop colliding and the hoist holds it up
     CVehicle* tower = nullptr;
-    if (st.extras & VehicleState::X_TOW)
+    if (!wreck && (st.extras & VehicleState::X_TOW))
         if (NetVehicle* tn = Find(st.tower); tn && tn->veh != v && IsVehicleValid(tn->veh)) tower = tn->veh;
     if (tower && !Field<CVehicle*>(v, 0x4C4) && !Field<CVehicle*>(tower, 0x4C8))  // m_pTowingVehicle, m_pVehicleBeingTowed
         if (CallVirtual<61, bool>(v, tower, false))                                 // CVehicle::SetTowLink (vtable +0xF4)
@@ -654,7 +692,7 @@ void Vehicles::ApplyMirror(NetVehicle& nv, float dt) {
     // a remote player (or nobody) drives it: no local pad input must reach this vehicle. A trailer keeps its own
     // status: an abandoned one looks for a cab to hitch (CTrailer::ScanForTowLink), whoever's game that cab is in.
     // A towed one keeps STATUS_IS_TOWED: with any other its ProcessControl breaks the link (0x6B32A7)
-    if (v->Driver() != me && v->VehicleSubClass() != VEHICLE_TYPE_TRAILER && !tower) v->SetStatus(STATUS_PHYSICS);
+    if (!wreck && v->Driver() != me && v->VehicleSubClass() != VEHICLE_TYPE_TRAILER && !tower) v->SetStatus(STATUS_PHYSICS);
 
     float age = std::min(0.3f, (float)(NowMs() - nv.recvMs) / 1000.0f);
     CVector target = st.pos + st.vel * age;
@@ -688,6 +726,7 @@ void Vehicles::ApplyMirror(NetVehicle& nv, float dt) {
             CallMethod<0x446F90>(v);
         }
     }
+    if (wreck) return;
     if (nv.hasLook && NowMs() - nv.lookCheckMs >= 500) {
         nv.lookCheckMs = NowMs();
         ApplyLook(nv);
@@ -844,6 +883,21 @@ void Vehicles::OnPostProcess() {
             nv.lastChangeMs = now;
             continue;
         }
+        // A car of the host's mission (its id has the host's prefix) the partner drove was the partner's game's from then
+        // on, and the host's mission moving, freezing, mending or deleting it only touched its copy there, which the
+        // owner's states undid. Left standing empty for 2 s, it goes back to the host.
+        if (nv.script && !Net().IsHost() && (nv.netId >> 12) == Net().HostId() + 1 && !nv.veh->Driver() &&
+            !HasPlayerInside(nv.veh) && now - nv.lastChangeMs > 2000) {
+            nv.owner = Net().HostId();
+            nv.hasState = false;
+            Protect(nv);
+            Writer w(proto::G_VEH_OWNER);
+            w.U16(nv.netId);
+            w.U8(nv.owner);
+            Net().Send(proto::CH_RELIABLE, w);
+            LOGI("Vehicle %04X of the host's mission goes back to the host", nv.netId);
+            continue;
+        }
         float speed = nv.veh->MoveSpeed().Length() * 50.0f;
         if (speed > 0.1f) nv.lastChangeMs = now;
         bool active = now - nv.lastChangeMs < 3000;
@@ -872,14 +926,21 @@ void Vehicles::OnSessionEnd() {
 void Vehicles::OnPeerLeave(uint8_t id) {
     for (auto it = m_pending.begin(); it != m_pending.end();)
         it = it->second.owner == id ? m_pending.erase(it) : std::next(it);
-    // the vehicles of the leaving player stay in the world and become ours (its scripts are gone with it)
+    // The vehicles of the leaving player stay in the world and become ours (its scripts are gone with it). They are
+    // networked again under our own ids: its ids, kept, came again from its game when it rejoined (it counts from 1).
+    std::vector<uint16_t> ids;
     for (auto& [vid, nv] : m_byId)
         if (nv.owner == id) {
             nv.owner = Net().MyId();
-            nv.hasState = false;
             nv.script = false;
             Release(nv);
+            ids.push_back(vid);
         }
+    for (uint16_t vid : ids) Forget(vid, false);
+}
+
+void Vehicles::OnSessionStart() {
+    m_nextId = (uint16_t)NowMs();  // another start than the last process's: the other game may still know its ids
 }
 
 void Vehicles::OnGameStarted() {

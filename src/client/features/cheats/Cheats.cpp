@@ -6,6 +6,7 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "entities/session/Flow.h"
 #include "common/lib/util/Util.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
@@ -59,7 +60,7 @@ using IncrementStatFn = void(__cdecl*)(uint16_t, float);
 IncrementStatFn g_origIncrementStat = nullptr;
 void __cdecl HookCheatCounted(uint16_t stat, float value) {
     g_origIncrementStat(stat, value);
-    if (!Net().Online()) return;
+    if (!flow::InSharedWorld()) return;
     int id = Matched((const char*)kCheatString);
     if (id < 0 || !WorldCheat(id)) return;
     Writer w(proto::G_CHEAT);
@@ -78,7 +79,7 @@ public:
         Net().SetHandler(proto::G_CHEAT, [](uint8_t from, Reader& r) {
             int id = r.U8();
             bool on = r.U8() != 0;
-            if (!r.Ok() || !WorldCheat(id) || !core::IsPlayerReady()) return;
+            if (!r.Ok() || !WorldCheat(id) || !core::IsPlayerReady() || !flow::InSharedWorld()) return;
             if (OneShot(id) || Active(id) != on) Call<0x438370>(id);  // CCheat::ApplyCheat
             ui::TheChat().AddSystem(
                 Format(TR("Чит-код от %s действует и у вас.", "The cheat %s entered works for you too."), Net().PeerName(from).c_str()));

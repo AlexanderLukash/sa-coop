@@ -13,6 +13,7 @@
 #include "common/lib/util/Util.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
+#include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
 #include "shared/ui/input/Input.h"
@@ -478,14 +479,22 @@ namespace {
 // Stencil shadows (high shadow quality) of map objects: CStencilShadows::RenderForObject checks only the triangle count
 // of the object's shadow mesh, and CCollisionData::RemoveCollisionVolumes (its col file streamed out) frees the mesh
 // but keeps the counts. An object still on the shadow list then crashed the game at 0x40F64C, right after rocket
-// blasts in two players' reports. A shadow without its mesh is skipped.
+// blasts in two players' reports. The shadow keeps the triangle count of the mesh it was made for (+4), and later the
+// mesh pointers were not even null but small offsets (0x3C0): the col data had been loaded anew. A shadow is drawn
+// only from the mesh it was made for, inside its col data's own block (CFileLoader::LoadCollisionModelVer3 allocates
+// one for the data and its arrays).
 using StencilForObjectFn = bool(__cdecl*)(void*, void*);
 StencilForObjectFn g_origStencilForObject = nullptr;
 bool __cdecl HookStencilForObject(void* shadow, void* arg) {
     auto* owner = *(game::CEntity**)shadow;                                  // CStencilShadowObject::m_pOwner
     void* col = owner ? game::CallMethod<0x535300, void*>(owner) : nullptr;  // CEntity::GetColModel
-    void* data = col ? game::Field<void*>(col, 0x2C) : nullptr;              // CColModel::m_pColData
-    if (data && (!game::Field<void*>(data, 0x28) || !game::Field<void*>(data, 0x2C))) return false;  // shadow mesh
+    auto* data = col ? game::Field<uint8_t*>(col, 0x2C) : nullptr;           // CColModel::m_pColData
+    if (data) {
+        auto* verts = game::Field<uint8_t*>(data, 0x28);  // CCollisionData::m_pShadowVertices
+        auto* tris = game::Field<uint8_t*>(data, 0x2C);   // m_pShadowTriangles
+        bool inside = verts > data && tris > data && verts - data < 0x100000 && tris - data < 0x100000;
+        if (!inside || game::Field<uint32_t>(data, 0x20) != game::Field<uint16_t>(shadow, 4)) return false;  // m_nNumShadowTriangles
+    }
     return g_origStencilForObject(shadow, arg);
 }
 
@@ -518,6 +527,19 @@ game::CVehicle* __cdecl HookCreateCarForScript(int model, game::CVector pos, uin
         game::LoadAllRequestedModels(false);
     }
     return g_origCreateCarForScript(model, pos, missionCleanup);
+}
+
+// The commands that make and move script entities (CREATE_CAR, CREATE_CHAR, CREATE_OBJECT, SET_CHAR_COORDINATES,
+// WARP_CHAR_FROM_CAR_TO_COORD) clear the spot of this game's random people and cars that collide with the entity, with
+// whoever sits in them. Ours make and move the copies of another game's people and things: a copy deleted this game's
+// taxi with its driver when the other player, riding in it here, snapped to its place or came back, and a prop in a
+// hand cleared the people next to it. Those clear nothing. A copy of a car still clears its spot (two cars in one
+// place threw each other away), and this game's own player does as the game's scripts do.
+using ClearSpaceFn = void(__cdecl*)(const game::CVector&, game::CEntity*);
+ClearSpaceFn g_origClearSpace = nullptr;
+void __cdecl HookClearSpace(const game::CVector& pos, game::CEntity* entity) {
+    if (game::script::Running() && entity && !entity->IsVehicle() && entity != (game::CEntity*)game::FindPlayerPed(0)) return;
+    g_origClearSpace(pos, entity);
 }
 
 }  // namespace
@@ -587,6 +609,7 @@ void Apply() {
     mem::HookFn(0x746190, &HookSelectDevice, &g_origSelectDevice, "psSelectDevice");
     mem::HookFn(0x710310, &HookStencilForObject, &g_origStencilForObject, "CStencilShadows::RenderForObject");
     mem::HookFn(0x431F80, &HookCreateCarForScript, &g_origCreateCarForScript, "CCarCtrl::CreateCarForScript");
+    mem::HookFn(0x486B00, &HookClearSpace, &g_origClearSpace, "CTheScripts::ClearSpaceForMissionEntity");
     if (!memcmp((void*)0x4F145C, "\x8B\xC8\x8B\x44\x24\x1C\x33\xD2\xF7\xF1", 10)) {  // CAEStreamThread::Service
         mem::Jump(0x4F145C, (void*)&StreamCursorStub);
         mem::Nop(0x4F1461, 5);

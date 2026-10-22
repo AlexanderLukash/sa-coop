@@ -68,12 +68,13 @@ bool ReadFileBytes(const std::wstring& path, std::vector<uint8_t>& out) {
     return ok;
 }
 
-bool WriteFileBytes(const std::wstring& path, const void* data, size_t size) {
+bool WriteFileBytes(const std::wstring& path, const void* data, size_t size, bool durable) {
     std::wstring tmp = path + L".tmp";
     HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0;
     bool ok = size == 0 || (WriteFile(h, data, (DWORD)size, &written, nullptr) && written == size);
+    ok = ok && (!durable || FlushFileBuffers(h));  // a power cut left an empty profile
     CloseHandle(h);
     if (!ok) {
         DeleteFileW(tmp.c_str());
@@ -152,6 +153,14 @@ std::string Format(const char* fmt, ...) {
     vsnprintf(out.data(), n + 1, fmt, ap);
     va_end(ap);
     return out;
+}
+
+bool ReservedFileName(std::string_view name) {
+    std::string n = ToLower(std::string(name.substr(0, name.find('.'))));
+    static const char* const kDevices[] = {"con", "prn", "aux", "nul"};
+    for (const char* d : kDevices)
+        if (n == d) return true;
+    return n.size() == 4 && (n.compare(0, 3, "com") == 0 || n.compare(0, 3, "lpt") == 0) && n[3] >= '1' && n[3] <= '9';
 }
 
 std::string SanitizeNickname(std::string_view nick) {

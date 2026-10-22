@@ -87,6 +87,8 @@ Cmd& Cmd::End() {
     return *this;
 }
 
+bool Running() { return g_depth > 0; }
+
 bool Cmd::Run() {
     if (m_overflow) {
         LOGE("script::Cmd overflow (opcode %04X)", *(uint16_t*)m_code);

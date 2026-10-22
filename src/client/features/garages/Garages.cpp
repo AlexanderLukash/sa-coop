@@ -8,6 +8,7 @@
 // shut on the cars in it.
 // The doors of the shops (Pay 'n' Spray, bomb shops, mod shops) move in both games as in the game of the player who
 // uses the garage (see HookGarageUpdate).
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -92,7 +93,8 @@ void __fastcall HookStoreBeforeSave(void* garage, void* edx, void* stored, int m
 }
 
 using RestoreFn = bool(__fastcall*)(void*, void*, void*);
-RestoreFn g_origRestore = nullptr;
+// the game's own until redirected: a site another mod changed is left alone, and this is still called
+RestoreFn g_origRestore = (RestoreFn)0x448550;
 bool __fastcall HookRestore(void* garage, void* edx, void* stored) {  // CGarage::RestoreCarsForThisHideOut
     if (!Partner()) return g_origRestore(garage, edx, stored);
     if (core::IsPlayerReady()) {
@@ -109,6 +111,18 @@ CloseFn g_origCloseBeforeSave = nullptr;
 void __cdecl HookCloseBeforeSave() {  // CGarages::Save
     if (core::SavingSnapshot()) return;  // the partners' copy of the world: an open garage stays open with its cars
     g_origCloseBeforeSave();
+}
+
+// What CStoredCar::RestoreCar (0x447E40) can make here: it asks the streamer for the model and every part unchecked (a
+// model of a mod this game lacks crashes it), and CVehicle::SetRemap reads the model's four paintjobs at the index.
+bool Restorable(const uint8_t* car) {
+    if (!IsVehicleModel(Ref<uint16_t>((uintptr_t)car + 0x12))) return false;  // m_wModelIndex
+    for (int i = 0; i < 15; ++i) {  // m_awCarMods, -1 for none
+        int part = Ref<int16_t>((uintptr_t)car + 0x14 + (uintptr_t)i * 2);
+        if (part != -1 && !IsValidModel(part)) return false;
+    }
+    int8_t paintjob = Ref<int8_t>((uintptr_t)car + 0x3A);
+    return paintjob >= -1 && paintjob < 4;
 }
 
 void Handle(uint8_t from, Reader& r) {
@@ -146,6 +160,7 @@ void Handle(uint8_t from, Reader& r) {
         for (int i = 0; i < n && i < 4; ++i) {
             NetVehicle* nv = Vehicles::Instance().Find(r.U16());
             if (!r.Ok() || !nv || Vehicles::Instance().IsMirror(*nv) || !nv->veh || !IsVehicleValid(nv->veh) || Occupied(nv->veh)) continue;
+            StopEntering(nv->veh);
             Cmd(0x00A6).I(GetVehicleRef(nv->veh)).Run();  // DELETE_CAR: the vehicle sync tells the host's game it is gone
             ++gone;
         }
@@ -173,17 +188,25 @@ void Handle(uint8_t from, Reader& r) {
             if (c.size() == kStoredCarSize) memcpy(cars + k * kStoredCarSize, c.data(), kStoredCarSize);
         }
         if (!r.Ok()) return;
-        // CStoredCar::RestoreCar makes nothing of a model not in memory yet (it only asks for it)
-        for (int k = 0; k < 4; ++k)
-            if (int model = Ref<uint16_t>((uintptr_t)cars + (uintptr_t)k * kStoredCarSize + 0x12)) LoadModelNow(model);
+        uint8_t kept[4 * kStoredCarSize] = {};  // cars this game cannot make: they stay the host's as they are
+        for (int k = 0; k < 4; ++k) {
+            uint8_t* c = cars + k * kStoredCarSize;
+            int model = Ref<uint16_t>((uintptr_t)c + 0x12);
+            if (!model) continue;
+            // CStoredCar::RestoreCar makes nothing of a model not in memory yet (it only asks for it)
+            if (Restorable(c)) LoadModelNow(model);
+            else std::swap_ranges(c, c + kStoredCarSize, kept + k * kStoredCarSize);
+        }
         g_origRestore(g, nullptr, cars);  // CGarage::RestoreCarsForThisHideOut on the host's records: the cars are ours
         // what could not come out goes back into the host's store
         Writer w(proto::G_GARAGE);
         w.U8(GARAGE_BACK);
         w.U8(index);
         std::vector<uint8_t*> left;
-        for (int k = 0; k < 4; ++k)
+        for (int k = 0; k < 4; ++k) {
             if (Ref<uint16_t>((uintptr_t)cars + (uintptr_t)k * kStoredCarSize + 0x12)) left.push_back(cars + k * kStoredCarSize);
+            if (Ref<uint16_t>((uintptr_t)kept + (uintptr_t)k * kStoredCarSize + 0x12)) left.push_back(kept + k * kStoredCarSize);
+        }
         if (!left.empty()) {
             w.U8((uint8_t)left.size());
             for (uint8_t* c : left) w.Bytes(c, kStoredCarSize);

@@ -16,6 +16,7 @@
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
+#include "entities/session/Flow.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
@@ -52,6 +53,7 @@ std::vector<std::pair<uint8_t, int>> g_pending;  // (player, property) bought by
 std::set<int> g_mine;                             // partner: bought here this session
 bool g_buying = false;                            // a BUYPRO1 runs
 bool g_ours = false;                              // ... launched here for the host's partner
+int g_buyIndex = -1;                              // ... for this property ($6940 when it began)
 
 void ApplyQuietly(int k) {
     Bought(k) = 1;
@@ -95,7 +97,7 @@ public:
     void OnInstallHooks() override {
         Net().SetHandler(proto::G_PROPERTY, [](uint8_t from, Reader& r) {
             int k = r.U8();
-            if (r.Ok() && k < kProperties) g_pending.emplace_back(from, k);
+            if (r.Ok() && k < kProperties && flow::InSharedWorld()) g_pending.emplace_back(from, k);
         });
     }
     void OnSessionEnd() override {
@@ -118,9 +120,13 @@ public:
         if (!Net().Online() || !core::IsPlayerReady()) return;
         // a purchase made here
         bool buying = FindScript("buypro1") != nullptr;
+        if (buying && !g_buying) g_buyIndex = Global(6940);
+        // a story purchase belongs to the story: the partners get the host's world after it, as after a mission (it was
+        // no mission for them, and they could buy the property again)
+        if (!buying && g_buying && Net().IsHost() && g_buyIndex >= 0 && g_buyIndex < 3) flow::WorldProgressed();
         if (buying && !g_buying && !g_ours) {
             int k = Global(6940);
-            if (k >= 0 && k < kProperties) {
+            if (k >= 0 && k < kProperties && flow::InSharedWorld()) {
                 Send(k);
                 if (!Net().IsHost()) g_mine.insert(k);
                 LOGI("Property %d bought here", k);

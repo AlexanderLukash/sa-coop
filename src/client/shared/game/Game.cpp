@@ -1,5 +1,7 @@
 #include "shared/game/Game.h"
 
+#include "common/lib/log/Log.h"
+
 namespace game {
 
 CPoolHeader* PedPool() { return Ref<CPoolHeader*>(addr::PedPool); }
@@ -29,10 +31,24 @@ bool IsPedValid(CPed* ped) { return IsInPool(PedPool(), ped, kPedPoolElemSize); 
 bool IsVehicleValid(CVehicle* v) { return IsInPool(VehiclePool(), v, kVehiclePoolElemSize); }
 bool IsObjectValid(CObject* o) { return IsInPool(ObjectPool(), o, kObjectPoolElemSize); }
 
+bool HasRoom(CPoolHeader* pool, int keep, const char* what) {
+    if (!pool) return false;
+    int free = 0;
+    for (int i = 0; i < pool->size; ++i) free += pool->byteMap[i] < 0;
+    if (free > keep) return true;
+    static uint32_t warnedMs = 0;
+    if (TimeMs() - warnedMs > 10000) {
+        warnedMs = TimeMs();
+        LOGW("The %s pool is nearly full (%d of %d free): copies wait", what, free, pool->size);
+    }
+    return false;
+}
+
 void RequestModel(int model, int flags) { Call<0x4087E0>(model, flags); }
 void LoadAllRequestedModels(bool onlyPriority) { Call<0x40EA10>(onlyPriority); }
 bool IsModelLoaded(int model) {
-    return model >= 0 && Ref<uint8_t>(addr::StreamingInfo + (uintptr_t)model * 0x14 + 0x10) == 1;
+    // CStreaming::ms_aInfoForModel: models, then txds, cols, ipls, dats, ifps, rrrs and scms (26316 in all)
+    return model >= 0 && model < 26316 && Ref<uint8_t>(addr::StreamingInfo + (uintptr_t)model * 0x14 + 0x10) == 1;
 }
 bool LoadModelNow(int model) {
     if (!IsValidModel(model)) return false;
@@ -57,6 +73,7 @@ static int ModelType(int model) {
 bool IsValidModel(int model) { return ModelInfo(model) != nullptr; }
 bool IsVehicleModel(int model) { return ModelType(model) == 6; }
 bool IsPedModel(int model) { return ModelType(model) == 7; }
+bool IsObjectModel(int model) { return IsValidModel(model) && !IsVehicleModel(model) && !IsPedModel(model); }
 
 void WorldAdd(CEntity* e) { Call<0x563220>(e); }
 

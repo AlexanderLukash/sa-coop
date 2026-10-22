@@ -473,6 +473,11 @@ CObject* GetObject(int handle);
 bool IsPedValid(CPed* ped);
 bool IsVehicleValid(CVehicle* v);
 bool IsObjectValid(CObject* o);
+// The slots the copies leave to the game. A pool's new gives null when it is full and the script commands that create
+// people, cars and objects crash on it (CREATE_CHAR at 0x467654), a mission's too; the game itself frees its own random
+// people and cars below 8 free slots, never the copies (they are script entities).
+constexpr int kKeepPeds = 12, kKeepVehicles = 10, kKeepObjects = 20;
+bool HasRoom(CPoolHeader* pool, int keep, const char* what);  // more than keep slots free, or a warning now and then
 
 void RequestModel(int model, int flags = 2 /* STREAMING_GAME_REQUIRED: MarkModelNotNeeded clears it */);
 void LoadAllRequestedModels(bool onlyPriority = false);
@@ -482,6 +487,7 @@ void MarkModelNotNeeded(int model);
 bool IsValidModel(int model);
 bool IsVehicleModel(int model);
 bool IsPedModel(int model);
+bool IsObjectModel(int model);  // known here and neither a ped nor a vehicle: what CREATE_OBJECT and pickups can use
 
 void WorldAdd(CEntity* e);
 void WorldRemove(CEntity* e);

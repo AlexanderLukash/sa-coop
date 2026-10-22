@@ -91,6 +91,13 @@ public:
     int HandleOf(uint16_t netId);            // script handle of the live ped (ours or a mirror), -1 if none
     // special character slots (models 290-299) are filled by name at run time
     void RememberSpecialModel(int model, const char* name);
+    std::string SpecialName(int model) const;  // what the slot was filled with here, "" if nothing
+    // the model here of the special character `name`: its slot, or a free one asked for it, from the top (scripts and
+    // cutscenes fill them from 290); -1 while it loads or with no slot free
+    int SpecialModelFor(const std::string& name);
+    // a script here fills that slot with another character: the copies wearing it are made again elsewhere (the game
+    // drops the model from under script people, and a copy is one)
+    void RespawnCopiesOf(int model);
     // a partner (re)started its game: announce our peds again
     void Reannounce();
     // our ped goes to player `to` (it takes the mirror over as its own) and ours is deleted
@@ -111,6 +118,8 @@ private:
     void ApplyMirror(NetPed& np);
     game::CPed* SpawnMirror(NetPed& np);
     void Forget(uint16_t netId, bool deletePed);
+    void Adopt(NetPed& np);
+    void DropMirrorsOf(uint8_t id, bool keep);  // keep: this game's own people now (it left), else deleted (it restarted)
     PedSyncState Capture(NetPed& np);
 
     std::map<uint16_t, NetPed> m_byId;
@@ -122,5 +131,8 @@ private:
     bool m_wasReady = false;
     int m_mirrorShots = 0;  // diagnostics: shots fired by mirrors since the last stats line
 };
+
+// the interior a ped is in, by its area or, for the interiors' own people (they keep area 0), by a player near it
+int8_t AreaOf(game::CPed* ped);
 
 }  // namespace coop

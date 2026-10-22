@@ -72,7 +72,7 @@ struct OnFootState {
     PadState pad;
     CameraState cam;
 
-    enum : uint8_t { F_DUCKING = 1, F_IN_AIR = 2, F_DEAD = 4, F_SWIMMING = 8, F_JETPACK = 16, F_IN_TRAIN = 32 };
+    enum : uint8_t { F_DUCKING = 1, F_IN_AIR = 2, F_DEAD = 4, F_SWIMMING = 8, F_JETPACK = 16, F_IN_TRAIN = 32, F_PHONE = 64 };
 
     void Write(Writer& w) const;
     bool Read(Reader& r);

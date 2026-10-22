@@ -46,6 +46,7 @@ bool g_keepSent = false;            // host: the stored world goes out meanwhile
 bool g_prologue = false;            // host: a new game's prologue runs (it cannot be saved)
 bool g_afterPrologue = false;       // host: and is over, no save of this game has gone out yet
 bool g_prologueWait = false;        // partner: the host plays a new game's prologue
+bool g_worldNone = false;           // partner: the server has no world for us yet (the host is still in the menu)
 uint64_t g_gameStartedAt = 0, g_snapshotTriedAt = 0;
 bool g_follower = false;            // partner: in a new game of its own next to the host, until its first save
 bool g_progressUpload = false;      // host: the next snapshot goes to the partners in the game as well
@@ -179,7 +180,10 @@ void OnOnline() {
             else g_worldUploadPending = true;  // give the server a fresh world
         }
     } else {
-        g_follower = g_prologueWait = false;  // a new session: the server says again whether the host is in a prologue
+        g_follower = g_prologueWait = g_worldNone = false;  // a new session: the server says again whether the host is in a prologue
+        // what was waiting from a session that dropped is older than the world asked for now (it was loaded over it)
+        g_pendingWorld.clear();
+        g_hasSpot = false;
         ui::TheChat().AddSystem(TR("Запрашиваем мир у хоста...", "Asking the host for the world..."));
         Writer w(C_WORLD_REQUEST);
         net.Send(CH_BULK, w);
@@ -329,9 +333,10 @@ void Join(const std::string& hostArg, uint16_t port, const std::string& password
 }
 
 void Leave() {
+    SaveProfileNow();  // saved every 30 s otherwise: up to that much of the partner's progress was lost on leaving
     Net().Disconnect();
     StopServerProcess();
-    g_isHosting = g_follower = g_prologueWait = g_progressUpload = g_hasSpot = false;
+    g_isHosting = g_follower = g_prologueWait = g_worldNone = g_progressUpload = g_hasSpot = false;
     g_pendingWorld.clear();
     SetPhase(Phase::Idle);
     ui::TheChat().AddSystem(TR("Вы вышли из совместной игры.", "You left the co-op game."));
@@ -422,7 +427,7 @@ void Update() {
             }
             break;
         case Phase::WaitingWorld:
-            if (NowMs() - g_phaseTime > 120000 && net.WorldProgress() < 0 && !g_prologueWait)
+            if (NowMs() - g_phaseTime > 120000 && net.WorldProgress() < 0 && !g_prologueWait && !g_worldNone)
                 Fail(TR("Хост так и не прислал мир.", "The host never sent the world."));
             break;
         case Phase::LoadingWorld:
@@ -481,6 +486,14 @@ void RequestFreshWorld() {
     g_keepSent = false;  // a new request gets its own answer
 }
 
+// The server keeps us waiting for the host's game (it gives no stored world while the host is in the menu): no time
+// limit then, as in the prologue. The partner gave up after 2 minutes, "the host never sent the world".
+void OnWorldNone() {
+    if (Net().IsHost()) return;
+    g_worldNone = true;
+    g_phaseTime = NowMs();
+}
+
 void OnHostInPrologue() {
     if (Net().IsHost() || g_prologueWait) return;
     g_prologueWait = true;
@@ -504,6 +517,8 @@ void OnNewGameFromHost() {
 bool IsFollower() { return g_follower && Net().Online() && !Net().IsHost(); }
 
 bool InHostWorld() { return Net().Online() && g_phase == Phase::Playing && !g_prologueWait; }
+
+bool InSharedWorld() { return Net().Online() && (Net().IsHost() || InHostWorld()); }
 
 // The story moved on in the host's game (a mission passed, the call that unlocks something after it): a new
 // snapshot goes to the partners already playing, who load it, staying where they are.
@@ -591,6 +606,7 @@ void LoadHostWorld(const std::vector<uint8_t>& data) {
 
 void OnWorldReceived(const std::vector<uint8_t>& data) {
     if (Net().IsHost()) return;
+    g_worldNone = false;
     if (g_phase == Phase::Playing && core::IsPlayerReady() && !g_follower) {  // the host's progress: at a safe moment
         g_pendingWorld = data;
         LOGI("The host's world after its progress came: loaded at a safe moment");

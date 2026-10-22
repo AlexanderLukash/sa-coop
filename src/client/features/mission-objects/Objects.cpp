@@ -132,7 +132,9 @@ void HostScan() {
             Quat rot = RotationOf(no.obj);
             float turn = std::fabs(rot.x - no.rot.x) + std::fabs(rot.y - no.rot.y) + std::fabs(rot.z - no.rot.z) +
                          std::fabs(rot.w - no.rot.w);
-            if (((pos - no.pos).Length() > 0.02f || turn > 0.01f) && NowMs() - no.sentMs >= 100) {
+            // and again every 2 s at rest: the state channel can lose the last one, and a pushed box stood half-way there
+            bool moved = (pos - no.pos).Length() > 0.02f || turn > 0.01f;
+            if ((moved && NowMs() - no.sentMs >= 100) || NowMs() - no.sentMs >= 2000) {
                 no.pos = pos;
                 no.rot = rot;
                 no.sentMs = NowMs();
@@ -190,13 +192,17 @@ void CreatePending() {
             ++it;
             continue;
         }
+        if (!HasRoom(ObjectPool(), kKeepObjects, "object")) break;
         it = g_pending.erase(it);
         int h = -1;
         CObject* o = FindTwin(no);
         no.adopted = o != nullptr;
         if (o) h = GetObjectRef(o);
         else Cmd(0x029B).I(no.model).F(no.pos.x).F(no.pos.y).F(no.pos.z).Out(&h).Run();  // CREATE_OBJECT_NO_OFFSET
-        if (!o) o = h >= 0 ? GetObject(h) : nullptr;
+        if (!o) {
+            o = h >= 0 ? GetObject(h) : nullptr;
+            if (o) Field<uint8_t>(o, 0x13C) = 6;  // OBJECT_MISSION2: kept out of saves (see Props)
+        }
         if (!o) continue;
         Cmd(0x0550).I(h).I(1).Run();  // FREEZE_OBJECT_POSITION
         o->AreaCode() = no.area;
@@ -232,7 +238,11 @@ void __fastcall HookObjectDamage(CObject* o, void* edx, float damage, CVector* o
     // A map object (a lamp post, a sign) breaks in the game whose car or person really hit it, and WorldObjects sends
     // that over. This game's copy of the other game's car runs a little off the real one's path: it broke posts
     // the real one went past, and the other player saw them fall by themselves.
-    if (!g_applying && damager && Net().Online() && Field<uint8_t>(o, 0x13C) == 1 && OtherGames(damager)) return;
+    // The host's mission objects the same: the other player's game sends its hits (G_OBJ_DAMAGE), and the replayed shots
+    // of its copy here counted them twice.
+    if (!g_applying && damager && Net().Online() && (Field<uint8_t>(o, 0x13C) == 1 || FindByObject(g_owned, o)) &&
+        OtherGames(damager))
+        return;
     if (!g_applying && Net().Online() && !g_mirrors.empty()) {
         if (NetObject* no = FindByObject(g_mirrors, o)) {
             CPlayerPed* me = FindPlayerPed(0);
@@ -266,6 +276,10 @@ public:
             no.broken = r.U8() != 0;
             // not in the game yet (a partner waits in the menu): the host announces them again once it is (resync)
             if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady()) return;
+            if (!IsObjectModel(no.model)) {  // a model of a mod this game lacks: the streamer crashes on it
+                LOGW("Mission object %04X has an unknown model %d", no.netId, no.model);
+                return;
+            }
             if (auto it = g_mirrors.find(no.netId); it != g_mirrors.end()) {  // announced again: a fresh copy
                 DeleteCopy(it->second);
                 g_mirrors.erase(it);
@@ -324,7 +338,10 @@ public:
         if (id == Net().HostId() || Net().IsHost()) ClearCopies();
     }
     void OnPeerResync(uint8_t id) override {
-        if (!Net().IsHost()) return;
+        if (!Net().IsHost()) {  // the host's game started over: the objects of its old world are gone
+            if (id == Net().HostId()) ClearCopies();
+            return;
+        }
         for (auto& [netId, no] : g_owned)
             if (Alive(no)) SendCreate(no);
     }

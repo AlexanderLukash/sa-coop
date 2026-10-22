@@ -27,7 +27,10 @@ enum : uint8_t { TRAIN_STATE = 1, TRAIN_GONE = 2 };
 constexpr uintptr_t kDisableRandomTrains = 0xC38010;  // CTrain::bDisableRandomTrains
 constexpr uint16_t kFrontCarriage = 0x8, kClockwise = 0x40;  // CTrain::m_nTrainFlags (+0x5B8)
 constexpr int kTrainModels[] = {449, 537, 538, 569, 570, 590};  // tram, freight, streak and their carriages
-constexpr float kOwnRandomFrom = 600.0f;  // the partner's game makes random trains this far from the host
+// The partner's game makes random trains this far from the host. The host's game removes its random trains 220 m from
+// its camera (CTrain::DoTrainGenerationAndRemoval, 0x863994): the partner 220 to 600 m away saw none.
+constexpr float kOwnRandomFrom = 220.0f;
+constexpr float kSendWithin = 300.0f;  // a train is sent this near another player (a copy goes 3 s after the last state)
 
 float& Speed(CVehicle* t) { return Field<float>(t, 0x5A4); }         // CTrain::m_fTrainSpeed
 float& RailDistance(CVehicle* t) { return Field<float>(t, 0x5A8); }  // CTrain::m_fCurrentRailDistance
@@ -80,6 +83,10 @@ void SendOurs() {
         }
         if (id == g_ids.end()) id = g_ids.emplace(t, g_nextId++).first;
         CVector p = t->GetPosition();
+        if (RemoteDistance(p, 0) > kSendWithin) {
+            ++it;
+            continue;
+        }
         Writer w(proto::G_TRAIN);
         w.U8(TRAIN_STATE);
         w.U16(id->second);
@@ -102,6 +109,10 @@ void RemoveCopy(const Copy& c) {
         if (CPed* d = t->Driver()) Cmd(0x0362).I(GetPedRef(d)).F(p.x).F(p.y).F(p.z + 3.0f).Run();  // WARP_CHAR_FROM_CAR_TO_COORD
         for (int s = 0; s < 8; ++s)
             if (CPed* q = t->Passengers()[s]) Cmd(0x0362).I(GetPedRef(q)).F(p.x).F(p.y).F(p.z + 3.0f).Run();
+        // CTrain::RemoveOneMissionTrain deletes the carriages without CWorld::RemoveReferencesToDeletedObject: a player
+        // standing on the copy's roof (a mission's train, deleted and made again by its script) kept standing on freed
+        // memory
+        Call<0x565510>(t);
     }
     Call<0x6F5DC0>(c.engine);  // CTrain::RemoveOneMissionTrain
 }
@@ -128,6 +139,8 @@ void HandleTrain(uint8_t from, Reader& r) {
     float rail = r.F32(), speed = r.F32();
     Vec3 p = r.Vec();
     if (!r.Ok() || kind > 15 || track < 0 || track > 3) return;  // CTrain's kinds and tracks
+    // CTrain::ProcessControl brings the distance back onto the track a length at a time: NaN or a huge one froze it
+    if (!std::isfinite(rail) || !std::isfinite(speed) || std::fabs(rail) > 1e6f || std::fabs(speed) > 50.0f) return;
     if (it != g_copies.end() && (it->second.kind != kind || !IsEngine(it->second.engine))) {
         RemoveCopy(it->second);
         g_copies.erase(it);

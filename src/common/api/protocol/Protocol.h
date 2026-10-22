@@ -14,6 +14,9 @@
 namespace coop::proto {
 
 constexpr int kMaxPlayers = 4;  // hard protocol limit (the game client supports 2 at the moment)
+// what the game client supports: the other player's character takes the game's second player slot (CWorld::Players[1]),
+// and a third player's could not be made (fires, props and trains are keyed by the sender's own ids too)
+constexpr int kGamePlayers = 2;
 constexpr uint8_t kServerId = 255;
 constexpr size_t kMaxChatLen = 160;
 constexpr size_t kWorldChunk = 16 * 1024;
@@ -67,7 +70,7 @@ enum MsgId : uint8_t {
     G_PLAYER_AIM = 67,        // unreliable
     G_PLAYER_SPAWN = 68,      // reliable: (re)spawn, model, interior
     G_PLAYER_DEATH = 69,
-    G_PLAYER_LOOK = 70,       // reliable: clothes, fat, muscle
+    G_PLAYER_LOOK = 70,       // reliable: clothes, fat, muscle, u16 model, the special character's name (290-299)
     G_PLAYER_STATS = 71,      // reliable: stats affecting the remote ped (skills, stamina, fight style)
     G_PLAYER_WEAPONS = 72,    // reliable: weapon inventory
     G_BULLET = 73,            // visual bullet replay
@@ -137,6 +140,10 @@ enum MsgId : uint8_t {
                               // attach: u8 kind, u16 net id; position: vec3; play; clear)
     G_GARAGE_DOOR = 144,      // reliable: u8 garage, u8 door of a shop garage (0 shut, 1 open, 2 none: the sender's
                               // door follows ours)
+    G_PROP = 145,             // reliable: u8 op, u16 id of an object the sender's player or ped holds or carries
+                              // (state: model, holder, how it hangs, look, own animation; gone)
+    G_PED_SPEECH = 146,       // reliable: u8 player/ped, u16 net id, the line it starts (context, bank, sound, delay,
+                              // volume, forced)
 
     G_VOICE = 200,            // unreliable: voice frame
     G_LAST = 255,

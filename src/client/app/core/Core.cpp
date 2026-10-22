@@ -1,6 +1,7 @@
 #include "shared/lib/core/Core.h"
 
 #include <windows.h>
+#include <d3d9.h>
 
 #include <algorithm>
 
@@ -68,6 +69,9 @@ void __cdecl HookGameProcess() {
     CommonFrame();
     for (auto* m : Modules()) m->OnPreProcess();
     g_origGameProcess();
+    // The frame a new game's player is made in (MAIN's CREATE_PLAYER): the game starts for the modules next frame
+    // (OnGameStarted, G_RESYNC), and what they announced in this one was forgotten here and made twice there.
+    if (!g_gameStarted && IsPlayerReady()) return;
     for (auto* m : Modules()) m->OnPostProcess();
 }
 
@@ -105,14 +109,42 @@ void RenderOverlay() {
     }
 }
 
+bool g_overlayDrawn = false;  // by the game's own last 2D call since the last Present
+
 void __cdecl HookDebugTextIngame() {
     if (g_origDebugTextIngame) g_origDebugTextIngame();
     RenderOverlay();
+    g_overlayDrawn = true;
 }
 
 void __cdecl HookDebugTextMenu() {
     if (g_origDebugTextMenu) g_origDebugTextMenu();
     RenderOverlay();
+    g_overlayDrawn = true;
+}
+
+// The overlay is drawn from the game's last 2D call (Idle -> CDebug::DebugDisplayTextBuffer). A plugin that took that
+// call without passing it on left a player with no chat, no F9 window and no invite code to give: after 30 frames
+// without it (in the menu or in the game, not on a loading screen) it is drawn at IDirect3DDevice9::Present instead.
+using PresentFn = HRESULT(WINAPI*)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
+PresentFn g_origPresent = nullptr;
+HRESULT WINAPI HookPresent(IDirect3DDevice9* dev, const RECT* src, const RECT* dst, HWND wnd, const RGNDATA* dirty) {
+    static int missed = 0;
+    static bool said = false;
+    int state = game::GameState();
+    if (g_overlayDrawn) {
+        g_overlayDrawn = false;
+        missed = 0;
+    } else if ((state == game::GAME_STATE_IDLE || state == game::GAME_STATE_FRONTEND_IDLE) && ++missed > 30 &&
+               SUCCEEDED(dev->BeginScene())) {
+        if (!said) {
+            said = true;
+            LOGW("The overlay's draw call is not reached (another plugin took it): drawn at Present instead");
+        }
+        RenderOverlay();
+        dev->EndScene();
+    }
+    return g_origPresent(dev, src, dst, wnd, dirty);
 }
 
 void __cdecl HookShutDownForRestart() {
@@ -170,10 +202,14 @@ void CommonFrame() {
     if (g_lastCommonFrame == g_frameNo) return;
     g_lastCommonFrame = g_frameNo;
 
+    if (!g_origPresent)
+        if (auto* dev = (IDirect3DDevice9*)game::D3DDevice())
+            g_origPresent = (PresentFn)mem::SwapVTable(*(void***)dev, 17, (void*)&HookPresent);  // IDirect3DDevice9::Present
     if (!ui::In().Installed()) {
         if (void* hwnd = game::GameWindow()) {
             ui::In().Install(hwnd);
             patches::FixPluginWrappers();  // the first frame: the ASI plugins are loaded
+            ReclaimCrashFilter();
         }
     }
     static uint64_t lastPlacement = 0;
@@ -189,18 +225,25 @@ void CommonFrame() {
         else flow::Join(cfg.host, (uint16_t)cfg.port, cfg.password);
     }
 
-    Net().Update();
-    flow::Update();
-
-    // detect "game became playable"
+    // detect "game became playable" before this frame's messages: handled first, they made copies (trains, peds,
+    // cars, fires) that every module's OnGameStarted then forgot, left in the world untracked
     if (!g_gameStarted && IsPlayerReady()) {
         g_gameStarted = true;
         LOGI("Game started (player ready)");
+        // The scripts are held from CGame::ShutDownForRestart to InitialiseWhenRestarting. A load that went another way
+        // (a plugin's) never let them go: no script ran, PSAVE1 left the loaded save's mission flag up, no story markers.
+        if (g_restarting) {
+            g_restarting = false;
+            LOGW("The scripts were still held after the world load (no InitialiseWhenRestarting seen): let go");
+        }
         g_redirectPath.clear();
         patches::FixPluginWrappers();  // and the ones loaded later
         flow::OnGameStarted();
         for (auto* m : Modules()) m->OnGameStarted();
     }
+
+    Net().Update();
+    flow::Update();
 
     ui::TheChat().ProcessInput();
     ui::ProcessConnectMenu();
@@ -530,6 +573,7 @@ void Init(void* hModule) {
     net.onWorldWanted = [] { flow::RequestFreshWorld(); };
     net.onWorldNewGame = [] { flow::OnNewGameFromHost(); };
     net.onWorldWait = [] { flow::OnHostInPrologue(); };
+    net.onWorldNone = [] { flow::OnWorldNone(); };
     net.onInvite = [](const std::string& code) {
         if (Net().IsHost())
             ui::TheChat().AddSystem(Format(TR("Код для друга: %s. Скопировать его можно в окне F9.",

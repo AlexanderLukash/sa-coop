@@ -4,7 +4,8 @@
 // "playidles" animation after 20 s of inactivity, judged by the *local* pad touch timer. For the
 // remote player ped this would use the wrong timer and a different random choice, so the function is
 // skipped for it; instead the owner reports the idle animation it plays and the other side blends the
-// same animation on the remote ped.
+// same animation on the remote ped. A phone call's (phone_in, phone_talk, phone_out of the ped group, from
+// CTaskComplexUseMobilePhone) go the same way; the phone in the hand goes with the player's state (Players).
 //
 // What a player does at a place (a barber's chair, a tattoo, a meal, a drink machine, the gym, a dance, a parachute):
 // a script or an attractor plays these on the player, never its pad. The owner reports the one it plays (IFP block and
@@ -38,6 +39,7 @@ enum : uint8_t { OP_PLAY = 1, OP_STOP_IDLE = 2, OP_ACTIVITY = 3, OP_ACTIVITY_END
 
 // groups whose animations are replicated as events (they are not produced by the pad replay)
 constexpr int kReplicatedGroups[] = {ANIM_GROUP_PLAYIDLES};
+constexpr int ANIM_GROUP_DEFAULT = 0, ANIM_ID_PHONE_IN = 145, ANIM_ID_PHONE_TALK = 147;
 
 // IFP blocks of what a player does at a place
 constexpr const char* kActivityBlocks[] = {
@@ -45,7 +47,8 @@ constexpr const char* kActivityBlocks[] = {
     "BAR",      "CLOTHES",  "SHOP",     "BSKTBALL", "POOL",     "KISSING",    "STRIP",       "LAPDAN1", "LAPDAN2",
     "LAPDAN3",  "BOMBER",   "CARRY",    "PARACHUTE", "INT_HOUSE", "INT_OFFICE", "INT_SHOP"};
 
-bool IsReplicatedGroup(int g) {
+bool IsReplicated(int g, int id) {
+    if (g == ANIM_GROUP_DEFAULT) return id >= ANIM_ID_PHONE_IN && id <= ANIM_ID_PHONE_TALK;  // phone_in, phone_out, phone_talk
     for (int r : kReplicatedGroups)
         if (r == g) return true;
     return false;
@@ -143,7 +146,7 @@ public:
             int group = r.I16();
             int id = r.I16();
             float delta = r.F32();
-            if (!r.Ok() || !IsReplicatedGroup(group)) return;
+            if (!r.Ok() || !IsReplicated(group, id)) return;
             const char* block = BlockForGroup(group);
             if (block && !EnsureBlockLoaded(block)) return;
             uintptr_t grp = Ref<uintptr_t>(0xB4EA34) + (uintptr_t)group * 0x14;  // CAnimManager::ms_aAnimAssocGroups
@@ -154,7 +157,7 @@ public:
             LOGI("Remote player %d animation: group %d id %d (%s)", from, group, id, a ? "ok" : "failed");
         } else if (op == OP_STOP_IDLE) {
             for (void* a = anim::First(clump); a; a = anim::Next(a))
-                if ((anim::Flags(a) & ANIMATION_IDLE_FLAG) && IsReplicatedGroup(anim::Group(a))) {
+                if ((anim::Flags(a) & ANIMATION_IDLE_FLAG) && IsReplicated(anim::Group(a), anim::Id(a))) {
                     anim::BlendDelta(a) = -8.0f;
                     anim::Flags(a) |= anim::F_AUTO_REMOVE;  // deleted once out
                 }
@@ -186,7 +189,7 @@ private:
         // the replicated animation currently playing on the local player (blending in or full)
         int group = -1, id = -1;
         for (void* a = anim::First(me->RwObject()); a; a = anim::Next(a)) {
-            if (!IsReplicatedGroup(anim::Group(a)) || anim::BlendDelta(a) < 0.0f) continue;
+            if (!IsReplicated(anim::Group(a), anim::Id(a)) || anim::BlendDelta(a) < 0.0f) continue;
             group = anim::Group(a);
             id = anim::Id(a);
             break;

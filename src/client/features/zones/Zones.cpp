@@ -8,6 +8,7 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "entities/session/Flow.h"
 #include "common/lib/util/Util.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/game/Game.h"
@@ -80,7 +81,7 @@ public:
         mem::RedirectCallFn(0x446E46, &HookStartDefensiveGangWar, &g_origDefensive);
         Net().SetHandler(proto::G_ZONE, [](uint8_t from, Reader& r) {
             int n = r.U16();
-            if (from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady()) return;
+            if (from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld()) return;
             for (int k = 0; k < n; ++k) {
                 int i = r.U16();
                 ZoneBytes z;

@@ -150,7 +150,7 @@ static std::string HttpBody(const std::string& resp, int* status = nullptr) {
             size_t e = body.find("\r\n", i);
             if (e == std::string::npos) break;
             size_t len = strtoul(body.substr(i, e - i).c_str(), nullptr, 16);
-            if (len == 0) break;
+            if (len == 0 || len > body.size() - (e + 2)) break;  // a length past the end wrapped i in 32 bits
             out += body.substr(e + 2, len);
             i = e + 2 + len + 2;
         }

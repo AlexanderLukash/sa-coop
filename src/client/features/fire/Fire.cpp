@@ -41,15 +41,24 @@ struct Sent {
 std::map<uintptr_t, Sent> g_sent;         // our fires the other game copied
 struct Copy {
     uintptr_t fire;
-    uint8_t from;  // whose fire it copies
+    uint8_t from;      // whose fire it copies
+    CEntity* target;   // what it burns (nullptr: a spot)
+    CVector at;        // a spot's place
 };
 std::map<uint16_t, Copy> g_copies;    // fires lit here for the other game, by its id
 uint16_t g_nextId = 1;
 uint64_t g_scanMs = 0;
 
+// The copy's own fire still: the fire manager gives a slot that went out to the next fire (a molotov lights several),
+// and a fire of this game taken for the copy was never sent, and the owner's FIRE_STOP put it out.
+bool Burns(const Copy& c) {
+    if (!Active(c.fire) || Target(c.fire) != c.target) return false;
+    return c.target || (Ref<CVector>(c.fire + 0x04) - c.at).Length() < 0.5f;
+}
+
 bool IsCopy(uintptr_t f) {
     for (auto& [id, c] : g_copies)
-        if (c.fire == f) return true;
+        if (c.fire == f && Burns(c)) return true;
     return false;
 }
 
@@ -156,15 +165,27 @@ void Light(uint8_t from, uint16_t id, uint8_t kind, uint16_t entityId, const CVe
         fire = Field<uintptr_t>(e, e->IsPed() ? 0x730 : 0x490);  // CPed::m_pFire, CVehicle::m_pFire
     }
     if (!fire) return;
-    g_copies[id] = {fire, from};
+    g_copies[id] = {fire, from, Target(fire), Ref<CVector>(fire + 0x04)};
     LOGD("Fire %04X lit (on %d %04X)", id, kind, entityId);
 }
 
 void PutOut(uint16_t id) {
     auto it = g_copies.find(id);
     if (it == g_copies.end()) return;
-    if (Active(it->second.fire)) CallMethod<0x5393F0>((void*)it->second.fire);  // CFire::Extinguish
+    if (Burns(it->second)) CallMethod<0x5393F0>((void*)it->second.fire);  // CFire::Extinguish
     g_copies.erase(it);
+}
+
+// a player's fires are gone with its game (it left or started over): theirs here burned on for ten minutes
+void PutOutCopiesOf(uint8_t from) {
+    for (auto it = g_copies.begin(); it != g_copies.end();) {
+        if (it->second.from != from) {
+            ++it;
+            continue;
+        }
+        if (Burns(it->second)) CallMethod<0x5393F0>((void*)it->second.fire);  // CFire::Extinguish
+        it = g_copies.erase(it);
+    }
 }
 
 // the owner's side of FIRE_OUT: its fire goes out as the copy did
@@ -416,7 +437,11 @@ public:
     void OnPreProcess() override {
         if (Net().Online() && core::IsPlayerReady()) ShootJets();
     }
-    void OnPeerResync(uint8_t) override { g_sent.clear(); }  // sent again by the next scan
+    void OnPeerResync(uint8_t id) override {
+        g_sent.clear();  // sent again by the next scan
+        PutOutCopiesOf(id);
+    }
+    void OnPeerLeave(uint8_t id) override { PutOutCopiesOf(id); }
 
     void OnPostProcess() override {
         if (!Net().Online() || !core::IsPlayerReady() || NowMs() - g_scanMs < 200) return;
@@ -424,7 +449,7 @@ public:
         // copies whose fire went out here by itself (water, the entity died) stay out; put out by this player, the
         // owner's goes out too
         for (auto it = g_copies.begin(); it != g_copies.end();) {
-            if (Active(it->second.fire)) {
+            if (Burns(it->second)) {
                 ++it;
                 continue;
             }

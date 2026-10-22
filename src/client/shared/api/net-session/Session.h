@@ -85,6 +85,7 @@ private:
     // world download
     std::vector<uint8_t> m_world;
     uint32_t m_worldExpected = 0, m_worldRecv = 0, m_worldCrc = 0;
+    int m_worldRetries = 0;  // damaged worlds asked for again in a row
     std::string m_worldLabel;
 };
 

@@ -87,6 +87,7 @@ void ReadState(Reader& r, PedSyncState& s) {
     s.health = r.U8();
     s.armour = r.U8();
     s.weapon = r.U8();
+    if (s.weapon > 46) s.weapon = 0;  // eWeaponType ends with the parachute: the weapon info past it is garbage
     s.flags = r.U8();
     s.vehNetId = r.U16();
     s.seat = r.I8();
@@ -106,10 +107,27 @@ void ReadState(Reader& r, PedSyncState& s) {
 
 using RequestSpecialFn = void(__cdecl*)(int, const char*, int);
 RequestSpecialFn g_origRequestSpecial = nullptr;
+// another character into the slot a player's copy wears (a cutscene, a mission, a mirror): CStreaming::
+// RequestSpecialModel deletes the slot's model while that copy still has it on. It goes back to CJ first and gets its
+// look again.
+void MakeWay(int model, const char* name) {
+    if (!name || !_stricmp(Peds::Instance().SpecialName(model).c_str(), name)) return;
+    Peds::Instance().RespawnCopiesOf(model);
+    for (auto& [id, other] : Players::Instance().All())
+        if (RemotePlayer* rp = Players::Instance().Get(id); rp && rp->ped && rp->ped->ModelIndex() == model) {
+            Players::SetModel(rp->ped, 0);
+            rp->lookStale = true;
+            LOGI("Player %d's special character makes way for %s", id, name);
+        }
+}
+
 void __cdecl HookRequestSpecialModel(int model, const char* name, int flags) {
+    MakeWay(model, name);
     if (name) Peds::Instance().RememberSpecialModel(model, name);
     g_origRequestSpecial(model, name, flags);
 }
+
+uint8_t LoadState(int model) { return Ref<uint8_t>(0x8E4CC0 + (uintptr_t)model * 0x14 + 0x10); }  // CStreaming::ms_aInfoForModel
 
 uint8_t Clamp8(float v) { return (uint8_t)std::clamp(v, 0.0f, 255.0f); }
 
@@ -119,15 +137,6 @@ bool IsPedDead(CPed* p) {
 }
 
 bool IsAlive(const NetPed& np) { return np.ped && IsPedValid(np.ped) && GetPedRef(np.ped) == np.handle; }
-
-// The people an interior brings (InteriorGroup_c::SetupPeds: a police station's officers, a shop's customers) keep
-// area 0 inside: they count as in the interior of our player near them, or they were never shared
-int8_t AreaOf(CPed* ped) {
-    int8_t area = ped->AreaCode();
-    CPlayerPed* me = FindPlayerPed(0);
-    if (area == 0 && me && me->AreaCode() != 0 && (ped->GetPosition() - me->GetPosition()).Length() < 80.0f) return me->AreaCode();
-    return area;
-}
 
 // CTaskManager::FindActiveTaskByType: searches the active primary chain and the secondary tasks
 void* FindTask(CPed* ped, int type) {
@@ -226,8 +235,45 @@ bool HasLastingBodyAnim(CPed* ped) {
 }
 }  // namespace
 
+// The people an interior brings (InteriorGroup_c::SetupPeds: a police station's officers, a shop's customers) keep
+// area 0 inside: they count as in the interior of a player near them, ours or the other one's (the owner who walked
+// out took them out with it: they vanished for the player who stayed inside, and never went to its game)
+int8_t AreaOf(CPed* ped) {
+    int8_t area = ped->AreaCode();
+    if (area != 0) return area;
+    CVector p = ped->GetPosition();
+    CPlayerPed* me = FindPlayerPed(0);
+    if (me && me->AreaCode() != 0 && (p - me->GetPosition()).Length() < 80.0f) return me->AreaCode();
+    for (auto& [id, rp] : Players::Instance().All())
+        if (rp.hasState && rp.state.area != 0 && (p - rp.state.pos).Length() < 80.0f) return rp.state.area;
+    return 0;
+}
+
 void Peds::RememberSpecialModel(int model, const char* name) {
     if (model >= kSpecialFirst && model <= kSpecialLast) m_specialNames[model] = name;
+}
+
+std::string Peds::SpecialName(int model) const {
+    auto it = m_specialNames.find(model);
+    return it == m_specialNames.end() ? std::string() : it->second;
+}
+
+int Peds::SpecialModelFor(const std::string& name) {
+    if (name.empty()) return -1;
+    for (int m = kSpecialFirst; m <= kSpecialLast; ++m)
+        if (!_stricmp(SpecialName(m).c_str(), name.c_str()) && LoadState(m) != 0) return IsModelLoaded(m) ? m : -1;
+    // a name this game's archives lack (another player's mods): RequestSpecialModel takes the garbage position and size
+    // of a failed CDirectory::FindItem (0x409F76) and the streamer crashed on it
+    void* dir = Ref<void*>(0x8E48D0);  // CStreaming::ms_pExtraObjectsDir
+    if (!dir || !CallMethod<0x532450, void*>(dir, name.c_str())) return -1;  // CDirectory::FindItem
+    for (int m = kSpecialLast; m >= kSpecialFirst; --m)
+        if (LoadState(m) == 0) {  // nothing in it, nothing asked for
+            g_origRequestSpecial(m, name.c_str(), 2);  // STREAMING_GAME_REQUIRED: kept while the copy wears it
+            m_specialNames[m] = name;
+            LOGI("Special character %s asked for in slot %d", name.c_str(), m);
+            return -1;
+        }
+    return -1;
 }
 
 void Peds::OnInstallHooks() {
@@ -241,7 +287,7 @@ void Peds::OnInstallHooks() {
     Net().SetHandler(proto::G_RESYNC, [](uint8_t from, Reader&) {
         if (!core::IsPlayerReady()) return;
         // its game started over: what it owned before is gone there
-        Instance().OnPeerLeave(from);
+        Instance().DropMirrorsOf(from, false);
         Vehicles::Instance().ForgetOwnedBy(from);
         Vehicles::Instance().Reannounce();  // vehicles first: peds inside them need the vehicle
         Instance().Reannounce();
@@ -373,6 +419,17 @@ void Peds::SendState(NetPed& np) {
     np.lastSendMs = NowMs();
 }
 
+void Peds::RespawnCopiesOf(int model) {
+    for (auto& [id, np] : m_byId) {
+        if (np.owner == Net().MyId() || !IsAlive(np) || np.ped->ModelIndex() != model) continue;
+        Cmd(0x009B).I(np.handle).Run();  // DELETE_CHAR: SpawnMirror makes it again
+        m_byPtr.erase(np.ped);
+        np.ped = nullptr;
+        np.handle = -1;
+        LOGI("Mirror ped %04X makes way for another special character", id);
+    }
+}
+
 void Peds::Forget(uint16_t netId, bool deletePed) {
     auto it = m_byId.find(netId);
     if (it == m_byId.end()) return;
@@ -442,11 +499,10 @@ CPed* Peds::SpawnMirror(NetPed& np) {
     int model = np.model;
     if (model >= kSpecialFirst && model <= kSpecialLast) {
         if (np.special.empty()) return nullptr;
-        if (m_specialNames[model] != np.special) {
-            g_origRequestSpecial(model, np.special.c_str(), 0);
-            m_specialNames[model] = np.special;
-            return nullptr;
-        }
+        // in whichever slot holds that name here, or a free one: the owner's slot can belong to someone here (a
+        // mission's person, another copy), and RequestSpecialModel took the model from under them
+        model = SpecialModelFor(np.special);
+        if (model < 0) return nullptr;
     } else if (!IsPedModel(model)) {
         return nullptr;
     }
@@ -455,13 +511,14 @@ CPed* Peds::SpawnMirror(NetPed& np) {
         RequestModel(model, 0);
         return nullptr;
     }
+    if (!HasRoom(PedPool(), kKeepPeds, "ped")) return nullptr;
     // mirrors are civilians whatever the owner's type: cop/gang/emergency classes add their own AI and
     // the cop class even replaces the model
     int pedType = np.pedType == PED_TYPE_CIVFEMALE ? PED_TYPE_CIVFEMALE : PED_TYPE_CIVMALE;
     int handle = -1;
     if (st.flags & PedSyncState::F_IN_VEHICLE) {
         NetVehicle* nv = Vehicles::Instance().Find(st.vehNetId);
-        if (!nv || !nv->veh) return nullptr;  // wait for the vehicle
+        if (!nv || !Vehicles::Alive(*nv)) return nullptr;  // wait for the vehicle
         if (st.seat < 0) {
             if (nv->veh->Driver()) return nullptr;
             Cmd(0x0129).I(nv->handle).I(pedType).I(model).Out(&handle).Run();  // CREATE_CHAR_INSIDE_CAR
@@ -547,11 +604,21 @@ void Peds::HandleOwner(uint8_t from, Reader& r) {
     if (it == m_byId.end() || it->second.owner != from) return;
     NetPed& np = it->second;
     if (to != Net().MyId() || !IsAlive(np) || IsPedDead(np.ped)) return Forget(id, true);
+    Adopt(np);
+    Forget(id, false);
+    LOGD("Ped %04X taken over from player %d", id, from);
+}
+
+// a mirror becomes this game's own ped: it can be hurt, drops its loot, and the population manages it
+void Peds::Adopt(NetPed& np) {
     Cmd(0x02AB).I(np.handle).I(0).I(0).I(0).I(0).I(0).Run();  // SET_CHAR_PROOFS off
     Cmd(0x087E).I(np.handle).I(1).Run();                      // SET_CHAR_DROPS_WEAPONS_WHEN_DEAD
     Cmd(0x01C2).I(np.handle).Run();                           // MARK_CHAR_AS_NO_LONGER_NEEDED
-    Forget(id, false);
-    LOGD("Ped %04X taken over from player %d", id, from);
+    // A copy is a civilian that reacts to nothing (SpawnMirror): ours now, it is what its owner had again and acts by its
+    // kind (a gang member stood still under fire). Cops, medics and firemen are other classes: they stay civilians.
+    if (np.pedType > PED_TYPE_COP && np.pedType != PED_TYPE_MEDIC && np.pedType != PED_TYPE_FIREMAN && np.pedType <= 31)
+        np.ped->PedType() = np.pedType;
+    CallMethod<0x5E06E0>(np.ped);  // CPed::SetPedDefaultDecisionMaker: the one of its stats, now that no script holds it
 }
 
 void Peds::HandleSync(uint8_t from, Reader& r) {
@@ -633,7 +700,7 @@ void Peds::ApplyMirror(NetPed& np) {
     // ---- vehicles: the game's own enter/leave tasks, warps only as a fallback
     if (st.flags & PedSyncState::F_IN_VEHICLE) {
         NetVehicle* nv = Vehicles::Instance().Find(st.vehNetId);
-        if (!nv || !nv->veh) return;
+        if (!nv || !Vehicles::Alive(*nv)) return;
         bool inside = ped->InVehicle() && ped->Vehicle() == nv->veh;
         if (inside && (st.flags & PedSyncState::F_LEAVING) && !np.leaveTaskMs) {
             Cmd(0x05CD).I(np.handle).I(nv->handle).Run();  // TASK_LEAVE_CAR
@@ -695,7 +762,7 @@ void Peds::ApplyMirror(NetPed& np) {
     np.leaveTaskMs = 0;
     if (st.flags & PedSyncState::F_ENTERING) {
         NetVehicle* nv = Vehicles::Instance().Find(st.vehNetId);
-        if (nv && nv->veh && np.enterVeh != st.vehNetId) {
+        if (nv && Vehicles::Alive(*nv) && np.enterVeh != st.vehNetId) {
             if (st.seat < 0) Cmd(0x05CB).I(np.handle).I(nv->handle).I(10000).Run();  // TASK_ENTER_CAR_AS_DRIVER
             else Cmd(0x05CA).I(np.handle).I(nv->handle).I(10000).I(SeatOrAny(nv->veh, st.seat)).Run();  // TASK_ENTER_CAR_AS_PASSENGER
             np.enterVeh = st.vehNetId;
@@ -813,7 +880,16 @@ void Peds::ApplyMirror(NetPed& np) {
 }
 
 void Peds::OnPreProcess() {
-    if (!Net().Online() || !core::IsPlayerReady()) return;
+    bool ready = Net().Online() && core::IsPlayerReady();
+    if (ready && !m_wasReady) {
+        // Our game just became playable: whatever the partner announced before is missing here. Sent before any
+        // OnPostProcess (the vehicles' scan comes first there): the partner's G_RESYNC handler drops all we announced
+        // before it, and the cars of the new world announced in the same frame were gone there for good.
+        Writer w(proto::G_RESYNC);
+        Net().Send(proto::CH_RELIABLE, w);
+    }
+    m_wasReady = ready;
+    if (!ready) return;
     for (auto& [id, np] : m_byId) {
         if (np.owner == Net().MyId()) continue;
         ApplyMirror(np);
@@ -829,12 +905,6 @@ void Peds::OnPreProcess() {
 
 void Peds::OnPostProcess() {
     bool ready = Net().Online() && core::IsPlayerReady();
-    if (ready && !m_wasReady) {
-        // our game just became playable: whatever the partner announced before is missing here
-        Writer w(proto::G_RESYNC);
-        Net().Send(proto::CH_RELIABLE, w);
-    }
-    m_wasReady = ready;
     if (!ready || NowMs() - m_lastScan < 50) return;
     m_lastScan = NowMs();
     ScanOwned();
@@ -870,11 +940,20 @@ void Peds::OnSessionEnd() {
     m_wasReady = false;
 }
 
-void Peds::OnPeerLeave(uint8_t id) {
+// The player left: its people stay in this game as its own (deleted, they left its cars driverless in the street, as MTA
+// keeps the elements and picks a new syncer).
+void Peds::OnPeerLeave(uint8_t id) { DropMirrorsOf(id, true); }
+
+void Peds::DropMirrorsOf(uint8_t id, bool keep) {
     std::vector<uint16_t> mirrors;
     for (auto& [pid, np] : m_byId)
         if (np.owner == id) mirrors.push_back(pid);
-    for (uint16_t pid : mirrors) Forget(pid, true);
+    for (uint16_t pid : mirrors) {
+        NetPed& np = m_byId[pid];
+        bool adopt = keep && IsAlive(np) && !IsPedDead(np.ped);
+        if (adopt) Adopt(np);
+        Forget(pid, !adopt);
+    }
 }
 
 void Peds::OnGameStarted() {

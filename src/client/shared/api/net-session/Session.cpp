@@ -25,6 +25,7 @@ void Session::Connect(const std::string& host, uint16_t port, const std::string&
     m_failReason.clear();
     m_peers.clear();
     m_inviteCode.clear();
+    m_worldRetries = 0;
     m_myId = m_hostId = 255;
     m_state = State::Connecting;
     if (!m_net.Start(host, port)) {
@@ -84,6 +85,9 @@ void Session::Update() {
         if (IsRelayed(id)) {
             if (pkt.data.size() < 2 || m_state != State::Online) continue;
             uint8_t from = pkt.data[1];
+            // a player who left: its late state made its character again (with its old time, so the next player under
+            // that number had its states dropped as old ones)
+            if (!m_peers.count(from)) continue;
             Reader r(pkt.data.data() + 2, pkt.data.size() - 2);
             if (m_handlers[id]) m_handlers[id](from, r);
         } else {
@@ -209,7 +213,8 @@ void Session::HandleService(uint8_t id, Reader& r) {
         case S_WORLD_CHUNK: {
             uint32_t off = r.U32();
             auto bytes = r.Bytes(kWorldChunk);
-            if (!r.Ok() || (size_t)off + bytes.size() > m_world.size()) break;
+            // off + size wraps in 32 bits: the bound is checked without the sum
+            if (!r.Ok() || off > m_world.size() || bytes.size() > m_world.size() - off) break;
             memcpy(m_world.data() + off, bytes.data(), bytes.size());
             m_worldRecv += (uint32_t)bytes.size();
             break;
@@ -218,11 +223,18 @@ void Session::HandleService(uint8_t id, Reader& r) {
             uint32_t crc = Crc32(m_world.data(), m_world.size());
             if (crc != m_worldCrc) {
                 LOGE("Сохранение мира повреждено при передаче (crc %08X != %08X)", crc, m_worldCrc);
-                chat.AddError(TR("Мир пришёл с ошибкой. Запрашиваем ещё раз...", "The world arrived damaged. Asking for it again..."));
-                Writer w(C_WORLD_REQUEST);
-                Send(CH_BULK, w);
-            } else if (onWorld) {
-                onWorld(m_world, m_worldLabel);
+                // asked again three times at most: a world too big to take (over 8 MB) came "damaged" for ever
+                if (++m_worldRetries <= 3) {
+                    chat.AddError(TR("Мир пришёл с ошибкой. Запрашиваем ещё раз...", "The world arrived damaged. Asking for it again..."));
+                    Writer w(C_WORLD_REQUEST);
+                    Send(CH_BULK, w);
+                } else {
+                    chat.AddError(TR("Мир снова пришёл с ошибкой. Попробуйте подключиться заново.",
+                                     "The world arrived damaged again. Try to connect again."));
+                }
+            } else {
+                m_worldRetries = 0;
+                if (onWorld) onWorld(m_world, m_worldLabel);
             }
             m_world.clear();
             m_worldExpected = m_worldRecv = 0;

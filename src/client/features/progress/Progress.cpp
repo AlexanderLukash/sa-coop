@@ -18,6 +18,7 @@
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
+#include "entities/ped/Peds.h"
 #include "entities/player/Players.h"
 #include "entities/profile/Profile.h"
 #include "entities/session/Flow.h"
@@ -39,6 +40,10 @@ constexpr uint32_t kProfileMagic = 0x46504353;  // "SCPF"
 constexpr uint16_t kProfileVersion = 3;  // 2: the rewards of side missions (CPlayerInfo +0x14C..+0x152); 3: whose look
 constexpr uintptr_t kStatsBlock = 0xB79000;  // CStats::StatTypesInt + StatTypesFloat
 constexpr size_t kStatsSize = 0x4C8;
+// stats the world owns, not the player (CStats::StatTypesInt, id - 120): the profile keeps the values of the world it was
+// saved in, and laid over a newer one it took the city back (STAT_CITY_UNLOCKED: wanted stars over the bridges, the
+// hospitals, the radio) and the story's accomplished missions, gang strength and territory
+constexpr int kWorldStats[][2] = {{148, 148}, {180, 181}, {302, 342}};  // missions in game; no more hurricanes, city; story
 constexpr size_t kClothesSize = sizeof(CPedClothesDesc);
 
 void RebuildPlayer(CPlayerPed* ped, bool keepDescFatMuscle) { Call<0x5A82C0>(ped, keepDescFatMuscle); }  // CClothes::RebuildPlayer
@@ -162,12 +167,16 @@ bool ApplyProfile(const std::vector<uint8_t>& blob, bool& lookOwn) {
     CPlayerInfo& info = PlayerInfos()[0];
     int h = GetPedRef(me);
     info.money = info.displayMoney = money;
+    int32_t world[kStatsSize / 4];
+    memcpy(world, (void*)kStatsBlock, kStatsSize);
     memcpy((void*)kStatsBlock, stats.data(), kStatsSize);
+    for (const auto& range : kWorldStats)
+        for (int id = range[0]; id <= range[1]; ++id) Ref<int32_t>(kStatsBlock + (uintptr_t)(id - 120) * 4) = world[id - 120];
     memcpy(me->ClothesDesc(), clothes.data(), kClothesSize);
     RebuildPlayer(me, false);  // body from the profile's fat/muscle stats
     Cmd(0x048F).I(h).Run();    // REMOVE_ALL_CHAR_WEAPONS
     for (const Slot& s : slots) {
-        if (s.type == 0) continue;
+        if (s.type == 0 || s.type > 46) continue;  // eWeaponType ends with the parachute
         int model = -1;
         Cmd(0x0781).I(s.type).Out(&model).Run();  // GET_WEAPONTYPE_MODEL
         if (model > 0) LoadModelNow(model);
@@ -186,32 +195,25 @@ bool ApplyProfile(const std::vector<uint8_t>& blob, bool& lookOwn) {
 
 struct RemoteLook {
     std::vector<uint8_t> desc;
-    uint16_t model = 0;  // a skin mod's player model (SET_PLAYER_MODEL), 0 = CJ in his clothes
-    int appliedTo = -1;  // handle of the ped it was last rebuilt on: a respawned ped can reuse the old one's address
+    uint16_t model = 0;    // a skin mod's player model (SET_PLAYER_MODEL), 0 = CJ in his clothes
+    std::string special;   // a special character's (models 290-299 are filled by name, each game its own)
+    int appliedTo = -1;    // handle of the ped it was last rebuilt on: a respawned ped can reuse the old one's address
+    uint64_t waitMs = 0;   // a special character asked for here since
 };
 std::map<uint8_t, RemoteLook> g_looks;
+
+constexpr uint64_t kSpecialWaitMs = 10000;  // a special character that does not come in this long: CJ instead
 
 void HandleLook(uint8_t from, Reader& r) {
     std::vector<uint8_t> desc = r.Bytes(kClothesSize);
     uint16_t model = r.U16();
+    std::string special = r.Str(16);
     if (!r.Ok() || desc.size() != kClothesSize || from == Net().MyId()) return;
     RemoteLook& l = g_looks[from];
-    if (l.desc != desc || l.model != model) l.appliedTo = -1;
+    if (l.desc != desc || l.model != model || l.special != special) l.appliedTo = -1, l.waitMs = 0;
     l.desc = std::move(desc);
     l.model = model;
-}
-
-// the player's model as SET_PLAYER_MODEL (0x47A820) changes it: a new clump, the walk set kept. Special characters
-// (290-299) are loaded under a name the other game does not know: their player stays CJ there.
-bool SetRemoteModel(CPlayerPed* ped, int model) {
-    if (ped->ModelIndex() == model) return true;
-    if (model != 0 && (!IsPedModel(model) || (model >= 290 && model <= 299) || !LoadModelNow(model))) return false;
-    int32_t walk = Field<int32_t>(ped, 0x4D4);  // CPed::m_nAnimGroup
-    CallVirtual<8>(ped);                        // CEntity::DeleteRwObject
-    Field<uint16_t>(ped, 0x22) = 0xFFFF;        // CEntity::m_nModelIndex: SetModelIndex rebuilds only a new one
-    CallVirtual<5>(ped, (uint32_t)model);       // CPed::SetModelIndex
-    Field<int32_t>(ped, 0x4D4) = walk;
-    return true;
+    l.special = std::move(special);
 }
 
 void HandleStats(uint8_t from, Reader& r) {
@@ -340,6 +342,7 @@ public:
                 Writer w(proto::G_PLAYER_LOOK);
                 w.Bytes(desc.data(), desc.size());
                 w.U16(model);
+                w.Str(model >= 290 && model <= 299 ? Peds::Instance().SpecialName(model) : std::string(), 16);
                 Net().Send(proto::CH_RELIABLE, w);
                 m_sentLook = std::move(desc);
                 m_sentModel = model;
@@ -358,16 +361,27 @@ public:
         // remote looks: rebuild the remote ped once per new description (on foot: the rebuild swaps its clump)
         for (auto& [id, l] : g_looks) {
             RemotePlayer* rp = Players::Instance().Get(id);
-            if (!rp || !rp->ped || rp->pedHandle == l.appliedTo || rp->ped->InVehicle()) continue;
-            bool skin = l.model != 0 && SetRemoteModel(rp->ped, l.model);
+            if (!rp || !rp->ped || (rp->pedHandle == l.appliedTo && !rp->lookStale) || rp->ped->InVehicle()) continue;
+            int model = l.model;
+            if (model >= 290 && model <= 299) {  // here it is in whichever slot holds that name
+                model = Peds::Instance().SpecialModelFor(l.special);
+                if (model < 0) {
+                    if (!l.waitMs) l.waitMs = now;
+                    if (now - l.waitMs < kSpecialWaitMs) continue;  // still coming in
+                    model = 0;
+                }
+            }
+            bool skin = model != 0 && Players::SetModel(rp->ped, model);
             if (!skin) {
-                SetRemoteModel(rp->ped, 0);
+                Players::SetModel(rp->ped, 0);
                 memcpy(rp->ped->ClothesDesc(), l.desc.data(), kClothesSize);
                 MuscleFrom muscle(rp->ped->ClothesDesc());
                 RebuildPlayer(rp->ped, true);  // fat/muscle from the description, not from our stats
             }
             l.appliedTo = rp->pedHandle;
-            LOGI("Look of player %d applied (model %d)", id, skin ? l.model : 0);
+            rp->lookStale = false;
+            LOGI("Look of player %d applied (model %d%s%s)", id, skin ? model : 0, l.special.empty() ? "" : ", ",
+                 l.special.c_str());
         }
 
         // the partner's profile goes to the server when it changed (checked every 30 s)
