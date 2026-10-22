@@ -152,6 +152,7 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
         return;
     }
     enet_host_compress_with_range_coder(client);
+    client->mtu = net::kMtu;
     ENetAddress addr{}, relay{};
     nat::Endpoint codeEp;
     uint8_t key = 0;

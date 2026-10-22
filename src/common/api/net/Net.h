@@ -9,6 +9,10 @@
 
 namespace coop::net {
 
+// Keep ENet datagrams below common VPN/mobile/router path-MTU limits so reliable
+// game state is not lost when IP fragmentation is filtered by the network.
+constexpr enet_uint32 kMtu = 1200;
+
 // Reference-counted enet_initialize/enet_deinitialize.
 bool Init();
 void Shutdown();
