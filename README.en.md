@@ -175,6 +175,8 @@ a jump or during scenes. Your partners see your emote.
 - Only the host can start story missions, Cesar's races and turf wars. When a mission has CJ carry something, like
   the crates in the house robbery with Ryder, the host does it.
 - You see the other player's train but cannot get into it: it is driven by the player whose game made it.
+- If the driver listens to their own MP3s (User Track Player), the passenger hears their own User Track Player, not
+  the driver's music.
 - The partner gets story progress (new areas, gyms, mission markers) by loading the host's world after every
   mission the host passes. Loading takes a few seconds, and the partner keeps their position, weapons and
   progress.
