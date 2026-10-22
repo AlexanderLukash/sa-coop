@@ -7,6 +7,7 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "common/lib/sync/StateTiming.h"
 #include "common/lib/util/Util.h"
 #include "entities/ped/Peds.h"
 #include "entities/player/Players.h"
@@ -298,7 +299,7 @@ CVehicle* Vehicles::SpawnMirror(const VehicleSpawn& sp) {
 
 void Vehicles::HandleCreate(uint8_t from, Reader& r) {
     VehicleSpawn sp;
-    if (!sp.Read(r) || from == Net().MyId()) return;
+    if (!sp.Read(r) || from == Net().MyId() || !proto::IsValidEntityId(sp.netId) || sp.owner != from) return;
     if (!core::IsPlayerReady()) return;
     if (NetVehicle* existing = Find(sp.netId)) {
         existing->owner = sp.owner;
@@ -509,7 +510,7 @@ void Vehicles::HandleSync(uint8_t from, Reader& r) {
 void Vehicles::ApplyDriverState(uint8_t from, uint16_t netId, const VehicleState& st) {
     NetVehicle* nv = Find(netId);
     if (!nv || nv->owner != from) return;
-    if (nv->hasState && (int32_t)(st.time - nv->lastTime) < 0) return;
+    if (nv->hasState && !sync::IsNewer(st.time, nv->lastTime)) return;
     nv->lastTime = st.time;
     nv->state = st;
     nv->hasState = true;
@@ -519,7 +520,7 @@ void Vehicles::ApplyDriverState(uint8_t from, uint16_t netId, const VehicleState
 void Vehicles::HandleOwner(uint8_t from, Reader& r) {
     uint16_t id = r.U16();
     uint8_t owner = r.U8();
-    if (!r.Ok()) return;
+    if (!r.Ok() || owner != from) return;
     NetVehicle* nv = Find(id);
     if (!nv) return;
     CPlayerPed* me = FindPlayerPed(0);
@@ -617,12 +618,15 @@ void Vehicles::ApplyMirror(NetVehicle& nv, float dt) {
     // status: an abandoned one looks for a cab to hitch (CTrailer::ScanForTowLink), whoever's game that cab is in
     if (v->Driver() != me && v->VehicleSubClass() != VEHICLE_TYPE_TRAILER) v->SetStatus(STATUS_PHYSICS);
 
-    float age = std::min(0.3f, (float)(NowMs() - nv.recvMs) / 1000.0f);
+    uint64_t stateAgeMs = sync::AgeMs(NowMs(), nv.recvMs);
+    float age = sync::ExtrapolationSeconds(stateAgeMs, 300);
+    float freshness = sync::Freshness(stateAgeMs, 500, 1000);
     CVector target = st.pos + st.vel * age;
+    CVector desiredVel = st.vel * freshness;
     CVector cur = v->GetPosition();
     CVector err = target - cur;
     float dist = err.Length();
-    bool resting = st.vel.Length() < 0.05f && dist < 0.15f;
+    bool resting = desiredVel.Length() < 0.05f && dist < 0.15f;
     // no ground under it in this game (its collision is not loaded here): physics would drop it through the map,
     // so it stands exactly where its owner has it
     if (NowMs() - nv.groundCheckMs > 250) {
@@ -635,14 +639,18 @@ void Vehicles::ApplyMirror(NetVehicle& nv, float dt) {
         SetVehicleMatrix(v, target, st.rot);
         v->MoveSpeed() = CVector{};
         v->TurnSpeed() = CVector{};
+    } else if (stateAgeMs > 1500) {
+        SetVehicleMatrix(v, target, st.rot);
+        v->MoveSpeed() = CVector{};
+        v->TurnSpeed() = CVector{};
     } else if (dist > 10.0f) {
         SetVehicleMatrix(v, target, st.rot);
-        v->MoveSpeed() = st.vel * (1.0f / 50.0f);
-        v->TurnSpeed() = st.turn * (1.0f / 50.0f);
+        v->MoveSpeed() = desiredVel * (1.0f / 50.0f);
+        v->TurnSpeed() = st.turn * (freshness / 50.0f);
     } else if (!resting) {
-        CVector cmd = st.vel + err * 4.0f;  // converge in ~1/4 s
+        CVector cmd = desiredVel + err * 4.0f;  // converge in ~1/4 s
         v->MoveSpeed() = cmd * (1.0f / 50.0f);
-        v->TurnSpeed() = st.turn * (1.0f / 50.0f);
+        v->TurnSpeed() = st.turn * (freshness / 50.0f);
         if (CMatrix* m = v->Matrix()) {
             Quat q = Quat::Slerp(Quat::FromMatrix(*m), st.rot, std::min(1.0f, dt * 12.0f));
             q.ToMatrix(*m);
@@ -653,9 +661,9 @@ void Vehicles::ApplyMirror(NetVehicle& nv, float dt) {
         nv.lookCheckMs = NowMs();
         ApplyLook(nv);
     }
-    v->SteerAngle() = st.steer;
-    v->GasPedal() = st.gas;
-    v->BrakePedal() = st.brake;
+    v->SteerAngle() = st.steer * freshness;
+    v->GasPedal() = st.gas * freshness;
+    v->BrakePedal() = std::max(st.brake, 1.0f - freshness);
     v->Health() = st.health;
     v->SetEngineOn((st.flags & VehicleState::F_ENGINE) != 0);
     v->SetSiren((st.flags & VehicleState::F_SIREN) != 0);

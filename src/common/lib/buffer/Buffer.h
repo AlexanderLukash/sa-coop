@@ -43,6 +43,7 @@ public:
     }
     // Angle in radians quantized to 16 bits.
     void Angle(float rad) {
+        if (!std::isfinite(rad)) rad = 0.0f;
         float a = std::fmod(rad, 6.2831853f);
         if (a < 0) a += 6.2831853f;
         U16((uint16_t)(a / 6.2831853f * 65535.0f + 0.5f));
@@ -67,6 +68,8 @@ public:
         Raw(p, n);
     }
     void Raw(const void* p, size_t n) {
+        if (!n) return;
+        if (!p) return;
         const uint8_t* b = (const uint8_t*)p;
         m_data.insert(m_data.end(), b, b + n);
     }
@@ -76,6 +79,7 @@ public:
     std::vector<uint8_t>& Buffer() { return m_data; }
 
     static int16_t Quant(float v, float range) {
+        if (!std::isfinite(v) || !std::isfinite(range) || range <= 0.0f) return 0;
         float q = v / range * 32767.0f;
         if (q > 32767.0f) q = 32767.0f;
         if (q < -32767.0f) q = -32767.0f;
@@ -89,7 +93,8 @@ private:
 // Bounds-checked reader. On underflow it sets the error flag and returns zeros.
 class Reader {
 public:
-    Reader(const uint8_t* data, size_t size) : m_p(data), m_end(data + size) {}
+    Reader(const uint8_t* data, size_t size)
+        : m_p(data ? data : &kEmpty), m_end(m_p + (data ? size : 0)), m_error(!data && size != 0) {}
 
     uint8_t U8() {
         uint8_t v = 0;
@@ -97,7 +102,11 @@ public:
         return v;
     }
     int8_t I8() { return (int8_t)U8(); }
-    bool Bool() { return U8() != 0; }
+    bool Bool() {
+        uint8_t v = U8();
+        if (v > 1) m_error = true;
+        return v != 0;
+    }
     uint16_t U16() {
         uint16_t v = 0;
         Raw(&v, 2);
@@ -126,7 +135,10 @@ public:
     float F32() {
         float v = 0;
         Raw(&v, 4);
-        if (!std::isfinite(v)) v = 0.0f;  // never let NaN/Inf from the network into the game
+        if (!std::isfinite(v)) {
+            m_error = true;
+            return 0.0f;  // never let NaN/Inf from the network into the game
+        }
         return v;
     }
     Vec3 Vec() {
@@ -150,6 +162,10 @@ public:
         uint32_t v = 0;
         for (int shift = 0; shift < 35; shift += 7) {
             uint8_t b = U8();
+            if (shift == 28 && (b & 0xF0)) {
+                m_error = true;
+                return 0;
+            }
             v |= (uint32_t)(b & 0x7F) << shift;
             if (!(b & 0x80)) return v;
         }
@@ -177,6 +193,11 @@ public:
         return v;
     }
     void Raw(void* out, size_t n) {
+        if (!n) return;
+        if (!out) {
+            m_error = true;
+            return;
+        }
         if (Remaining() < n) {
             m_error = true;
             std::memset(out, 0, n);
@@ -189,8 +210,10 @@ public:
     size_t Remaining() const { return (size_t)(m_end - m_p); }
     const uint8_t* Cursor() const { return m_p; }
     bool Ok() const { return !m_error; }
+    void Fail() { m_error = true; }
 
 private:
+    inline static constexpr uint8_t kEmpty = 0;
     const uint8_t* m_p;
     const uint8_t* m_end;
     bool m_error = false;

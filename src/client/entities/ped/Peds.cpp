@@ -14,6 +14,7 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "common/lib/sync/StateTiming.h"
 #include "common/lib/util/Util.h"
 #include "entities/player/Players.h"
 #include "entities/vehicle/Vehicles.h"
@@ -46,6 +47,7 @@ constexpr int kEmptyDecisionMaker = 65542;  // SET_CHAR_DECISION_MAKER template 
 constexpr int TASK_ENTER_CAR_AS_PASSENGER = 700, TASK_ENTER_CAR_AS_DRIVER = 701, TASK_LEAVE_CAR = 704;
 constexpr int TASK_SIMPLE_USE_GUN = 1017;
 constexpr uint64_t kCarTaskGraceMs = 6000;  // let enter/leave animations finish before warping
+constexpr uint64_t kStalePedStateMs = 750;
 constexpr uint16_t kNoAnim = 0xFFFF;
 
 Vec3 V(const CVector& v) { return {v.x, v.y, v.z}; }
@@ -87,6 +89,10 @@ void ReadState(Reader& r, PedSyncState& s) {
     s.armour = r.U8();
     s.weapon = r.U8();
     s.flags = r.U8();
+    if (s.flags & ~uint8_t(PedSyncState::F_DEAD | PedSyncState::F_DUCKING | PedSyncState::F_IN_VEHICLE |
+                          PedSyncState::F_AIMING | PedSyncState::F_FIRING | PedSyncState::F_ENTERING |
+                          PedSyncState::F_LEAVING))
+        r.Fail();
     s.vehNetId = r.U16();
     s.seat = r.I8();
     s.area = r.I8();
@@ -101,6 +107,10 @@ void ReadState(Reader& r, PedSyncState& s) {
         s.animFlags = r.U16();
         s.animTime = r.F32();
     }
+    if (!sync::PlausiblePosition(V(s.pos)) || !sync::PlausibleVelocity(V(s.vel), 100.0f) || s.area < 0 || s.area > 18 ||
+        s.moveState > 7 || s.weapon > 46 || (s.animBlock != kNoAnim && (s.animTime < 0.0f || s.animTime > 60.0f)) ||
+        ((s.flags & PedSyncState::F_IN_VEHICLE) && (s.seat < -1 || s.seat > 7)))
+        r.Fail();
 }
 
 using RequestSpecialFn = void(__cdecl*)(int, const char*, int);
@@ -488,7 +498,11 @@ void Peds::HandleCreate(uint8_t from, Reader& r) {
     std::string special = r.Str(16);
     PedSyncState st;
     ReadState(r, st);
-    if (!r.Ok() || from == Net().MyId() || !core::IsPlayerReady() || m_byId.count(id)) return;
+    bool specialModel = model >= kSpecialFirst && model <= kSpecialLast;
+    bool validModel = specialModel ? !special.empty() : IsPedModel(model);
+    if (!r.Ok() || from == Net().MyId() || !proto::IsValidEntityId(id) || !validModel || pedType > 32 ||
+        !core::IsPlayerReady() || m_byId.count(id))
+        return;
     NetPed& np = m_byId[id];
     np.netId = id;
     np.owner = from;
@@ -558,7 +572,7 @@ void Peds::HandleSync(uint8_t from, Reader& r) {
     auto it = m_byId.find(id);
     if (it == m_byId.end() || it->second.owner != from) return;
     NetPed& np = it->second;
-    if ((int32_t)(st.time - np.state.time) < 0) return;  // reordered
+    if (!sync::IsNewer(st.time, np.state.time)) return;  // reordered
     np.state = st;
     np.recvMs = NowMs();
 }
@@ -650,6 +664,21 @@ void Peds::ApplyMirror(NetPed& np) {
         return;
     }
     np.leaveTaskMs = 0;
+    uint64_t stateAgeMs = sync::AgeMs(now, np.recvMs);
+    if (stateAgeMs > kStalePedStateMs) {
+        // A stalled peer must not leave an NPC endlessly firing or walking on an obsolete task.
+        if (np.gunMode) {
+            Cmd(0x0792).I(np.handle).Run();  // CLEAR_CHAR_TASKS_IMMEDIATELY
+            np.gunMode = 0;
+            np.lastTaskMove = 0;
+        }
+        ped->MoveSpeed() = CVector{};
+        if (!np.animFull && np.lastTaskMove != 1 && !TaskPending(ped)) {
+            Cmd(0x05BA).I(np.handle).I(1000).Run();  // TASK_STAND_STILL
+            np.lastTaskMove = 1;
+        }
+        return;
+    }
     if (st.flags & PedSyncState::F_ENTERING) {
         NetVehicle* nv = Vehicles::Instance().Find(st.vehNetId);
         if (nv && nv->veh && np.enterVeh != st.vehNetId) {
@@ -665,7 +694,7 @@ void Peds::ApplyMirror(NetPed& np) {
     }
 
     // ---- on foot
-    float age = std::min(0.5f, (float)(now - np.recvMs) / 1000.0f);
+    float age = sync::ExtrapolationSeconds(stateAgeMs, 500);
     CVector target = st.pos + st.vel * age;
     CVector cur = ped->GetPosition();
     CVector err = target - cur;

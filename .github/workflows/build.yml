@@ -13,6 +13,16 @@ permissions:
   contents: write
 
 jobs:
+  sync-primitives:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test network sync primitives
+        run: python tools/test_sync_primitives.py
+
   build:
     runs-on: windows-latest
     steps:

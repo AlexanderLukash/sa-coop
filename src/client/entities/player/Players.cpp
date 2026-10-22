@@ -8,6 +8,7 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "common/lib/sync/StateTiming.h"
 #include "common/lib/util/Util.h"
 #include "entities/mission/Mission.h"
 #include "entities/session/Flow.h"
@@ -64,6 +65,7 @@ void FreeOwnPlayerData(RemotePlayer& rp) {
 }
 constexpr int kLastWeapon = 46;  // eWeaponType: the parachute
 constexpr float kTeleportDist = 5.0f;
+constexpr uint32_t kInputGraceMs = 350;
 
 // ------------------------------------------------------------------ context switching
 // CStats::StatTypesInt (0xB79000, 223 ints) followed by CStats::StatTypesFloat (0xB79380, 82 floats): the remote
@@ -513,6 +515,7 @@ void ReadCommon(Reader& r, OnFootState& st) {
     st.ammo = r.U16();
     st.area = r.I8();
     st.wanted = r.U8();
+    if (st.area < 0 || st.area > 18 || st.wanted > 6 || st.weapon > kLastWeapon) r.Fail();
 }
 }  // namespace
 
@@ -746,7 +749,7 @@ void Players::HandleOnFoot(uint8_t from, Reader& r) {
     if (!st.Read(r)) return;
     RemotePlayer& rp = Touch(from);
     // unreliable channel: ignore states older than the newest applied one
-    if (rp.hasState && (int32_t)(st.time - rp.lastStateTime) < 0) return;
+    if (rp.hasState && !sync::IsNewer(st.time, rp.lastStateTime)) return;
     rp.lastStateTime = st.time;
     // enter/exit are replicated as events; with the target held the button is the fight's second attack (a kick,
     // CTaskSimplePlayerOnFoot: MeleeAttackJustDown 4), which only the pad replay shows
@@ -768,12 +771,12 @@ void Players::HandleDriver(uint8_t from, Reader& r) {
     if (from == Net().MyId()) return;
     uint16_t netId = r.U16();
     VehicleState vs;
-    vs.Read(r);
+    if (!vs.Read(r)) return;
     OnFootState st;
     ReadCommon(r, st);
     if (!r.Ok()) return;
     RemotePlayer& rp = Touch(from);
-    if (rp.hasState && (int32_t)(vs.time - rp.lastStateTime) < 0) return;
+    if (rp.hasState && !sync::IsNewer(vs.time, rp.lastStateTime)) return;
     rp.lastStateTime = vs.time;
     st.time = vs.time;
     st.pos = vs.pos;
@@ -797,9 +800,9 @@ void Players::HandlePassenger(uint8_t from, Reader& r) {
     Vec3 p = r.Vec();
     OnFootState st;
     ReadCommon(r, st);
-    if (!r.Ok()) return;
+    if (!r.Ok() || seat < 0 || seat > 7 || !sync::PlausiblePosition(p)) return;
     RemotePlayer& rp = Touch(from);
-    if (rp.hasState && (int32_t)(time - rp.lastStateTime) < 0) return;
+    if (rp.hasState && !sync::IsNewer(time, rp.lastStateTime)) return;
     rp.lastStateTime = time;
     st.time = time;
     st.pos = {p.x, p.y, p.z};
@@ -816,7 +819,7 @@ void Players::HandlePassenger(uint8_t from, Reader& r) {
 void Players::HandleEnterCar(uint8_t from, Reader& r) {
     uint16_t netId = r.U16();
     int8_t seat = r.I8();
-    if (!r.Ok() || from == Net().MyId()) return;
+    if (!r.Ok() || from == Net().MyId() || seat < -1 || seat > 7) return;
     RemotePlayer* rp = Get(from);
     NetVehicle* nv = Vehicles::Instance().Find(netId);
     if (!rp || !rp->ped || !nv || !nv->veh) return;
@@ -843,7 +846,9 @@ void Players::HandleTeleport(uint8_t from, Reader& r) {
     uint8_t target = r.U8();
     CVector pos{r.F32(), r.F32(), r.F32()};
     int8_t area = r.I8();
-    if (!r.Ok() || target != Net().MyId() || !core::IsPlayerReady()) return;
+    if (!r.Ok() || target != Net().MyId() || !sync::PlausiblePosition({pos.x, pos.y, pos.z}) || area < 0 || area > 18 ||
+        !core::IsPlayerReady())
+        return;
     CPlayerPed* me = FindPlayerPed(0);
     int handle = GetPedRef(me);
     Cmd(0x04BB).I(area).Run();                 // SET_AREA_VISIBLE
@@ -862,6 +867,12 @@ void Players::ApplyState(RemotePlayer& rp) {
     if (rp.padFresh) {
         st.pad.To(rp.padNew);
         rp.padFresh = false;
+    }
+    // If a peer stalls without disconnecting, do not hold its last movement/fire/drive input indefinitely.
+    if (sync::AgeMs(NowMs(), rp.stateRecvMs) > kInputGraceMs) {
+        rp.state.pad = PadState{};
+        memset(&rp.padNew, 0, sizeof(rp.padNew));
+        memset(&rp.padOld, 0, sizeof(rp.padOld));
     }
 
     // death is decided by the owner's game (the local ped has all proofs): play it once; after the
@@ -934,7 +945,7 @@ void Players::ApplyState(RemotePlayer& rp) {
     if (Ref<uint8_t>(0xB5F851)) return;  // CCutsceneMgr::ms_running: Missions places the ped in the scene
 
     // position: predict, then correct smoothly (teleport on large errors)
-    float age = std::min(0.25f, (float)(NowMs() - rp.stateRecvMs) / 1000.0f);
+    float age = sync::ExtrapolationSeconds(sync::AgeMs(NowMs(), rp.stateRecvMs), 250);
     CVector target = st.pos + st.vel * age;
     CVector cur = ped->GetPosition();
     CVector err = target - cur;

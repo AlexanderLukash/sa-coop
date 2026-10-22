@@ -16,6 +16,10 @@ namespace coop::proto {
 constexpr int kMaxPlayers = 8;  // host plus up to seven remote players
 // Vehicle/ped IDs reserve four high bits for (playerId + 1); zero is not a player namespace.
 static_assert(kMaxPlayers <= 15);
+inline bool IsValidEntityId(uint16_t id) {
+    uint16_t ownerNamespace = id >> 12;
+    return ownerNamespace >= 1 && ownerNamespace <= kMaxPlayers;
+}
 constexpr uint8_t kServerId = 255;
 constexpr size_t kMaxChatLen = 160;
 constexpr size_t kWorldChunk = 16 * 1024;

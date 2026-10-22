@@ -1,4 +1,5 @@
 #include "entities/player/PlayerState.h"
+#include "common/lib/sync/StateTiming.h"
 
 #include <algorithm>
 #include <cmath>
@@ -141,12 +142,14 @@ bool OnFootState::Read(Reader& r) {
     weapon = r.U8();
     ammo = r.U16();
     flags = r.U8();
+    if (flags & ~uint8_t(F_DUCKING | F_IN_AIR | F_DEAD | F_SWIMMING | F_JETPACK | F_IN_TRAIN)) r.Fail();
     area = r.I8();
     moveState = r.U8();
     wanted = r.U8();
     pad.Read(r);
     cam.Read(r);
-    return r.Ok();
+    return r.Ok() && sync::PlausiblePosition(V(pos)) && sync::PlausibleVelocity(V(vel), 500.0f) && area >= 0 && area <= 18 &&
+           wanted <= 6 && weapon <= 46 && moveState <= 7;
 }
 
 }  // namespace coop

@@ -1,15 +1,21 @@
 """Build first with tools/build.py; test the real server without launching GTA."""
-from pathlib import Path
+import os
+import shutil
 import socket
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build/release"
+RUNNER = [] if os.name == "nt" else ["wine"]
+HIDE_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def main():
+    if RUNNER and shutil.which(RUNNER[0]) is None:
+        raise SystemExit("Wine is required to run the Windows server integration test on this platform.")
     compiler = ROOT / "toolchain/llvm-mingw/bin/i686-w64-mingw32-clang++.exe"
     test = BUILD / "bin/server-capacity-test.exe"
     objects = sorted((BUILD / "obj/enet").glob("*.o"))
@@ -33,14 +39,14 @@ def main():
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]
-            command = [str(BUILD / "bin/coop-server.exe"), "--config", str(config),
+            command = RUNNER + [str(BUILD / "bin/coop-server.exe"), "--config", str(config),
                        "--data", str(base / "data"), "--port", str(port)]
             if maximum is not None:
                 command += ["--max", str(maximum)]
             with (base / "output.log").open("w") as output:
                 process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output,
                                            stderr=subprocess.STDOUT,
-                                           creationflags=subprocess.CREATE_NO_WINDOW)
+                                           creationflags=HIDE_WINDOW)
                 try:
                     log = base / "data/server.log"
                     deadline = time.monotonic() + 10
@@ -50,7 +56,7 @@ def main():
                                                (log.read_text(encoding="utf-8", errors="replace") if log.exists() else "no log"))
                         time.sleep(0.05)
                     print(f"config={configured}, --max={maximum}, protocol={protocol}", flush=True)
-                    subprocess.run([str(test), str(port), str(capacity), protocol], check=True, timeout=30)
+                    subprocess.run(RUNNER + [str(test), str(port), str(capacity), protocol], check=True, timeout=30)
                 finally:
                     process.terminate()
                     process.wait(timeout=5)

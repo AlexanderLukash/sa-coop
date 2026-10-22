@@ -1,4 +1,5 @@
 #include "entities/vehicle/VehicleState.h"
+#include "common/lib/sync/StateTiming.h"
 
 #include <algorithm>
 #include <cmath>
@@ -178,13 +179,18 @@ bool VehicleState::Read(Reader& r) {
     health = (float)r.U16();
     flags = r.U8();
     extras = r.U8();
+    if ((flags & ~uint8_t(0x3F)) || (extras & ~uint8_t(X_MISC | X_GEAR | X_TURRET))) {
+        r.Fail();
+        return false;
+    }
     if (extras & X_MISC) misc = r.U16();
     if (extras & X_GEAR) gear = r.I16() / 32767.0f;
     if (extras & X_TURRET) {
         turretYaw = r.I16() / 32767.0f * 3.2f;
         turretPitch = r.I16() / 32767.0f * 3.2f;
     }
-    return r.Ok();
+    return r.Ok() && sync::PlausiblePosition(V(pos)) && sync::PlausibleVelocity(V(vel), 700.0f) &&
+           sync::PlausibleVelocity(V(turn), 80.0f);
 }
 
 void VehicleSpawn::Write(Writer& w) const {
@@ -210,8 +216,8 @@ bool VehicleSpawn::Read(Reader& r) {
     health = (float)r.U16();
     area = r.I8();
     lockState = r.U8();
-    script = r.U8() != 0;
-    return r.Ok();
+    script = r.Bool();
+    return r.Ok() && sync::PlausiblePosition(V(pos)) && area >= 0 && area <= 18 && health <= 10000.0f;
 }
 
 }  // namespace coop
