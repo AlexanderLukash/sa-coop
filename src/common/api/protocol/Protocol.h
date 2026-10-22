@@ -145,6 +145,7 @@ enum MsgId : uint8_t {
     G_PROPERTY_OWNERS = 146,  // reliable: partner-owned safe-house bitset (u32, bits 3..31)
     G_RACE = 148,             // cooperative 8-Track race: operation and race data
 
+    G_RADIO = 149,            // driver radio: vehicle, station, queued tracks and playback position
 
     G_VOICE = 200,            // unreliable: voice frame
     G_LAST = 255,

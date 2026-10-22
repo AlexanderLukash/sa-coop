@@ -63,7 +63,7 @@ world.
 ### Cars
 
 Each player drives on their own or rides as a passenger with the other. A passenger can shoot from the window: the
-right mouse button leans out with the gun, the left one fires. Tuning and damage are visible to the other player.
+right mouse button leans out with the gun, the left one fires. The car radio is shared: the driver picks the station, and passengers hear the same song from the same point. Tuning and damage are visible to the other player.
 Plane landing gear and nozzles, tank and fire truck turrets, hydraulics, trailers and the tow truck all work.
 Explosions, rockets, grenades, tank shells, fire truck water, trains and RC toys are seen by both players. Either
 player can leave a car in the garage at a safe house, and the host's world keeps it.
