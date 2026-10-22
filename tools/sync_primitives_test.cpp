@@ -2,14 +2,44 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/buffer/Buffer.h"
 #include "common/lib/sync/StateTiming.h"
+#include "common/lib/sync/MissionCapacity.h"
+#include "common/lib/sync/GarageRestore.h"
 
 using namespace coop;
 
 int main() {
+    std::vector<uint16_t> expectedGarageModels{411, 451, 411};
+    assert(sync::ConsumeGarageRestoreModel(expectedGarageModels, 411));
+    assert(sync::ConsumeGarageRestoreModel(expectedGarageModels, 411));
+    assert(!sync::ConsumeGarageRestoreModel(expectedGarageModels, 411));  // duplicate/replay
+    assert(!sync::ConsumeGarageRestoreModel(expectedGarageModels, 999));  // wasn't sent
+    assert(!sync::ConsumeGarageRestoreModel(expectedGarageModels, 0));
+    assert(sync::ConsumeGarageRestoreModel(expectedGarageModels, 451));
+    assert(expectedGarageModels.empty());
+
+    assert(sync::RequiredMissionVehicles(0, 3) == 0);
+    assert(sync::ActivePlayersFromPeers(0) == 1);
+    assert(sync::ActivePlayersFromPeers(1) == 2);
+    assert(sync::RequiredMissionVehicles(2, 3) == 1);  // four seats total
+    assert(sync::RequiredMissionVehicles(2, 0) == 2);  // two players, driver-only car
+    assert(sync::RequiredMissionVehicles(2, 1) == 1);  // two seats total
+    assert(sync::RequiredMissionVehicles(5, 3) == 2);
+    assert(sync::RequiredMissionVehicles(8, 0) == 8);  // driver-only vehicles
+    assert(sync::MissionParticipantReady(true, true, 100, true, true));
+    assert(!sync::MissionParticipantReady(true, false, 100, true, true));
+    assert(!sync::MissionParticipantReady(true, true, 3001, true, true));
+    assert(!sync::MissionParticipantReady(true, true, 100, false, true));
+    assert(!sync::MissionParticipantReady(true, true, 100, true, false));
+    assert(sync::MissionQuorumReached(1, 1));
+    assert(sync::MissionQuorumReached(2, 1));
+    assert(!sync::MissionQuorumReached(3, 1));
+    assert(sync::MissionQuorumReached(3, 2));
+    assert(!sync::MissionQuorumReached(0, 0));
     assert(sync::IsNewer(12, 11));
     assert(sync::IsNewer(0, UINT32_MAX));  // sender clock wrapped
     assert(!sync::IsNewer(11, 12));

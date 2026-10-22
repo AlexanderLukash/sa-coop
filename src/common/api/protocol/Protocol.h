@@ -133,8 +133,7 @@ enum MsgId : uint8_t {
     G_CHECKPOINTS = 137,      // reliable: the host's script checkpoints and spheres (u8 n, records)
     G_WORLD_OBJ = 138,        // a map object broke or moved (u16 model, origin, stage, flags, weapon[, pose, speeds]);
                               // reliable for changes, unreliable while it moves
-    G_GARAGE = 139,           // reliable: u8 op, u8 garage: the partner's cars into the host's safe house store
-                              // (u8 n, u16 net ids), the host has them (same), bring the stored ones out
+    G_GARAGE = 139,           // reliable garage ownership/store protocol; op 6 targets restore with u8 player id
     G_VEH_CLEAR = 140,        // reliable: u8 n, u16 net ids: the host's mission cleared an area (CLEAR_AREA), the
                               // owners delete these empty cars of theirs there
     G_WATER_CANNON = 141,     // unreliable: u16 vehicle, the jet's offset from it and speed (a fire truck shoots water)
@@ -142,6 +141,7 @@ enum MsgId : uint8_t {
                               // pos), unreliable; gone: reliable
     G_SCENE_CAMERA = 145,     // host: its mission's script holds the camera (a scene on the engine, not a cutscene):
                               // u8 on[, vec source, vec front, vec up, f32 fov, u8 cut]; unreliable while on, reliable off
+    G_PROPERTY_OWNERS = 146,  // reliable: partner-owned safe-house bitset (u32, bits 3..31)
 
     G_VOICE = 200,            // unreliable: voice frame
     G_LAST = 255,

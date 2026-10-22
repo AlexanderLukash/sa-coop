@@ -1,4 +1,5 @@
-// Entrances (shops, barbers, houses) open and close as in the host's game. Its missions open some for their time
+// Entrances (shops, barbers, houses) sync access flags only. Each player enters/exits through their own game input;
+// this module never changes player coordinates or area. Its missions open some for their time
 // (the prologue closes the barbers, "Ryder" opens one for the haircut): the partner's game does not run those
 // missions and kept them shut. Each entrance keeps its state in its flags (they are what a save stores), and the host
 // sends them when they change, except the bits about where this game's player went in. An entrance is found by its

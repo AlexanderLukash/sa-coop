@@ -605,9 +605,11 @@ void Players::OnSessionEnd() {
     for (auto& [id, rp] : m_remote) DestroyRemote(rp);
     m_remote.clear();
     g_ourDriveBy.clear();
+    m_pendingTeleport.active = false;
 }
 
 void Players::OnPeerLeave(uint8_t id) {
+    if (m_pendingTeleport.active && m_pendingTeleport.from == id) m_pendingTeleport.active = false;
     auto it = m_remote.find(id);
     if (it == m_remote.end()) return;
     DestroyRemote(it->second);
@@ -846,16 +848,10 @@ void Players::HandleTeleport(uint8_t from, Reader& r) {
     uint8_t target = r.U8();
     CVector pos{r.F32(), r.F32(), r.F32()};
     int8_t area = r.I8();
-    if (!r.Ok() || target != Net().MyId() || !sync::PlausiblePosition({pos.x, pos.y, pos.z}) || area < 0 || area > 18 ||
-        !core::IsPlayerReady())
+    if (!r.Ok() || target != Net().MyId() || !sync::PlausiblePosition({pos.x, pos.y, pos.z}) || area < 0 || area > 18)
         return;
-    CPlayerPed* me = FindPlayerPed(0);
-    int handle = GetPedRef(me);
-    Cmd(0x04BB).I(area).Run();                 // SET_AREA_VISIBLE
-    Cmd(0x0860).I(handle).I(area).Run();       // SET_CHAR_AREA_VISIBLE
-    Cmd(0x00A1).I(handle).F(pos.x).F(pos.y).F(pos.z).Run();  // SET_CHAR_COORDINATES
-    LightArea(area, pos);
-    ui::TheChat().AddSystem(Format(TR("%s переместил вас к себе.", "%s brought you over."), Net().PeerName(from).c_str()));
+    // Reliable teleports can arrive during SCM/world loading. Queue one briefly rather than dropping it.
+    m_pendingTeleport = {from, pos, area, NowMs(), true};
 }
 
 void Players::ApplyState(RemotePlayer& rp) {
@@ -1213,9 +1209,27 @@ void Players::SendLocalState() {
 }
 
 void Players::OnPostProcess() {
-    if (!Net().Online() || !core::IsPlayerReady()) return;
+    if (!Net().Online()) return;
+    if (!core::IsPlayerReady()) {
+        if (m_pendingTeleport.active && sync::AgeMs(NowMs(), m_pendingTeleport.receivedMs) > 15000)
+            m_pendingTeleport.active = false;
+        return;
+    }
     CPlayerPed* me = FindPlayerPed(0);
     if (!me) return;
+    if (m_pendingTeleport.active) {
+        PendingTeleport pending = m_pendingTeleport;
+        m_pendingTeleport.active = false;
+        if (sync::AgeMs(NowMs(), pending.receivedMs) <= 15000) {
+            int handle = GetPedRef(me);
+            Cmd(0x04BB).I(pending.area).Run();                 // SET_AREA_VISIBLE
+            Cmd(0x0860).I(handle).I(pending.area).Run();       // SET_CHAR_AREA_VISIBLE
+            Cmd(0x00A1).I(handle).F(pending.pos.x).F(pending.pos.y).F(pending.pos.z).Run();  // SET_CHAR_COORDINATES
+            LightArea(pending.area, pending.pos);
+            ui::TheChat().AddSystem(Format(TR("%s переместил вас к себе.", "%s brought you over."),
+                                           Net().PeerName(pending.from).c_str()));
+        }
+    }
     DetectCarTasks();
     FollowHost();
     if (me->InVehicle() && me->Vehicle() && me->Vehicle()->Driver() == me) m_lastCar = GetVehicleRef(me->Vehicle());

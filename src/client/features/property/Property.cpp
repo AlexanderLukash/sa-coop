@@ -1,4 +1,6 @@
-// Bought property belongs to the shared world. Once the player buys a for-sale pickup, the game's buying threads
+// Property flags and entrances still follow the shared host world, but each ordinary safe house has a personal owner.
+// The partner's purchased-house bitset lives in its server profile; owner snapshots and labels are session-wide.
+// Once the player buys a for-sale pickup, the game's buying threads
 // (BUY_PRO, BUY1-3) launch BUYPRO1 with the property's index in $6940, and it shows the house and applies the
 // purchase. Each game reports its own purchases and applies the other player's:
 //  * an ordinary house (3..31) quietly, as BUYPRO1 does it but without its camera: the bought flag, no for-sale
@@ -9,19 +11,25 @@
 // After a world load the partner applies his purchases again: one made just before the host saved its world is not in it.
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
+#include <cmath>
+#include <map>
 #include <set>
 #include <utility>
 #include <vector>
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "common/lib/sync/StateTiming.h"
 #include "common/lib/util/Util.h"
+#include "entities/profile/Profile.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
 #include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
 #include "shared/ui/chat/Chat.h"
+#include "shared/ui/renderer/Renderer.h"
 
 namespace coop {
 
@@ -50,8 +58,47 @@ void* FindScript(const char* name) {
 
 std::vector<std::pair<uint8_t, int>> g_pending;  // (player, property) bought by the others, to apply here
 std::set<int> g_mine;                             // partner: bought here this session
+std::map<int, uint8_t> g_owner;                   // ordinary safe house -> current session owner
+uint32_t g_hostMine = 0;
+uint32_t g_lastOwnershipMask = UINT32_MAX;
 bool g_buying = false;                            // a BUYPRO1 runs
 bool g_ours = false;                              // ... launched here for the host's partner
+
+uint32_t LocalMask() {
+    uint32_t mask = Net().IsHost() ? g_hostMine : PersonalPropertyMask();
+    if (Net().IsHost())
+        for (const auto& [k, owner] : g_owner)
+            if (owner != Net().MyId()) mask &= ~(1u << k);
+    return mask;
+}
+
+void SendOwnership() {
+    if (!Net().Online()) return;
+    uint32_t mask = LocalMask();
+    if (mask == g_lastOwnershipMask) return;
+    Writer w(proto::G_PROPERTY_OWNERS);
+    w.U32(mask);
+    Net().Send(proto::CH_RELIABLE, w);
+    g_lastOwnershipMask = mask;
+}
+
+void HandleOwnership(uint8_t from, Reader& r) {
+    uint32_t mask = r.U32();
+    if (!r.Ok() || from == Net().MyId() || (mask & 7u)) return;
+    for (auto it = g_owner.begin(); it != g_owner.end();) {
+        if (it->second == from) it = g_owner.erase(it);
+        else ++it;
+    }
+    for (int k = 3; k < kProperties; ++k)
+        if (mask & (1u << k)) g_owner[k] = from;
+}
+
+uint32_t BoughtMask() {
+    uint32_t mask = 0;
+    for (int k = 3; k < kProperties; ++k)
+        if (Bought(k)) mask |= 1u << k;
+    return mask;
+}
 
 void ApplyQuietly(int k) {
     Bought(k) = 1;
@@ -88,6 +135,17 @@ void Send(int k) {
     Net().Send(proto::CH_RELIABLE, w);
 }
 
+void MarkOwnedHere(int k) {
+    if (k < 3 || k >= kProperties) return;  // story properties are shared progression
+    g_owner[k] = Net().MyId();
+    if (Net().IsHost()) g_hostMine |= 1u << k;
+    else {
+        uint32_t mask = PersonalPropertyMask() | (1u << k);
+        SetPersonalPropertyMask(mask);
+        SaveProfileNow();
+    }
+}
+
 class Property : public Module {
 public:
     const char* Name() const override { return "Property"; }
@@ -95,27 +153,73 @@ public:
     void OnInstallHooks() override {
         Net().SetHandler(proto::G_PROPERTY, [](uint8_t from, Reader& r) {
             int k = r.U8();
-            if (r.Ok() && k < kProperties) g_pending.emplace_back(from, k);
+            if (r.Ok() && k < kProperties) {
+                if (k >= 3) g_owner[k] = from;
+                g_pending.emplace_back(from, k);
+            }
         });
+        Net().SetHandler(proto::G_PROPERTY_OWNERS, &HandleOwnership);
     }
     void OnSessionEnd() override {
         g_pending.clear();
         g_mine.clear();
+        g_owner.clear();
+        g_hostMine = 0;
+        g_lastOwnershipMask = UINT32_MAX;
     }
     void OnGameStarted() override {
         g_buying = FindScript("buypro1") != nullptr;
         g_ours = false;
+        if (Net().IsHost()) {
+            g_hostMine = BoughtMask();
+            for (auto it = g_owner.begin(); it != g_owner.end();) {
+                if (it->second == Net().MyId() && !(g_hostMine & (1u << it->first))) it = g_owner.erase(it);
+                else ++it;
+            }
+        }
         if (!Net().Online() || Net().IsHost()) return;
+        uint32_t personal = PersonalPropertyMask();
+        for (int k = 3; k < kProperties; ++k)
+            if (personal & (1u << k)) g_mine.insert(k), g_owner[k] = Net().MyId();
         for (int k : g_mine) {
-            if (k >= 3 && Bought(k)) continue;
-            if (k >= 3) ApplyQuietly(k);
+            if (Bought(k)) continue;
+            ApplyQuietly(k);
             Send(k);
             LOGI("Property %d: bought here before the world load, applied again", k);
         }
     }
+    void OnPeerJoin(uint8_t) override {
+        g_lastOwnershipMask = UINT32_MAX;
+        SendOwnership();
+    }
 
     void OnPostProcess() override {
         if (!Net().Online() || !core::IsPlayerReady()) return;
+        if (Net().IsHost() && !g_hostMine) g_hostMine = BoughtMask();
+        if (Net().IsHost())
+            for (int k = 3; k < kProperties; ++k)
+                if (g_hostMine & (1u << k)) g_owner.try_emplace(k, Net().MyId());
+        if (!Net().IsHost()) {
+            uint32_t personal = PersonalPropertyMask();
+            for (auto it = g_owner.begin(); it != g_owner.end();) {
+                if (it->second == Net().MyId() && !(personal & (1u << it->first))) it = g_owner.erase(it);
+                else ++it;
+            }
+            for (auto it = g_mine.begin(); it != g_mine.end();) {
+                if (!(personal & (1u << *it))) it = g_mine.erase(it);
+                else ++it;
+            }
+            for (int k = 3; k < kProperties; ++k) {
+                if (!(personal & (1u << k))) continue;
+                g_mine.insert(k);
+                g_owner.try_emplace(k, Net().MyId());
+                if (!Bought(k)) {
+                    ApplyQuietly(k);
+                    Send(k);  // a personal home missing from the host's latest world snapshot
+                }
+            }
+        }
+        SendOwnership();  // also publishes profile restores and new-game resets
         // a purchase made here
         bool buying = FindScript("buypro1") != nullptr;
         if (buying && !g_buying && !g_ours) {
@@ -123,6 +227,7 @@ public:
             if (k >= 0 && k < kProperties) {
                 Send(k);
                 if (!Net().IsHost()) g_mine.insert(k);
+                MarkOwnedHere(k);
                 LOGI("Property %d bought here", k);
             }
         }
@@ -141,11 +246,54 @@ public:
             }  // a story purchase of the host comes to the partner with the host's world
             LOGI("Property %d bought by player %d: %s", k, from, applied ? "applied" : "not applied here");
             if (applied)
-                ui::TheChat().AddSystem(Format(TR("Недвижимость, купленная %s, теперь есть и у вас.",
-                                                  "The property %s bought is yours too now."),
-                                               Net().PeerName(from).c_str()));
+                ui::TheChat().AddSystem(Format(TR("Гравець %s купив дім %d; власника видно біля входу і в /homes.",
+                                                  "Player %s bought home %d; its owner is shown at the entrance and in /homes."),
+                                               Net().PeerName(from).c_str(), k));
             it = g_pending.erase(it);
         }
+    }
+
+    void OnRender() override {
+        if (!Net().Online() || !core::IsPlayerReady()) return;
+        CPlayerPed* me = FindPlayerPed(0);
+        if (!me || me->AreaCode() != 0) return;
+        auto& gfx = ui::Gfx();
+        for (int k = 3; k < kProperties; ++k) {
+            auto own = g_owner.find(k);
+            if (own == g_owner.end() || !Bought(k)) continue;
+            float x = GlobalF(6096 + 4 * k), y = GlobalF(6224 + 4 * k), z = GlobalF(6352 + 4 * k);
+            if (!sync::PlausiblePosition({x, y, z}) || (std::fabs(x) + std::fabs(y) < 1.0f)) continue;
+            CVector pos{x, y, z + 1.2f};
+            float distance = (pos - me->GetPosition()).Length();
+            if (distance > 90.0f) continue;
+            float sx, sy, depth;
+            if (!WorldToScreen(pos, sx, sy, depth)) continue;
+            sx *= gfx.Width() / (float)std::max(1, ScreenWidth());
+            sy *= gfx.Height() / (float)std::max(1, ScreenHeight());
+            float alpha = distance > 65.0f ? 1.0f - (distance - 65.0f) / 25.0f : 1.0f;
+            std::string owner = Net().PeerName(own->second);
+            std::string label = Format(TR("Будинок %d · %s", "Home %d · %s"), k, owner.c_str());
+            uint32_t color = own->second == Net().HostId() ? 0xFF64B4FF : 0xFF78DC78;
+            gfx.Text(ui::FONT_SMALL, sx, sy, label, ui::WithAlpha(color, alpha), ui::TEXT_CENTER | ui::TEXT_OUTLINE);
+        }
+    }
+
+    bool OnCommand(const std::string& cmd, const std::vector<std::string>&) override {
+        if (cmd != "homes") return false;
+        if (g_owner.empty()) {
+            ui::TheChat().AddSystem(TR("В этой сессии ещё нет домов с известным владельцем.",
+                                       "No homes with a known owner in this session yet."));
+            return true;
+        }
+        for (const auto& [k, owner] : g_owner) {
+            if (!Bought(k)) continue;
+            std::string who = owner == Net().MyId() ? TR("вы", "you") : Net().PeerName(owner);
+            std::string state = owner != Net().MyId() && Net().Peers().count(owner)
+                                    ? TR("онлайн", "online")
+                                    : (owner == Net().MyId() ? TR("ваш", "yours") : TR("не в сессии", "offline"));
+            ui::TheChat().AddSystem(Format(TR("Дом %d — %s (%s)", "Home %d — %s (%s)"), k, who.c_str(), state.c_str()));
+        }
+        return true;
     }
 
     static Property& Instance() {

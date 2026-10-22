@@ -40,7 +40,7 @@ using appearance::LogicalSkin;
 using game::script::Cmd;
 
 constexpr uint32_t kProfileMagic = 0x46504353;  // "SCPF"
-constexpr uint16_t kProfileVersion = 3;  // 2: the rewards of side missions (CPlayerInfo +0x14C..+0x152); 3: whose look
+constexpr uint16_t kProfileVersion = 4;  // 4: the partner's personal safe-house bitset
 constexpr uintptr_t kStatsBlock = 0xB79000;  // CStats::StatTypesInt + StatTypesFloat
 constexpr size_t kStatsSize = 0x4C8;
 constexpr size_t kClothesSize = sizeof(CPedClothesDesc);
@@ -58,6 +58,7 @@ bool AllowedSkin(int model) {
 // first visit with no CJ of its own to bring, or in a profile older than version 3): that one gives way to its own CJ
 // once there is one, unless the partner changed its clothes meanwhile.
 bool g_lookOwn = false;
+uint32_t g_personalProperties = 0;
 uint32_t g_givenKeys[28] = {};   // the clothes (model and texture keys) of a given look
 std::vector<uint8_t> g_ownLook;  // the CJ of the last game of its own this player played (not a host's world)
 bool g_foreignGame = false;      // the game was started as a partner: a host's world, kept after leaving it too
@@ -144,6 +145,7 @@ std::vector<uint8_t> CaptureProfile() {
     w.U8(perks[5]);  // m_bGetOutOfJailFree
     w.U8(perks[6]);  // m_bFreeHealthCare
     w.U8(LookIsOwn());
+    w.U32(g_personalProperties);
     return w.Buffer();
 }
 
@@ -166,8 +168,10 @@ bool ApplyProfile(const std::vector<uint8_t>& blob, bool& lookOwn) {
     if (version >= 2)
         for (uint8_t& b : perks) b = r.U8();
     uint8_t own = version >= 3 ? r.U8() : 0;
+    uint32_t properties = version >= 4 ? r.U32() : 0;
     if (!r.Ok() || stats.size() != kStatsSize || clothes.size() != kClothesSize) return false;
     lookOwn = own != 0;
+    g_personalProperties = properties & 0xFFFFFFF8u;  // properties 3..31 are ordinary homes
 
     CPlayerPed* me = FindPlayerPed(0);
     CPlayerInfo& info = PlayerInfos()[0];
@@ -309,6 +313,7 @@ public:
             m_applied = true;
             bool own = false;
             if (m_profile.empty()) {
+                g_personalProperties = 0;
                 ui::TheChat().AddSystem(m_reset ? TR("Хост начал новую игру. Деньги, оружие и навыки у вас тоже начинаются заново.",
                                                      "The host started a new game. Your money, weapons and skills start over too.")
                                                 : TR("Вы здесь впервые. Дальше деньги, навыки и внешность у вас будут свои.",
@@ -425,5 +430,7 @@ struct Reg {
 }  // namespace
 
 void SaveProfileNow() { Progress::Instance().SaveNow(); }
+uint32_t PersonalPropertyMask() { return g_personalProperties; }
+void SetPersonalPropertyMask(uint32_t mask) { g_personalProperties = mask & 0xFFFFFFF8u; }
 
 }  // namespace coop

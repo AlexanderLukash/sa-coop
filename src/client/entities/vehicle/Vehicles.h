@@ -37,6 +37,8 @@ struct NetVehicle {
     uint16_t model = 0;
     bool createdByUs = false;  // we created it as a mirror (delete it when the owner removes it)
     bool script = false;       // a script's car in the game that announced it
+    uint16_t missionFleetRoot = 0;  // support vehicle created to give the mission party enough seats
+    uint64_t missionUnheldMs = 0;   // root: mission script released it; retain support cars briefly
     uint8_t origBy = 0;        // what this game had it created by before it became a mirror here (0: spawned as one)
     bool heldHere = false;     // a script of this game held it when it became a mirror here
 
@@ -103,6 +105,10 @@ private:
     void HandleHandover(uint8_t from, Reader& r);
     void HandleScriptFree(uint8_t from, Reader& r);
     void HandleClear(uint8_t from, Reader& r);
+    void UpdateMissionFleets();
+    void ProvisionMissionFleet(NetVehicle& root);
+    void RemoveMissionFleet(uint16_t rootId);
+    NetVehicle* RegisterOwnedVehicle(game::CVehicle* v, bool mission, uint16_t fleetRoot = 0);
     void KeepCarWhileInside(game::CPlayerPed* me);
     void ReleaseKeptCar();
     game::CVehicle* SpawnMirror(const VehicleSpawn& sp);
@@ -114,6 +120,7 @@ private:
     std::map<game::CVehicle*, uint8_t> m_giveAway;  // to hand over after the population code (vehicle -> player)
     uint16_t m_nextId = 1;
     uint64_t m_lastScan = 0;
+    uint64_t m_lastFleetUpdate = 0;
     int m_lastDriven = -1, m_kept = -1;  // handles: the car the local player last drove, and it kept while inside
     uint8_t m_keptBy = 0;               // what it was created by before
     int8_t m_lastArea = 0;

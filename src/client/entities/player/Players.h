@@ -69,6 +69,13 @@ public:
     static Players& Instance();
 
 private:
+    struct PendingTeleport {
+        uint8_t from = 0;
+        game::CVector pos{};
+        int8_t area = 0;
+        uint64_t receivedMs = 0;
+        bool active = false;
+    };
     void SendLocalState();
     void SendVehicleState(game::CVehicle* v);
     void DetectCarTasks();
@@ -97,6 +104,7 @@ private:
     uint64_t m_followAt = 0;
     game::CVehicle* m_bikeFor = nullptr;  // the host's bike the partner got one for
     int m_lastCar = -1;
+    PendingTeleport m_pendingTeleport;
 };
 
 // helpers shared with other modules

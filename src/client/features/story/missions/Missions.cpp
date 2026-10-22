@@ -26,6 +26,8 @@
 #include "features/story/missions/Missions.h"
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "common/lib/sync/MissionCapacity.h"
+#include "common/lib/sync/StateTiming.h"
 #include "common/lib/util/Util.h"
 #include "entities/mission/Mission.h"
 #include "entities/ped/Peds.h"
@@ -166,10 +168,12 @@ Area g_waitArea{};
 struct PartnerWait {
     Area area{};
     uint64_t sinceMs = 0;
+    uint64_t lastSeenMs = 0;
 };
 std::map<uint8_t, PartnerWait> g_partnersWaiting;  // host
 bool g_atMarkerSent = false;                       // partner
 uint64_t g_atMarkerCheckMs = 0;
+uint64_t g_atMarkerSentMs = 0;
 
 // partner
 struct PartnerBlip {
@@ -324,18 +328,45 @@ bool MarkerAt(const CVector& p, Area& out) {
     return false;
 }
 
-// host, in a trigger: the marker the host stands in holds every partner as well. Without a marker (a phone call,
-// a story event) the mission starts as usual.
+// host, in a main.scm mission trigger: a majority at the marker lets the story start and brings the rest to the host.
+// This hook is not used for ordinary doors/interior transitions; those remain each player's own action. Without a
+// marker (a phone call, a story event) the mission starts as usual.
 bool PartnersAtMarker(CPed* host) {
     Area marker;
     if (!MarkerAt(host->GetPosition(), marker)) return true;
+    size_t atMarker = 1;  // the host triggered the mission while standing in its marker
+    std::vector<uint8_t> bringAlong;
     for (auto& [id, peer] : Net().Peers()) {
         RemotePlayer* rp = Players::Instance().Get(id);
-        if (!rp || !rp->ped || !InArea(marker, rp->ped->GetPosition(), 1.0f)) {  // two can not stand on one spot
-            g_waitMs = NowMs();
-            g_waitArea = marker;
-            return false;
-        }
+        bool ready = sync::MissionParticipantReady(
+            rp && rp->ped, rp && rp->hasState, rp ? sync::AgeMs(NowMs(), rp->stateRecvMs) : UINT64_MAX,
+            rp && rp->ped && rp->ped->AreaCode() == host->AreaCode(),
+            rp && rp->ped && InArea(marker, rp->ped->GetPosition(), 1.0f));
+        if (ready) ++atMarker;
+        else bringAlong.push_back(id);
+    }
+    const size_t activePlayers = sync::ActivePlayersFromPeers(Net().Peers().size());
+    if (!sync::MissionQuorumReached(activePlayers, atMarker)) {
+        g_waitMs = NowMs();
+        g_waitArea = marker;
+        return false;
+    }
+
+    // Majority is present: bring the rest into the host's area before allowing the
+    // SCM trigger to continue. G_TELEPORT is reliable and precedes mission/cutscene
+    // packets on the same channel, so clients arrive before those transitions.
+    CVector destination = host->GetPosition();
+    for (size_t i = 0; i < bringAlong.size(); ++i) {
+        float angle = (float)i * 2.39996323f;
+        CVector p = destination + CVector{std::cos(angle) * 0.65f, std::sin(angle) * 0.65f, -1.0f};
+        Writer w(proto::G_TELEPORT);
+        w.U8(bringAlong[i]);
+        w.F32(p.x);
+        w.F32(p.y);
+        w.F32(p.z);
+        w.I8(host->AreaCode());
+        Net().Send(proto::CH_RELIABLE, w);
+        LOGI("Mission quorum reached (%zu/%zu): bringing player %u to the host", atMarker, activePlayers, bringAlong[i]);
     }
     return true;
 }
@@ -383,11 +414,14 @@ void HandleMissionWait(uint8_t from, Reader& r) {
     bool on = r.U8() != 0;
     Area a{};
     if (on) a = {0x40000001u, r.F32(), r.F32(), r.F32(), r.F32(), r.F32(), 0};
-    if (!r.Ok() || from == Net().MyId()) return;
+    if (!r.Ok() || from == Net().MyId() ||
+        (on && (!sync::PlausiblePosition({a.x1, a.y1, a.z}) || !sync::PlausiblePosition({a.x2, a.y2, a.z}))))
+        return;
     if (Net().IsHost()) {  // a partner at a mission marker
         bool was = g_partnersWaiting.count(from) != 0;
         if (on) {
-            g_partnersWaiting[from] = {a, was ? g_partnersWaiting[from].sinceMs : NowMs()};
+            uint64_t now = NowMs();
+            g_partnersWaiting[from] = {a, was ? g_partnersWaiting[from].sinceMs : now, now};
             if (!was) {
                 LOGI("Player %u waits at a mission marker (%.1f,%.1f)", from, (a.x1 + a.x2) * 0.5f, (a.y1 + a.y2) * 0.5f);
                 ui::TheChat().AddSystem(Format(TR("%s хочет начать миссию: встаньте в маркер, который он ждёт.",
@@ -655,6 +689,7 @@ struct Marked {  // one record of G_CHECKPOINTS
 };
 std::vector<Marked> g_sentMarked;            // host
 std::map<uint8_t, std::pair<Marked, int>> g_placed;  // partner: slot -> what and its script handle
+std::vector<Marked> g_partnerMarked;         // latest authoritative set; retry placements if local pools are full
 
 std::vector<Marked> HostMarked() {
     std::vector<Marked> out;
@@ -707,11 +742,41 @@ void Unplace(int slot, int handle) {
 void ClearPartnerMarked() {
     for (auto& [slot, placed] : g_placed) Unplace(slot, placed.second);
     g_placed.clear();
+    g_partnerMarked.clear();
+}
+
+void ApplyPartnerMarked() {
+    for (auto it = g_placed.begin(); it != g_placed.end();) {  // remove slots that were cleared or replaced
+        auto same = std::find_if(g_partnerMarked.begin(), g_partnerMarked.end(), [&](const Marked& m) {
+            return m.slot == it->first && m == it->second.first;
+        });
+        if (same != g_partnerMarked.end()) {
+            ++it;
+            continue;
+        }
+        Unplace(it->first, it->second.second);
+        it = g_placed.erase(it);
+    }
+    for (const Marked& m : g_partnerMarked) {
+        if (g_placed.count(m.slot)) continue;
+        // The engine writes past its arrays when they are full (CTheScripts::AddScriptCheckpoint): wait for a free slot.
+        bool sphere = m.slot >= 32, room = false;
+        for (int i = 0; i < (sphere ? 16 : 20) && !room; ++i)
+            room = !Ref<uint8_t>((sphere ? kScriptSpheres : kScriptCheckpoints) + (uintptr_t)i * (sphere ? 0x18 : 8));
+        if (!room) continue;
+        int h = -1;
+        CVector to = m.pos + m.dir;
+        if (sphere) Cmd(0x03BC).F(m.pos.x).F(m.pos.y).F(m.pos.z).F(m.size).Out(&h).Run();  // ADD_SPHERE
+        else Cmd(0x06D5).I(m.type).F(m.pos.x).F(m.pos.y).F(m.pos.z).F(to.x).F(to.y).F(to.z).F(m.size).Out(&h).Run();
+        if (h != -1) g_placed[m.slot] = {m, h};
+    }
 }
 
 void HandleMarked(uint8_t from, Reader& r) {
     uint8_t n = r.U8();
+    if (n > 36) return;
     std::vector<Marked> now;
+    std::set<uint8_t> slots;
     for (uint8_t i = 0; i < n && r.Ok(); ++i) {
         Marked m;
         m.slot = r.U8();
@@ -720,33 +785,16 @@ void HandleMarked(uint8_t from, Reader& r) {
         m.pos = {p.x, p.y, p.z};
         m.dir = {d.x, d.y, d.z};
         m.size = r.F32();
-        if (m.type <= 8 && (m.slot < 20 || (m.slot >= 32 && m.slot < 48))) now.push_back(m);
+        bool validSlot = m.slot < 20 || (m.slot >= 32 && m.slot < 48);
+        if (!validSlot || m.type > 8 || !sync::PlausiblePosition({m.pos.x, m.pos.y, m.pos.z}) ||
+            !sync::PlausibleVelocity({m.dir.x, m.dir.y, m.dir.z}, 100.0f) || !std::isfinite(m.size) || m.size <= 0.0f ||
+            m.size > 1000.0f || !slots.insert(m.slot).second)
+            return;
+        now.push_back(m);
     }
     if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady()) return;
-    for (auto it = g_placed.begin(); it != g_placed.end();) {  // gone or changed
-        auto same = std::find_if(now.begin(), now.end(), [&](const Marked& m) { return m == it->second.first; });
-        if (same != now.end()) {
-            ++it;
-            continue;
-        }
-        Unplace(it->first, it->second.second);
-        it = g_placed.erase(it);
-    }
-    for (const Marked& m : now) {
-        if (g_placed.count(m.slot)) continue;
-        // the engine writes past its arrays when they are full (CTheScripts::AddScriptCheckpoint): a free slot first
-        bool sphere = m.slot >= 32, room = false;
-        for (int i = 0; i < (sphere ? 16 : 20) && !room; ++i)
-            room = !Ref<uint8_t>((sphere ? kScriptSpheres : kScriptCheckpoints) + (uintptr_t)i * (sphere ? 0x18 : 8));
-        if (!room) continue;
-        int h = -1;
-        // the checkpoint keeps the direction to the point it was made to face (CCheckpoints::PlaceMarker normalises
-        // point - pos): that point is a step along it
-        CVector to = m.pos + m.dir;
-        if (m.slot >= 32) Cmd(0x03BC).F(m.pos.x).F(m.pos.y).F(m.pos.z).F(m.size).Out(&h).Run();  // ADD_SPHERE
-        else Cmd(0x06D5).I(m.type).F(m.pos.x).F(m.pos.y).F(m.pos.z).F(to.x).F(to.y).F(to.z).F(m.size).Out(&h).Run();  // CREATE_CHECKPOINT
-        if (h != -1) g_placed[m.slot] = {m, h};
-    }
+    g_partnerMarked = std::move(now);
+    ApplyPartnerMarked();
 }
 
 // ---------------------------------------------------------------- cutscenes
@@ -1121,6 +1169,7 @@ void HandleCutscene(uint8_t from, Reader& r) {
         g_csState = 1;
         g_csStartRequested = false;
     } else if (op == CS_START) {
+        if (area < 0 || area > 18) return;
         g_csStartRequested = true;
         g_csArea = area;
     } else if (op == CS_SPOT) {
@@ -1129,9 +1178,13 @@ void HandleCutscene(uint8_t from, Reader& r) {
         scene::Spot s;
         s.ground = {p.x, p.y, p.z};
         s.heading = r.F32();
-        s.pose = (scene::Pose)std::min<uint8_t>(r.U8(), scene::POSE_WALK);
+        uint8_t pose = r.U8();
+        s.pose = (scene::Pose)pose;
         s.act = r.U8();
-        if (r.Ok() && area >= 0 && area <= proto::kMaxPlayers) scene::FollowSpot(s, at, area - 1);
+        if (r.Ok() && area >= 0 && area <= proto::kMaxPlayers && pose <= scene::POSE_WALK &&
+            sync::PlausiblePosition(p) && std::isfinite(at) && at >= 0.0f && at <= 1000000.0f &&
+            std::isfinite(s.heading))
+            scene::FollowSpot(s, at, area - 1);
     } else if (op == CS_END) {
         LOGI("Host cutscene ended (state %d, running %d)", g_csState, CutsceneRunning());
         if (g_csState == 2) PartnerEndCutscene();
@@ -1597,7 +1650,7 @@ void HandleReward(uint8_t from, Reader& r) {
 // ---------------------------------------------------------------- module
 // host: a partner's game (re)started — send the running mission's state again
 void MissionsResync() {
-    if (!Net().IsHost() || !g_active) return;
+    if (!Net().IsHost() || !(g_active || HostOnMission())) return;
     Writer w(proto::G_MISSION_START);
     w.Str(g_missionName, 16);
     Net().Send(proto::CH_RELIABLE, w);
@@ -1698,6 +1751,7 @@ private:
         g_partnerBlipRecords.clear();
         g_partnerAreas.clear();
         g_placed.clear();  // checkpoints and spheres too
+        g_partnerMarked.clear();
         g_sentMarked.clear();
         g_missionWeapons.clear();
         g_partnerMission = g_weFaded = g_weWide = g_onscreenSet = false;
@@ -1705,6 +1759,7 @@ private:
         g_waitMs = 0;
         g_partnersWaiting.clear();
         g_atMarkerSent = false;
+        g_atMarkerSentMs = 0;
         if (g_sceneWatching) StopWatchingScene();
         g_sceneOn = g_sceneOptOut = g_sceneSent = false;
         g_csState = 0;
@@ -1775,7 +1830,7 @@ private:
 
         // the markers partners wait at are lit here too (gone with a partner who left)
         for (auto it = g_partnersWaiting.begin(); it != g_partnersWaiting.end();) {
-            if (!Net().Peers().count(it->first)) {
+            if (!Net().Peers().count(it->first) || NowMs() - it->second.lastSeenMs > 5000) {
                 it = g_partnersWaiting.erase(it);
                 continue;
             }
@@ -1865,15 +1920,22 @@ private:
 
     static void PartnerUpdate() {
         UpdatePartnerCutscene();
+        ApplyPartnerMarked();  // retry markers that had no free local script-array slot on the last packet
         // in a mission marker the host is told (its game starts the mission once the host stands in it too)
         if (NowMs() - g_atMarkerCheckMs >= 250) {
             g_atMarkerCheckMs = NowMs();
             Area at{};
             CPlayerPed* me = FindPlayerPed(0);
-            bool atMarker = me && flow::InHostWorld() && !HostMissionRecent(0) && !g_hostWaits && !me->InVehicle() &&
+            const RemotePlayer* host = Players::Instance().Get(Net().HostId());
+            bool hostReady = sync::MissionParticipantReady(
+                host && host->ped, host && host->hasState, host ? sync::AgeMs(NowMs(), host->stateRecvMs) : UINT64_MAX,
+                host && me && host->state.area == me->AreaCode(), flow::InHostWorld());
+            bool atMarker = me && hostReady && !HostMissionRecent(0) && !g_hostWaits && !me->InVehicle() &&
                             MarkerAt(me->GetPosition(), at);
-            if (atMarker != g_atMarkerSent) {
+            uint64_t now = NowMs();
+            if (atMarker != g_atMarkerSent || (atMarker && now - g_atMarkerSentMs >= 2000)) {
                 g_atMarkerSent = atMarker;
+                g_atMarkerSentMs = now;
                 LOGI(atMarker ? "At a mission marker (%.1f,%.1f): the host is told" : "Left the mission marker", (at.x1 + at.x2) * 0.5f,
                      (at.y1 + at.y2) * 0.5f);
                 Writer w(proto::G_MISSION_WAIT);
