@@ -141,6 +141,7 @@ enum MsgId : uint8_t {
                               // pos), unreliable; gone: reliable
     G_SCENE_CAMERA = 145,     // host: its mission's script holds the camera (a scene on the engine, not a cutscene):
                               // u8 on[, vec source, vec front, vec up, f32 fov, u8 cut]; unreliable while on, reliable off
+    G_MISSION_AUDIO = 147,    // reliable: host mission audio, u8 op, u8 slot[, i32 event]
     G_PROPERTY_OWNERS = 146,  // reliable: partner-owned safe-house bitset (u32, bits 3..31)
 
     G_VOICE = 200,            // unreliable: voice frame

@@ -239,12 +239,32 @@ void __fastcall HookScriptProcess(void* script, void* edx) {
     float seconds = FadeDuration();
     CPlayerPed* cj = Field<uint8_t>(script, 0xDC) && Net().IsHost() && Replicating() ? FindPlayerPed(0) : nullptr;  // m_bIsMission
     WeaponSlots weapons;
+    CVector before = cj ? cj->GetPosition() : CVector{};
+    int8_t beforeArea = cj ? cj->AreaCode() : 0;
     if (cj) weapons.Take(cj);
     bool save = !strncmp(Field<char[8]>(script, 0x08), "psave1", 8), flag = save && core::IsOnMission();
     g_origScriptProcess(script, edx);
     if (save && core::IsOnMission() != flag) g_saveFlag = !flag;
     g_currentScript = prev;
-    if (cj && FindPlayerPed(0) == cj) SendWeaponChanges(weapons, cj);
+    if (cj && FindPlayerPed(0) == cj) {
+        SendWeaponChanges(weapons, cj);
+        // Sample around script execution: ordinary driving cannot trigger this.
+        // Missions also move CJ by moving the vehicle he occupies.
+        CVector at = cj->GetPosition();
+        if (cj->AreaCode() != beforeArea || (at - before).Length() > 15.0f) {
+            size_t slot = 0;
+            for (const auto& [id, peer] : Net().Peers()) {
+                float angle = (float)slot++ * 2.39996323f;
+                Writer w(proto::G_TELEPORT);
+                w.U8(id);
+                w.F32(at.x + std::cos(angle) * 1.5f);
+                w.F32(at.y + std::sin(angle) * 1.5f);
+                w.F32(at.z - 1.0f);
+                w.I8(cj->AreaCode());
+                Net().Send(proto::CH_RELIABLE, w);
+            }
+        }
+    }
     // a fade that started during this script's commands is the script's (DO_FADE)
     if (Fading() && (!fading || FadeDirection() != dir || FadeDuration() != seconds)) ScriptFaded(FadeDirection(), FadeDuration());
 }
@@ -1445,8 +1465,9 @@ void HandleSceneCamera(uint8_t from, Reader& r) {
 bool CanWatchScene() {
     CPlayerPed* me = FindPlayerPed(0);
     const RemotePlayer* host = Players::Instance().Get(Net().HostId());
-    return me && host && host->hasState && host->state.area == me->AreaCode() &&
-           (host->state.pos - me->GetPosition()).Length() < kSceneWatchDist && g_csState == 0;
+    return me && g_csState == 0 && (g_partnerMission ||
+           (host && host->hasState && host->state.area == me->AreaCode() &&
+            (host->state.pos - me->GetPosition()).Length() < kSceneWatchDist));
 }
 
 // the player stands still (on foot or in a car that has stopped): Space is no sprint or handbrake then
@@ -1466,7 +1487,7 @@ void PartnerSceneUpdate() {
     bool space = game::IsForeground() && (GetAsyncKeyState(VK_SPACE) & 0x8000);
     bool pressed = space && !g_spaceWasDown;
     g_spaceWasDown = space;
-    if (g_sceneWatching && pressed) {
+    if (g_sceneWatching && pressed && !g_partnerMission) {
         g_sceneOptOut = true;
         StopWatchingScene();
         return;
@@ -2014,6 +2035,7 @@ std::string MissionWaitText() {
                 return Format(TR("%s ждёт вас у маркера миссии", "%s is waiting for you at the mission marker"), Net().PeerName(id).c_str());
         return "";
     }
+    if (g_sceneWatching && g_partnerMission) return TR("Сцена миссии", "Mission scene");
     if (g_sceneWatching) return TR("Сцена хоста · Пробел — своя камера", "The host's scene · Space: your own camera");
     if (g_sceneOn && g_sceneOptOut)
         return TR("Сцена хоста · Пробел на месте — смотреть", "The host's scene · Space standing still: watch it");

@@ -46,6 +46,7 @@ bool g_copying = false;                // a copy is being made: not ours
 struct Copy {
     CVehicle* engine;
     uint8_t kind;
+    int8_t track;
     float rail, speed;
     uint64_t ms;
 };
@@ -127,8 +128,10 @@ void HandleTrain(uint8_t from, Reader& r) {
     bool clockwise = r.U8() != 0;
     float rail = r.F32(), speed = r.F32();
     Vec3 p = r.Vec();
-    if (!r.Ok() || kind > 15 || track < 0 || track > 3) return;  // CTrain's kinds and tracks
-    if (it != g_copies.end() && (it->second.kind != kind || !IsEngine(it->second.engine))) {
+    if (!r.Ok() || op != TRAIN_STATE || kind > 15 || track < 0 || track > 3 ||
+        !std::isfinite(rail) || !std::isfinite(speed) ||
+        !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) return;  // CTrain's kinds and tracks
+    if (it != g_copies.end() && (it->second.kind != kind || it->second.track != track || !IsEngine(it->second.engine))) {
         RemoveCopy(it->second);
         g_copies.erase(it);
         it = g_copies.end();
@@ -141,7 +144,7 @@ void HandleTrain(uint8_t from, Reader& r) {
         g_copying = false;
         if (!first) return;
         for (CVehicle* t = first; t; t = NextCarriage(t)) t->DoorLock() = 2;  // CARLOCK_LOCKED: driven in its game
-        it = g_copies.emplace(key, Copy{first, kind, rail, speed, NowMs()}).first;
+        it = g_copies.emplace(key, Copy{first, kind, track, rail, speed, NowMs()}).first;
         LOGI("Train %d of player %d (kind %d, track %d) copied", id, from, kind, track);
     }
     it->second.rail = rail;
@@ -177,10 +180,13 @@ public:
     }
     void OnPeerLeave(uint8_t id) override { RemoveCopies(id); }
     void OnPeerResync(uint8_t id) override { RemoveCopies(id); }  // its game started over
-    void OnGameStarted() override {
-        g_copies.clear();  // the old world's trains are gone
+    void OnGameShutdown() override {
+        // Clear before loading, not when the world becomes playable: trains
+        // created by loading/prologue scripts must retain their recorded kind.
+        g_copies.clear();
         g_kinds.clear();
         g_ids.clear();
+        g_sendMs = 0;
         g_randomOff = false;
     }
 

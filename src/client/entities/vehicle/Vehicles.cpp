@@ -241,6 +241,15 @@ void Vehicles::RemoveMissionFleet(uint16_t rootId) {
 void Vehicles::UpdateMissionFleets() {
     if (!Net().IsHost() || NowMs() - m_lastFleetUpdate < 500) return;
     m_lastFleetUpdate = NowMs();
+    // A script may delete its root outright instead of releasing it. Orphan
+    // support vehicles then become normal traffic rather than staying protected.
+    for (auto& [id, nv] : m_byId) {
+        if (!nv.missionFleetRoot || Find(nv.missionFleetRoot)) continue;
+        nv.missionFleetRoot = 0;
+        nv.script = false;
+        if (IsVehicleValid(nv.veh) && !ScriptHolds(nv.veh))
+            SetVehicleCreatedBy(nv.veh, VEHICLE_CREATED_RANDOM);
+    }
     std::vector<uint16_t> roots;
     for (const auto& [id, nv] : m_byId)
         if (nv.script && !nv.missionFleetRoot && nv.owner == Net().MyId() && IsVehicleValid(nv.veh)) roots.push_back(id);
@@ -805,7 +814,8 @@ void Vehicles::ScanTraffic() {
     if (!pool) return;
     std::vector<uint16_t> gone;
     for (auto& [id, nv] : m_byId)
-        if (!IsMirror(nv) && IsVehicleValid(nv.veh) && !HasPlayerInside(nv.veh) &&
+        if (!IsMirror(nv) && !nv.missionFleetRoot && IsVehicleValid(nv.veh) &&
+            !ScriptHolds(nv.veh) && !HasPlayerInside(nv.veh) &&
             RemoteDistance(nv.veh->GetPosition(), nv.veh->AreaCode()) > kTrafficOut)
             gone.push_back(id);
     for (uint16_t id : gone) {
