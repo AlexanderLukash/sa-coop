@@ -616,6 +616,22 @@ void Players::OnPeerLeave(uint8_t id) {
     m_remote.erase(it);
 }
 
+void Players::OnPeerResync(uint8_t id) {
+    // The peer restarted its world. Retain metadata (stats/voice), but discard
+    // controls, death/seat tasks and the old ordering watermark.
+    RemotePlayer* rp = Get(id);
+    if (!rp) return;
+    DestroyRemote(*rp);
+    rp->hasState = rp->padFresh = rp->deadShown = false;
+    rp->lastStateTime = 0;
+    rp->stateRecvMs = rp->enterTaskMs = rp->exitTaskMs = rp->jetpackMs = 0;
+    rp->padNew = {};
+    rp->padOld = {};
+    rp->mode = RemotePlayer::Mode::OnFoot;
+    rp->vehNetId = 0;
+    rp->seat = -1;
+}
+
 void Players::OnGameStarted() {
     Cmd(0x0501).I(0).I(1).Run();  // SET_PLAYER_CAN_DO_DRIVE_BY: passengers may shoot from the window
     g_ourDriveBy.clear();
@@ -732,7 +748,7 @@ void Players::DestroyRemote(RemotePlayer& rp) {
         Cmd(0x0164).I(rp.blip).Run();  // REMOVE_BLIP
         rp.blip = 0;
     }
-    if (rp.ped && IsPedValid(rp.ped)) {
+    if (rp.ped && GetPed(rp.pedHandle) == rp.ped) {
         CPed* ped = rp.ped;
         if (PlayerInfo(kRemoteSlot)->ped == ped) PlayerInfo(kRemoteSlot)->ped = nullptr;
         if (CPlayerPed* me = FindPlayerPed(0); me && Field<CEntity*>(me, 0x128) == ped) Field<CEntity*>(me, 0x128) = nullptr;  // KeepApart
@@ -1128,7 +1144,7 @@ void Players::SendVehicleState(CVehicle* v) {
 void Players::OnPreProcess() {
     if (!Net().Online() || !core::IsPlayerReady()) return;
     for (auto& [id, rp] : m_remote) {
-        if (rp.ped && !IsPedValid(rp.ped)) {
+        if (rp.ped && GetPed(rp.pedHandle) != rp.ped) {
             LOGW("Remote player %d ped vanished, respawning", id);
             FreeOwnPlayerData(rp);
             rp.ped = nullptr;

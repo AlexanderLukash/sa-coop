@@ -50,6 +50,7 @@ public:
     void OnSessionStart() override;
     void OnSessionEnd() override;
     void OnPeerLeave(uint8_t id) override;
+    void OnPeerResync(uint8_t id) override;
     void OnGameStarted() override;
     void OnGameShutdown() override;
     void OnPreProcess() override;

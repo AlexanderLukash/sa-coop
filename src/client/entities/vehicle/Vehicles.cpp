@@ -36,6 +36,10 @@ constexpr uint8_t VEHICLE_CREATED_RANDOM = 1, VEHICLE_CREATED_MISSION = 2, VEHIC
 constexpr float kTrafficIn = 170.0f;   // owned vehicles closer than this to the partner are announced (> car spawn range)
 constexpr float kTrafficOut = 220.0f;  // and dropped from the network beyond this
 
+// Pool slots can be reused for a different car, including the same model.
+// The generation encoded in the script handle distinguishes those instances.
+bool VehicleAlive(const NetVehicle& nv) { return nv.veh && GetVehicle(nv.handle) == nv.veh; }
+
 void SetVehicleCreatedBy(CVehicle* v, uint8_t by) { CallMethod<0x6D5D70>(v, (int)by); }  // keeps CCarCtrl counters right
 
 // A script of this game holds the car: its mission's list (CTheScripts::MissionCleanUp, 75 x {type, handle}, 1 a car)
@@ -139,7 +143,9 @@ NetVehicle* Vehicles::Find(uint16_t netId) {
 
 NetVehicle* Vehicles::Find(CVehicle* v) {
     auto it = m_byPtr.find(v);
-    return it == m_byPtr.end() ? nullptr : Find(it->second);
+    if (it == m_byPtr.end()) return nullptr;
+    NetVehicle* nv = Find(it->second);
+    return nv && nv->veh == v && GetVehicle(nv->handle) == v ? nv : nullptr;
 }
 
 bool Vehicles::IsMirror(const NetVehicle& nv) const { return nv.owner != Net().MyId(); }
@@ -167,6 +173,16 @@ NetVehicle* Vehicles::RegisterOwnedVehicle(CVehicle* v, bool mission, uint16_t f
     nv.model = v->ModelIndex();
     nv.script = mission;
     nv.missionFleetRoot = fleetRoot;
+    nv.spawn.netId = id;
+    nv.spawn.model = nv.model;
+    nv.spawn.owner = nv.owner;
+    nv.spawn.pos = v->GetPosition();
+    if (CMatrix* matrix = v->Matrix()) nv.spawn.rot = Quat::FromMatrix(*matrix);
+    memcpy(nv.spawn.colors, v->Colors(), 4);
+    nv.spawn.health = v->Health();
+    nv.spawn.area = v->AreaCode();
+    nv.spawn.lockState = (uint8_t)v->DoorLock();
+    nv.spawn.script = mission;
     nv.lastChangeMs = NowMs();
     m_byPtr[v] = id;
     Announce(nv);
@@ -187,11 +203,11 @@ void Vehicles::ProvisionMissionFleet(NetVehicle& root) {
     const std::size_t wantedCopies = required > 0 ? required - 1 : 0;
     std::vector<uint16_t> copies;
     for (const auto& [id, nv] : m_byId)
-        if (nv.missionFleetRoot == root.netId && IsVehicleValid(nv.veh)) copies.push_back(id);
+        if (nv.missionFleetRoot == root.netId && VehicleAlive(nv)) copies.push_back(id);
     while (copies.size() > wantedCopies) {
         auto removable = std::find_if(copies.rbegin(), copies.rend(), [this](uint16_t id) {
             NetVehicle* nv = Find(id);
-            return nv && IsVehicleValid(nv->veh) && !HasPlayerInside(nv->veh);
+            return nv && VehicleAlive(*nv) && !HasPlayerInside(nv->veh);
         });
         if (removable == copies.rend()) break;
         uint16_t id = *removable;
@@ -229,7 +245,7 @@ void Vehicles::ProvisionMissionFleet(NetVehicle& root) {
 void Vehicles::RemoveMissionFleet(uint16_t rootId) {
     std::vector<uint16_t> ids;
     for (const auto& [id, nv] : m_byId)
-        if (nv.missionFleetRoot == rootId && IsVehicleValid(nv.veh) && !HasPlayerInside(nv.veh)) ids.push_back(id);
+        if (nv.missionFleetRoot == rootId && VehicleAlive(nv) && !HasPlayerInside(nv.veh)) ids.push_back(id);
     for (uint16_t id : ids) {
         Writer w(proto::G_VEH_REMOVE);
         w.U16(id);
@@ -247,12 +263,12 @@ void Vehicles::UpdateMissionFleets() {
         if (!nv.missionFleetRoot || Find(nv.missionFleetRoot)) continue;
         nv.missionFleetRoot = 0;
         nv.script = false;
-        if (IsVehicleValid(nv.veh) && !ScriptHolds(nv.veh))
+        if (VehicleAlive(nv) && !ScriptHolds(nv.veh))
             SetVehicleCreatedBy(nv.veh, VEHICLE_CREATED_RANDOM);
     }
     std::vector<uint16_t> roots;
     for (const auto& [id, nv] : m_byId)
-        if (nv.script && !nv.missionFleetRoot && nv.owner == Net().MyId() && IsVehicleValid(nv.veh)) roots.push_back(id);
+        if (nv.script && !nv.missionFleetRoot && nv.owner == Net().MyId() && VehicleAlive(nv)) roots.push_back(id);
     for (uint16_t id : roots) {
         NetVehicle* root = Find(id);
         if (!root || !IsVehicleValid(root->veh)) continue;
@@ -288,7 +304,7 @@ void Vehicles::Announce(const NetVehicle& nv) {
 
 void Vehicles::Reannounce() {
     for (auto& [id, nv] : m_byId)
-        if (!IsMirror(nv) && IsVehicleValid(nv.veh)) {
+        if (!IsMirror(nv) && VehicleAlive(nv)) {
             Announce(nv);
             SendLook(nv);
         }
@@ -405,10 +421,9 @@ void Vehicles::HandleCreate(uint8_t from, Reader& r) {
     VehicleSpawn sp;
     if (!sp.Read(r) || from == Net().MyId() || !proto::IsValidEntityId(sp.netId) || sp.owner != from) return;
     if (!core::IsPlayerReady()) return;
-    if (NetVehicle* existing = Find(sp.netId)) {
-        existing->owner = sp.owner;
-        return;
-    }
+    // Reannouncements describe creation, not ownership. A delayed announcement
+    // from the original owner must not undo a later driver ownership transfer.
+    if (Find(sp.netId)) return;
     if (!IsVehicleModel(sp.model)) {
         LOGW("Vehicle %04X has an unknown model %d", sp.netId, sp.model);
         return;
@@ -438,6 +453,7 @@ bool Vehicles::CreateMirror(const VehicleSpawn& sp) {
     nv.model = sp.model;
     nv.createdByUs = !adopted;
     nv.script = sp.script;
+    nv.spawn = sp;
     if (adopted) Protect(nv);
     m_byPtr[v] = sp.netId;
     LOGI("Vehicle %04X (model %d) %s for player %d", sp.netId, sp.model, adopted ? "adopted" : "created", sp.owner);
@@ -448,7 +464,7 @@ void Vehicles::Forget(uint16_t netId, bool deleteVehicle) {
     auto it = m_byId.find(netId);
     if (it == m_byId.end()) return;
     NetVehicle& nv = it->second;
-    if (deleteVehicle && nv.veh && IsVehicleValid(nv.veh)) {
+    if (deleteVehicle && VehicleAlive(nv)) {
         // a deleted car takes its occupants along: the other player's character gets out first
         for (auto& [id, rp] : Players::Instance().All())
             if (rp.ped && IsPedValid(rp.ped) && rp.ped->InVehicle() && rp.ped->Vehicle() == nv.veh) {
@@ -457,7 +473,8 @@ void Vehicles::Forget(uint16_t netId, bool deleteVehicle) {
             }
         Cmd(0x00A6).I(GetVehicleRef(nv.veh)).Run();  // DELETE_CAR
     }
-    m_byPtr.erase(nv.veh);
+    auto ptr = m_byPtr.find(nv.veh);
+    if (ptr != m_byPtr.end() && ptr->second == netId) m_byPtr.erase(ptr);
     m_byId.erase(it);
 }
 
@@ -465,7 +482,7 @@ void Vehicles::Forget(uint16_t netId, bool deleteVehicle) {
 // over by the other player was deleted here as soon as this player got far, with the other player's character in it).
 void Vehicles::Protect(NetVehicle& nv) {
     CVehicle* v = nv.veh;
-    if (!IsVehicleValid(v) || v->CreatedBy() == VEHICLE_CREATED_MISSION) return;
+    if (!VehicleAlive(nv) || v->CreatedBy() == VEHICLE_CREATED_MISSION) return;
     if (!nv.createdByUs && !nv.origBy) nv.origBy = v->CreatedBy();
     SetVehicleCreatedBy(v, VEHICLE_CREATED_MISSION);
 }
@@ -475,7 +492,7 @@ void Vehicles::Protect(NetVehicle& nv) {
 void Vehicles::Release(NetVehicle& nv) {
     CVehicle* v = nv.veh;
     uint8_t by = nv.createdByUs ? (nv.script ? VEHICLE_CREATED_MISSION : VEHICLE_CREATED_RANDOM) : nv.origBy;
-    if (IsVehicleValid(v) && by && v->CreatedBy() != by && !ScriptHolds(v)) SetVehicleCreatedBy(v, by);
+    if (VehicleAlive(nv) && by && v->CreatedBy() != by && !ScriptHolds(v)) SetVehicleCreatedBy(v, by);
     nv.origBy = 0;
 }
 
@@ -495,7 +512,7 @@ std::vector<uint16_t> Vehicles::ClearMirrors(const CVector& at, float radius) {
     std::vector<uint16_t> ids;
     for (auto& [id, nv] : m_byId) {
         CVehicle* v = nv.veh;
-        if (!IsMirror(nv) || nv.script || !IsVehicleValid(v) || v->Driver()) continue;
+        if (!IsMirror(nv) || nv.script || !VehicleAlive(nv) || v->Driver()) continue;
         bool empty = true;
         for (int i = 0; i < 8; ++i) empty = empty && !v->Passengers()[i];
         CVector d = v->GetPosition() - at;
@@ -511,7 +528,7 @@ void Vehicles::HandleClear(uint8_t from, Reader& r) {
     for (uint8_t i = 0; i < n && r.Ok() && from == Net().HostId(); ++i) {
         uint16_t id = r.U16();
         NetVehicle* nv = r.Ok() ? Find(id) : nullptr;
-        if (!nv || IsMirror(*nv) || !IsVehicleValid(nv->veh)) continue;
+        if (!nv || IsMirror(*nv) || !VehicleAlive(*nv)) continue;
         if (nv->veh->Driver() || HasPlayerInside(nv->veh)) {  // got in meanwhile: the host gets its copy back
             Announce(*nv);
             continue;
@@ -532,7 +549,8 @@ void Vehicles::ForgetOwnedBy(uint8_t owner) {
 void Vehicles::HandleRemove(uint8_t from, Reader& r) {
     uint16_t id = r.U16();
     if (!r.Ok()) return;
-    m_pending.erase(id);
+    auto pending = m_pending.find(id);
+    if (pending != m_pending.end() && pending->second.owner == from) m_pending.erase(pending);
     NetVehicle* nv = Find(id);
     if (!nv || nv->owner != from) return;
     Drop(id);
@@ -584,14 +602,15 @@ void Vehicles::HandleHandover(uint8_t from, Reader& r) {
     uint16_t id = r.U16();
     uint8_t to = r.U8();
     if (!r.Ok()) return;
-    m_pending.erase(id);
+    auto pending = m_pending.find(id);
+    if (pending != m_pending.end() && pending->second.owner == from) m_pending.erase(pending);
     NetVehicle* nv = Find(id);
     if (!nv) return;
     if (nv->owner != from) {  // this game took it just before: the giver deleted its own, it gets this one back
-        if (nv->owner == Net().MyId() && IsVehicleValid(nv->veh)) Announce(*nv);
+        if (nv->owner == Net().MyId() && VehicleAlive(*nv)) Announce(*nv);
         return;
     }
-    if (to != Net().MyId() || !IsVehicleValid(nv->veh)) return Forget(id, true);
+    if (to != Net().MyId() || !VehicleAlive(*nv)) return Forget(id, true);
     CVehicle* v = nv->veh;
     int h = nv->handle;
     if (!ScriptHolds(v)) SetVehicleCreatedBy(v, VEHICLE_CREATED_RANDOM);  // this game's traffic now
@@ -626,9 +645,9 @@ void Vehicles::HandleOwner(uint8_t from, Reader& r) {
     uint8_t owner = r.U8();
     if (!r.Ok() || owner != from) return;
     NetVehicle* nv = Find(id);
-    if (!nv) return;
+    if (!nv || nv->owner == owner) return;
     CPlayerPed* me = FindPlayerPed(0);
-    bool iDrive = me && nv->veh && me->InVehicle() && me->Vehicle() == nv->veh && nv->veh->Driver() == me;
+    bool iDrive = me && VehicleAlive(*nv) && me->InVehicle() && me->Vehicle() == nv->veh && nv->veh->Driver() == me;
     if (iDrive && owner != Net().MyId()) {
         // we are driving it right now: keep ownership, tell the others again
         Writer w(proto::G_VEH_OWNER);
@@ -643,7 +662,7 @@ void Vehicles::HandleOwner(uint8_t from, Reader& r) {
     if (owner == Net().MyId()) {
         Release(*nv);
     } else if (wasMine) {
-        nv->heldHere = IsVehicleValid(nv->veh) && ScriptHolds(nv->veh);
+        nv->heldHere = VehicleAlive(*nv) && ScriptHolds(nv->veh);
         Protect(*nv);
     }
 }
@@ -653,7 +672,7 @@ void Vehicles::HandleOwner(uint8_t from, Reader& r) {
 void Vehicles::HandleScriptFree(uint8_t from, Reader& r) {
     uint16_t id = r.U16();
     NetVehicle* nv = r.Ok() ? Find(id) : nullptr;
-    if (!nv || IsMirror(*nv) || !IsVehicleValid(nv->veh)) return;
+    if (!nv || IsMirror(*nv) || !VehicleAlive(*nv)) return;
     nv->script = false;
     if (nv->createdByUs && nv->veh->CreatedBy() == VEHICLE_CREATED_MISSION && !ScriptHolds(nv->veh))
         SetVehicleCreatedBy(nv->veh, VEHICLE_CREATED_RANDOM);
@@ -782,9 +801,40 @@ void Vehicles::OnPreProcess() {
     float dt = TimeStep() / 50.0f;
     std::vector<uint16_t> dead;
     for (auto& [id, nv] : m_byId) {
-        if (!nv.veh || !IsVehicleValid(nv.veh) || nv.veh->ModelIndex() != nv.model) {
-            dead.push_back(id);
-            continue;
+        if (!VehicleAlive(nv) || nv.veh->ModelIndex() != nv.model) {
+            auto ptr = m_byPtr.find(nv.veh);
+            if (ptr != m_byPtr.end() && ptr->second == id) m_byPtr.erase(ptr);
+            if (!IsMirror(nv)) {
+                dead.push_back(id);
+                continue;
+            }
+            // Local streaming/cleanup may destroy a copy while its owner still
+            // has the real vehicle. Retain the network record and latest state.
+            nv.veh = nullptr;
+            nv.handle = -1;
+            if (NowMs() - nv.mirrorRetryMs < 250) continue;
+            nv.mirrorRetryMs = NowMs();
+            VehicleSpawn sp = nv.spawn;
+            sp.owner = nv.owner;
+            sp.script = nv.script;
+            if (nv.hasState) {
+                sp.pos = nv.state.pos;
+                sp.rot = nv.state.rot;
+                sp.health = nv.state.health;
+            }
+            if (nv.hasLook) {
+                memcpy(sp.colors, nv.look.colors, 4);
+                sp.lockState = nv.look.lock;
+            }
+            nv.veh = SpawnMirror(sp);
+            if (!nv.veh) continue;
+            nv.handle = GetVehicleRef(nv.veh);
+            nv.createdByUs = true;
+            nv.origBy = 0;
+            nv.heldHere = false;
+            nv.groundCheckMs = nv.lookCheckMs = 0;
+            m_byPtr[nv.veh] = id;
+            LOGI("Vehicle %04X mirror restored", id);
         }
         if (IsMirror(nv)) ApplyMirror(nv, dt);
     }
@@ -795,7 +845,10 @@ void Vehicles::OnPreProcess() {
             w.U16(id);
             Net().Send(proto::CH_RELIABLE, w);
         }
-        if (nv) m_byPtr.erase(nv->veh);
+        if (nv) {
+            auto ptr = m_byPtr.find(nv->veh);
+            if (ptr != m_byPtr.end() && ptr->second == id) m_byPtr.erase(ptr);
+        }
         m_byId.erase(id);
     }
 }
@@ -814,7 +867,7 @@ void Vehicles::ScanTraffic() {
     if (!pool) return;
     std::vector<uint16_t> gone;
     for (auto& [id, nv] : m_byId)
-        if (!IsMirror(nv) && !nv.missionFleetRoot && IsVehicleValid(nv.veh) &&
+        if (!IsMirror(nv) && !nv.missionFleetRoot && VehicleAlive(nv) &&
             !ScriptHolds(nv.veh) && !HasPlayerInside(nv.veh) &&
             RemoteDistance(nv.veh->GetPosition(), nv.veh->AreaCode()) > kTrafficOut)
             gone.push_back(id);
@@ -823,7 +876,7 @@ void Vehicles::ScanTraffic() {
         w.U16(id);
         Net().Send(proto::CH_RELIABLE, w);
         // a copy of the other game's car this player took: off the network an ordinary car (a mission one stayed forever)
-        if (NetVehicle* nv = Find(id); nv && nv->createdByUs && IsVehicleValid(nv->veh) &&
+        if (NetVehicle* nv = Find(id); nv && nv->createdByUs && VehicleAlive(*nv) &&
                                        nv->veh->CreatedBy() == VEHICLE_CREATED_MISSION && !ScriptHolds(nv->veh) &&
                                        GetVehicleRef(nv->veh) != m_kept)
             SetVehicleCreatedBy(nv->veh, VEHICLE_CREATED_RANDOM);
@@ -882,6 +935,7 @@ void Vehicles::OnPostProcess() {
         ScanTraffic();
     }
     for (auto& [id, nv] : m_byId) {
+        if (!VehicleAlive(nv)) continue;
         if (IsMirror(nv)) {
             // keep the visual controls after the physics step (wheels, brake lights)
             if (nv.hasState) {
@@ -922,7 +976,7 @@ void Vehicles::OnSessionEnd() {
         if (IsMirror(nv)) {
             nv.script = false;
             Release(nv);
-        } else if (nv.missionFleetRoot && IsVehicleValid(nv.veh) && !ScriptHolds(nv.veh)) {
+        } else if (nv.missionFleetRoot && VehicleAlive(nv) && !ScriptHolds(nv.veh)) {
             SetVehicleCreatedBy(nv.veh, VEHICLE_CREATED_RANDOM);  // party copies become ordinary cars after disconnect
         }
     m_byId.clear();

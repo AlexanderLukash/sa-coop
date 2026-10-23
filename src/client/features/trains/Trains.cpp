@@ -9,6 +9,8 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "common/lib/sync/StateTiming.h"
+#include "common/lib/sync/RemovalHistory.h"
 #include "common/lib/util/Util.h"
 #include "entities/player/Players.h"
 #include "shared/api/net-session/Session.h"
@@ -45,12 +47,14 @@ bool g_copying = false;                // a copy is being made: not ours
 // the other games'
 struct Copy {
     CVehicle* engine;
+    int handle;
     uint8_t kind;
     int8_t track;
     float rail, speed;
     uint64_t ms;
 };
 std::map<uint32_t, Copy> g_copies;  // by owner << 16 | its id
+sync::RemovalHistory g_removed;  // reliable deletion can overtake a final state packet
 bool g_randomOff = false;           // we switched the random trains off
 
 using CreateTrainFn = void(__cdecl*)(CVector, bool, uint32_t, CVehicle**, CVehicle**, int32_t, int32_t, bool);
@@ -62,6 +66,8 @@ void __cdecl HookCreateMissionTrain(CVector pos, bool clockwise, uint32_t kind, 
 }
 
 bool IsEngine(CVehicle* v) { return IsVehicleValid(v) && v->IsTrain() && (Flags(v) & kFrontCarriage); }
+
+bool CopyAlive(const Copy& c) { return GetVehicle(c.handle) == c.engine && IsEngine(c.engine); }
 
 void SendGone(uint16_t id) {
     Writer w(proto::G_TRAIN);
@@ -97,7 +103,7 @@ void SendOurs() {
 
 // the copy goes with whoever is in it put out first (a vehicle deleted with peds inside leaves them dangling)
 void RemoveCopy(const Copy& c) {
-    if (!IsEngine(c.engine)) return;
+    if (!CopyAlive(c)) return;
     for (CVehicle* t = c.engine; t; t = NextCarriage(t)) {
         CVector p = t->GetPosition();
         if (CPed* d = t->Driver()) Cmd(0x0362).I(GetPedRef(d)).F(p.x).F(p.y).F(p.z + 3.0f).Run();  // WARP_CHAR_FROM_CAR_TO_COORD
@@ -121,8 +127,10 @@ void HandleTrain(uint8_t from, Reader& r) {
     auto it = g_copies.find(key);
     if (op == TRAIN_GONE) {
         if (it != g_copies.end()) RemoveCopy(it->second), g_copies.erase(it);
+        g_removed.Remember(key, NowMs());
         return;
     }
+    if (g_removed.Contains(key, NowMs())) return;
     uint8_t kind = r.U8();
     int8_t track = r.I8();
     bool clockwise = r.U8() != 0;
@@ -131,7 +139,7 @@ void HandleTrain(uint8_t from, Reader& r) {
     if (!r.Ok() || op != TRAIN_STATE || kind > 15 || track < 0 || track > 3 ||
         !std::isfinite(rail) || !std::isfinite(speed) ||
         !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) return;  // CTrain's kinds and tracks
-    if (it != g_copies.end() && (it->second.kind != kind || it->second.track != track || !IsEngine(it->second.engine))) {
+    if (it != g_copies.end() && (it->second.kind != kind || it->second.track != track || !CopyAlive(it->second))) {
         RemoveCopy(it->second);
         g_copies.erase(it);
         it = g_copies.end();
@@ -144,7 +152,7 @@ void HandleTrain(uint8_t from, Reader& r) {
         g_copying = false;
         if (!first) return;
         for (CVehicle* t = first; t; t = NextCarriage(t)) t->DoorLock() = 2;  // CARLOCK_LOCKED: driven in its game
-        it = g_copies.emplace(key, Copy{first, kind, track, rail, speed, NowMs()}).first;
+        it = g_copies.emplace(key, Copy{first, GetVehicleRef(first), kind, track, rail, speed, NowMs()}).first;
         LOGI("Train %d of player %d (kind %d, track %d) copied", id, from, kind, track);
     }
     it->second.rail = rail;
@@ -175,15 +183,20 @@ public:
     }
     void OnSessionEnd() override {
         RemoveCopies();
+        g_removed.Clear();
         g_ids.clear();
         if (g_randomOff) Ref<uint8_t>(kDisableRandomTrains) = 0, g_randomOff = false;
     }
-    void OnPeerLeave(uint8_t id) override { RemoveCopies(id); }
-    void OnPeerResync(uint8_t id) override { RemoveCopies(id); }  // its game started over
+    void OnPeerLeave(uint8_t id) override {
+        RemoveCopies(id);
+        g_removed.ForgetOwner(id);
+    }
+    void OnPeerResync(uint8_t id) override { OnPeerLeave(id); }  // its game started over
     void OnGameShutdown() override {
         // Clear before loading, not when the world becomes playable: trains
         // created by loading/prologue scripts must retain their recorded kind.
         g_copies.clear();
+        g_removed.Clear();
         g_kinds.clear();
         g_ids.clear();
         g_sendMs = 0;
@@ -193,16 +206,18 @@ public:
     void OnPreProcess() override {
         if (!Net().Online() || !core::IsPlayerReady()) return;
         SwitchRandomTrains();
+        g_removed.Expire(NowMs());
         // where the real train is now: its place and speed as sent, moved on by the time since (a step is 20 ms)
         for (auto it = g_copies.begin(); it != g_copies.end();) {
             Copy& c = it->second;
-            if (!IsEngine(c.engine) || NowMs() - c.ms > 3000) {
+            if (!CopyAlive(c) || sync::AgeMs(NowMs(), c.ms) > 10000) {
                 RemoveCopy(c);
                 it = g_copies.erase(it);
                 continue;
             }
-            Speed(c.engine) = c.speed;
-            RailDistance(c.engine) = c.rail + c.speed * (float)(NowMs() - c.ms) / 20.0f;
+            uint64_t age = sync::AgeMs(NowMs(), c.ms);
+            Speed(c.engine) = c.speed * sync::Freshness(age, 500, 1000);
+            RailDistance(c.engine) = c.rail + c.speed * sync::ExtrapolationSeconds(age, 300) * 50.0f;
             ++it;
         }
     }

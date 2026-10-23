@@ -487,6 +487,20 @@ CPed* Peds::SpawnMirror(NetPed& np) {
     ped->AreaCode() = st.area;
     np.ped = ped;
     np.handle = handle;
+    // Cached tasks belonged to the previous local instance. A replacement needs
+    // death, animations and aiming applied again from its current network state.
+    np.deadApplied = false;
+    np.lastHitMs = np.lastRamMs = 0;
+    np.lastTaskMs = 0;
+    np.lastTaskMove = 0;
+    np.lastClip = -1;
+    np.lastWeapon = 0;
+    np.gunMode = 0;
+    np.gunTargetHandle = -1;
+    np.gunTaskMs = np.enterTaskMs = np.leaveTaskMs = 0;
+    np.enterVeh = 0;
+    np.animBlock = np.baseBlock = 0xFFFF;
+    np.animFull = false;
     m_byPtr[ped] = np.netId;
     return ped;
 }

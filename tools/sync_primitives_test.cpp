@@ -7,12 +7,40 @@
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/buffer/Buffer.h"
 #include "common/lib/sync/StateTiming.h"
+#include "common/lib/sync/RemovalHistory.h"
 #include "common/lib/sync/MissionCapacity.h"
 #include "common/lib/sync/GarageRestore.h"
 
 using namespace coop;
 
 int main() {
+    // A reliable TRAIN_GONE can overtake an older state on the other channel.
+    sync::RemovalHistory removed;
+    constexpr uint32_t trainA = (1u << 16) | 7, trainB = (2u << 16) | 7;
+    assert(!removed.Contains(trainA, 100));
+    removed.Remember(trainA, 100);
+    assert(removed.Contains(trainA, 101));
+    assert(!removed.Contains(trainB, 101));  // IDs are scoped to their sender
+    assert(removed.Contains(trainA, 10100));
+    assert(!removed.Contains(trainA, 10101));  // reuse allowed after the retention period
+    removed.Expire(10101);
+    removed.Remember(trainA, 11000);
+    removed.Remember(trainB, 11000);
+    removed.ForgetOwner(1);  // peer restarted; its ID namespace starts over
+    assert(!removed.Contains(trainA, 11001));
+    assert(removed.Contains(trainB, 11001));
+    removed.Clear();
+    assert(!removed.Contains(trainB, 11001));
+
+    // Lost train packets must not project motion for the entire outage.
+    float previous = -1;
+    for (uint64_t age : {0ull, 100ull, 300ull, 500ull, 1500ull, 9000ull}) {
+        float distance = 2.0f * sync::ExtrapolationSeconds(age, 300) * 50.0f;
+        assert(distance >= previous && distance <= 30.001f);
+        previous = distance;
+    }
+    assert(sync::Freshness(1500, 500, 1000) == 0.0f);
+
     std::vector<uint16_t> expectedGarageModels{411, 451, 411};
     assert(sync::ConsumeGarageRestoreModel(expectedGarageModels, 411));
     assert(sync::ConsumeGarageRestoreModel(expectedGarageModels, 411));

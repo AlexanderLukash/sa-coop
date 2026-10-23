@@ -42,6 +42,8 @@ struct NetVehicle {
     uint8_t origBy = 0;        // what this game had it created by before it became a mirror here (0: spawned as one)
     bool heldHere = false;     // a script of this game held it when it became a mirror here
 
+    VehicleSpawn spawn;  // fallback for recreating a locally lost mirror before its first state
+    uint64_t mirrorRetryMs = 0;
     bool hasState = false;
     VehicleState state;
     uint64_t recvMs = 0;
