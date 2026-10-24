@@ -9,6 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Karimov-Akbar/sa-coop" alt="Лицензия MIT"></a>
   <img src="https://img.shields.io/badge/GTA_San_Andreas-1.0_US-orange" alt="GTA San Andreas 1.0 US">
   <a href="https://t.me/cavalier_mods"><img src="https://img.shields.io/badge/%D0%9D%D0%BE%D0%B2%D0%BE%D1%81%D1%82%D0%B8-Telegram-26A5E4?logo=telegram&logoColor=white" alt="Новости в Telegram"></a>
+  <a href="https://dalink.to/itscavalier"><img src="https://img.shields.io/badge/%D0%9F%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B0%D1%82%D1%8C_%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82-DonationAlerts-F57507" alt="Поддержать проект"></a>
 </p>
 
 <p align="center"><b>Русский</b> · <a href="README.en.md">English</a></p>
@@ -276,9 +277,3 @@ src/
 
 SA:COOP не связан с Rockstar Games и Take-Two Interactive. Для игры нужна своя копия GTA San Andreas, файлов
 игры в репозитории нет.
-
-## Поддержать проект
-
-<p align="left">
-  <a href="https://dalink.to/itscavalier"><img src="https://img.shields.io/badge/DonationAlerts-F57507?style=for-the-badge" alt="Поддержать"></a>
-</p>
