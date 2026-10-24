@@ -227,7 +227,7 @@ section clears everything the mod draws: the chat, the names over the players an
 
 Report bugs, crashes and ideas in [Issues](../../issues/new/choose). A short form opens there: what happened, how
 to make it happen again, the mod version and which game you have. The form is in Russian, but you can answer in
-English. A [Telegram group](https://t.me/+GNKZb83LqBQyMGEy) is also available if you encounter difficulties sending to GitHub.
+English. A [Telegram group](https://t.me/sacoop_forum) is also available if you encounter difficulties sending to GitHub.
 
 With a bug report, attach `coop\coop.log` from the game folder of the player who had the problem. If the game
 crashed, also attach `coop\crash.log`, and if you cannot connect, attach the host's `coop\server-data\server.log`.
