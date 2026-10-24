@@ -279,6 +279,6 @@ SA:COOP не связан с Rockstar Games и Take-Two Interactive. Для иг
 
 ## Поддержать проект
 
-<p align="center">
-  <a href="https://dalink.to/itscavalier"><img src="https://img.shields.io/badge/%D0%9F%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B0%D1%82%D1%8C_%D0%BA%D0%B0%D0%BD%D0%B0%D0%BB-DonationAlerts-F57507?style=for-the-badge" alt="Поддержать"></a>
+<p align="left">
+  <a href="https://dalink.to/itscavalier"><img src="https://img.shields.io/badge/DonationAlerts-F57507?style=for-the-badge" alt="Поддержать"></a>
 </p>
