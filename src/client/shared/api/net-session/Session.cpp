@@ -101,8 +101,11 @@ void Session::Update() {
         if (m_state == State::Connecting) {
             m_state = State::Failed;
             if (m_failReason.empty())
-                m_failReason = TR("Сервер не отвечает. Проверьте адрес, порт и брандмауэр.",
-                                  "The server does not answer. Check the address, the port and the firewall.");
+                // the host's own game is in through 127.0.0.1: what keeps a friend out is mostly its firewall or antivirus
+                m_failReason = TR("Сервер не отвечает. Чаще всего к нему не пускает брандмауэр или антивирус хоста: пусть хост "
+                                  "создаст игру заново и подтвердит запрос Windows. Проверьте также адрес и порт.",
+                                  "The server does not answer. Most often the host's firewall or antivirus keeps you out: let the "
+                                  "host create the game again and confirm the Windows prompt. Also check the address and the port.");
         } else if (m_state == State::Online) {
             m_state = State::Failed;
             if (m_failReason.empty()) m_failReason = TR("Соединение с сервером потеряно.", "Lost connection to the server.");

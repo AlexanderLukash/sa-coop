@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 
 #include "common/lib/buffer/Buffer.h"
@@ -25,6 +26,7 @@ struct PedSyncState {
     // action animation (anything but locomotion): IFP block + index inside it, 0xFFFF = none
     uint16_t animBlock = 0xFFFF, animIdx = 0, animFlags = 0;
     float animTime = 0;
+    uint8_t walkGroup = 0xFF;  // CPed::m_nAnimGroup: its walk set (a script's SET_ANIM_GROUP_FOR_CHAR: drunk, old, ...)
 
     enum : uint8_t {
         F_DEAD = 1,
@@ -34,6 +36,7 @@ struct PedSyncState {
         F_FIRING = 16,
         F_ENTERING = 32,  // walking to / opening vehicle vehNetId
         F_LEAVING = 64,
+        F_NO_DRAG = 128,  // its script keeps it at the wheel (SET_CHAR_CANT_BE_DRAGGED_OUT)
     };
 };
 
@@ -59,7 +62,11 @@ struct NetPed {
     game::CVector lastTaskTarget;
     uint8_t lastTaskMove = 0;
     bool deadApplied = false;
+    uint64_t corpseMs = 0;   // its body last moved to where its owner's lies
     uint64_t lastHitMs = 0;  // our player hit it (sent to the owner): its loot falls here if it dies of it
+    uint64_t askedMs = 0;    // we asked its owner for it (a Grove member to recruit, a hooker by our car)
+    uint8_t hitWeapon = 0, hitPiece = 0, hitDir = 0;  // that hit: it dies of the same one here
+    bool dying = false;                               // its death goes through the game's damage (Damage lets it pass)
     uint64_t lastRamMs = 0;  // our player's car hit it (sent once per contact)
     uint8_t gunMode = 0;  // 0 none, 1 aiming, 2 shooting
     int gunTargetHandle = -1;  // ped aimed at, -1: gunTarget point
@@ -68,6 +75,8 @@ struct NetPed {
     uint64_t weaponMs = 0;     // the last weapon change: its own timer, the walk tasks' held a walking mirror's gun back
     uint16_t enterVeh = 0;
     uint64_t enterTaskMs = 0, leaveTaskMs = 0;
+    uint64_t duckMs = 0;  // its crouch last set as the owner's
+    bool hanging = false;  // its owner is in the air there (a rope, a fall): the copy is held where it is
     uint16_t animBlock = 0xFFFF, animIdx = 0;  // action animation replayed on the mirror
     uint16_t baseBlock = 0xFFFF, baseIdx = 0;  // the full-body one under it (a fight stance under punches)
     float animTime = 0;                         // owner's time of it in the latest state (restarts go back)
@@ -95,6 +104,7 @@ public:
     // the model here of the special character `name`: its slot, or a free one asked for it, from the top (scripts and
     // cutscenes fill them from 290); -1 while it loads or with no slot free
     int SpecialModelFor(const std::string& name);
+    void SpecialWorn(int model);  // a copy wears a special model we asked for: it is kept by that from now on
     // a script here fills that slot with another character: the copies wearing it are made again elsewhere (the game
     // drops the model from under script people, and a copy is one)
     void RespawnCopiesOf(int model);
@@ -103,12 +113,18 @@ public:
     // our ped goes to player `to` (it takes the mirror over as its own) and ours is deleted
     void GiveAway(uint16_t netId, uint8_t to);
     // this game would drop the ped, the other player is nearer: it goes to that player's game (false: not ours to give)
-    bool QueueGiveAway(game::CPed* ped, uint8_t to);
+    // noGround: this game has no ground under it any more (it would fall through the map), so its own view does not count
+    bool QueueGiveAway(game::CPed* ped, uint8_t to, bool noGround = false);
     // a kind of ped the other game can take over (a mirror is a civilian there: no cops, medics or firemen)
     static bool CanGiveAwayType(const NetPed& np);
+    static bool CanGiveAwayType(const NetPed& np, uint8_t to);  // a cop to the game of a wanted player, too
+    // a script that runs in each game for its own player made this ped (a shop's seller, the range's shooters, a
+    // casino's dealers, an airport's guard): it stays this game's own (sideJob: a side job's, kept local only indoors)
+    void MarkLocal(game::CPed* ped, bool sideJob);
 
 private:
     void ScanOwned();
+    void AskForTheirs();
     void Announce(NetPed& np);
     void SendState(NetPed& np);
     void HandleCreate(uint8_t from, Reader& r);
@@ -126,7 +142,9 @@ private:
     std::map<game::CPed*, uint16_t> m_byPtr;
     uint16_t m_nextId = 1;
     std::map<int, std::string> m_specialNames;
+    std::set<int> m_ourSpecials;  // special slots SpecialModelFor asked for (no script or cutscene holds them)
     std::map<game::CPed*, uint8_t> m_giveAway;  // to hand over after the population code (ped -> player)
+    std::map<int, bool> m_local;                // MarkLocal: script handle -> made by a side job
     uint64_t m_lastScan = 0, m_lastStatsMs = 0;
     bool m_wasReady = false;
     int m_mirrorShots = 0;  // diagnostics: shots fired by mirrors since the last stats line

@@ -62,6 +62,8 @@ public:
     // UI scale relative to 1080p.
     float Scale() const { return m_height / 1080.0f; }
     bool Ready() const { return m_ready; }
+    // nothing drawn shows (the frame's callers still run): a clean picture to record
+    void SetHidden(bool hidden) { m_hidden = hidden; }
 
     void Invalidate();  // destroy textures (device reset / shutdown)
     // Tests: the frame drawn so far (the game's back buffer, never other windows) as a 24-bit BMP, scaled down.
@@ -108,6 +110,7 @@ private:
     int m_fontHeightFor = 0;  // screen height the atlases were built for
     bool m_ready = false;
     bool m_inFrame = false;
+    bool m_hidden = false;
 };
 
 Renderer& Gfx();

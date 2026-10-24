@@ -3,6 +3,7 @@
 #include <bcrypt.h>
 #include <ws2tcpip.h>
 
+#include <algorithm>
 #include <random>
 
 #include "common/lib/log/Log.h"
@@ -26,6 +27,12 @@ enum : uint16_t {
     A_TRANSPORT = 0x0019,
 };
 using Bytes = std::vector<uint8_t>;
+
+void BigBuffers(SOCKET s) {  // a burst of the server's datagrams overflowed the default buffers and was dropped
+    int size = 1 << 20;
+    setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char*)&size, sizeof(size));
+    setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char*)&size, sizeof(size));
+}
 
 Bytes Digest(LPCWSTR alg, const Bytes* hmacKey, const void* data, size_t len) {
     Bytes out;
@@ -263,12 +270,14 @@ void TurnRelay::OnTurnPacket(const uint8_t* data, size_t len) {
     if (peer.local == INVALID_SOCKET) {
         // a new friend: its own socket towards the game port, ENet sees it as 127.0.0.1:<port>
         peer.local = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        BigBuffers(peer.local);
         sockaddr_in game{};
         game.sin_family = AF_INET;
         game.sin_port = htons(m_gamePort);
         game.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         connect(peer.local, (sockaddr*)&game, sizeof(game));
         peer.addr = from;
+        peer.reportMs = NowMs();
         char ip[32];
         inet_ntop(AF_INET, &from.sin_addr, ip, sizeof(ip));
         LOGI("TURN: игрок %s:%u подключается через ретранслятор", ip, ntohs(from.sin_port));
@@ -276,6 +285,8 @@ void TurnRelay::OnTurnPacket(const uint8_t* data, size_t len) {
     peer.lastMs = NowMs();
     const Bytes& d = p.attrs[A_DATA];
     send(peer.local, (const char*)d.data(), (int)d.size(), 0);
+    ++peer.fromCount;
+    peer.fromBytes += d.size();
 }
 
 void TurnRelay::RefreshPermissions() {
@@ -298,6 +309,7 @@ void TurnRelay::RefreshPermissions() {
 void TurnRelay::Thread() {
     if (!Credentials()) return;
     m_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    BigBuffers(m_sock);
     Bytes resp;
     if (!Request(ALLOCATE, {Attr(A_TRANSPORT, "\x11\0\0\0", 4)}, &resp)) {
         LOGW("TURN: не удалось получить адрес ретранслятора у %s", m_host.c_str());
@@ -335,10 +347,25 @@ void TurnRelay::Thread() {
             for (auto& [k, peer] : m_peers) {
                 if (!FD_ISSET(peer.local, &fds)) continue;
                 int n = recv(peer.local, (char*)buf, sizeof(buf), 0);
-                if (n > 0) SendIndication(peer.addr, buf, (size_t)n);  // game -> friend
+                if (n <= 0) continue;
+                SendIndication(peer.addr, buf, (size_t)n);  // game -> friend
+                ++peer.toCount;
+                peer.toBytes += (uint64_t)n;
+                peer.toMax = std::max(peer.toMax, (uint32_t)n);
             }
         }
         uint64_t now = NowMs();
+        for (auto& [k, peer] : m_peers) {
+            if (now - peer.reportMs < 30000 || !(peer.toCount || peer.fromCount)) continue;
+            char ip[32];
+            inet_ntop(AF_INET, &peer.addr.sin_addr, ip, sizeof(ip));
+            LOGI("TURN: %s:%u за %u с: другу %u пакетов (%llu КБ, до %u байт), от друга %u (%llu КБ)", ip,
+                 ntohs(peer.addr.sin_port), (unsigned)((now - peer.reportMs) / 1000), peer.toCount, peer.toBytes / 1024,
+                 peer.toMax, peer.fromCount, peer.fromBytes / 1024);
+            peer.toCount = peer.fromCount = peer.toMax = 0;
+            peer.toBytes = peer.fromBytes = 0;
+            peer.reportMs = now;
+        }
         bool newPeers;
         {
             std::lock_guard<std::mutex> lock(m_mutex);

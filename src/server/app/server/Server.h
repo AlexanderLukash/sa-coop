@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -75,6 +76,8 @@ private:
     void TellToWait(Player& p);
     void SendProfile(Player& p);
     void SaveProfile(Player& p, const std::vector<uint8_t>& data);
+    void WriteProfiles();      // the profile writer's thread
+    void WaitProfileWrites();  // returns once what is queued is on the disk
     void ResetProfiles();
 
     void Relay(Player& from, uint8_t channel, const uint8_t* data, size_t size, uint32_t flags);
@@ -111,6 +114,10 @@ private:
 
     std::mutex m_cmdMutex;
     std::vector<std::string> m_cmdQueue;
+
+    std::mutex m_writeMutex;
+    std::map<std::wstring, std::vector<uint8_t>> m_profileWrites;  // the latest for each file, to be written
+    bool m_writing = false;                                         // the writer's thread runs
 };
 
 }  // namespace coop::server

@@ -16,6 +16,7 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "entities/mission/Mission.h"
 #include "entities/player/Players.h"
 #include "entities/session/Flow.h"
 #include "entities/vehicle/Vehicles.h"
@@ -241,18 +242,26 @@ struct Door {
 };
 Door g_doors[kMaxGarages];
 
-bool DoorShared(uint8_t t) { return (t >= 2 && t <= 5) || (t >= 36 && t <= 38); }  // bomb shops, Pay 'n' Spray, mod shops
+// The doors a script opens and shuts (mission garages, the burglary lockup BURG_LK, the script-controlled ones): during
+// the host's story mission they are its mission's, and the partner's followed nothing. "Home Invasion" opens the
+// lockup for the van: shut in the partner's game, the van's copy was driven into it and the partner fell through.
+bool ScriptDoor(uint8_t t) { return t == 1 || t == 14 || t == 15 || (t >= 19 && t <= 21) || t == 23; }
+bool DoorShared(uint8_t t) { return (t >= 2 && t <= 5) || (t >= 36 && t <= 38) || ScriptDoor(t); }  // + bomb shops, Pay 'n' Spray, mod shops
 
 // whose game drives the door: the player's whose car is in the garage, else of the players within 30 m (a mod shop
 // keeps its door open that near) one in a car before one on foot, the nearer of two alike (the host's when they are
 // about as near); nobody near: each game its own. Both games come to the same answer.
 bool Theirs(void* g, uint8_t from) {
+    // a script's door: the host's mission drives it in both games, out of a mission each game's own scripts do
+    if (ScriptDoor(TypeOf(g))) return !Net().IsHost() && from == Net().HostId() && HostMissionRecent(0);
     const RemotePlayer* rp = Players::Instance().Get(from);
     CPlayerPed* me = FindPlayerPed(0);
     if (!rp || !rp->hasState || !me) return false;
     CVehicle* car = FindPlayerVehicle();
     bool theyRide = rp->mode != RemotePlayer::Mode::OnFoot, theyOut = rp->state.area != 0;  // the garages are outdoors
-    if (car && Inside(g, car->GetPosition())) return false;
+    // our car inside: ours to drive, unless we only ride in it (FindPlayerVehicle counts a passenger): the passenger's
+    // Pay 'n' Spray resprayed the copy and took the passenger's $100 too, its bomb shop armed it for $500
+    if (car && Inside(g, car->GetPosition())) return car->Driver() != FindPlayerPed(0);
     if (theyRide && !theyOut && Inside(g, rp->state.pos)) return true;
     CVector c{(Field<float>(g, 0x28) + Field<float>(g, 0x2C)) / 2, (Field<float>(g, 0x30) + Field<float>(g, 0x34)) / 2,
               Field<float>(g, 0x08)};  // the middle of its box (m_fLeftCoord..m_fBackCoord), on the floor
@@ -282,7 +291,8 @@ void __fastcall HookGarageUpdate(void* g, void* edx, int id) {  // CGarages::Upd
     } else {
         // ours again: left shut, a Pay 'n' Spray or a bomb shop would respray or arm our car wherever it is, take our
         // money and clear our wanted level
-        if (d.mirroring && TypeOf(g) <= 5 && state != STATE_OPEN && state != STATE_OPENING && state != STATE_OPEN_WAITING)
+        if (d.mirroring && TypeOf(g) >= 2 && TypeOf(g) <= 5 && state != STATE_OPEN && state != STATE_OPENING &&
+            state != STATE_OPEN_WAITING)
             state = STATE_OPENING;
         g_origGarageUpdate(g, edx, id);
     }

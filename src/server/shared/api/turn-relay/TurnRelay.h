@@ -33,6 +33,9 @@ private:
         SOCKET local = INVALID_SOCKET;  // 127.0.0.1:any <-> game port
         sockaddr_in addr{};             // the friend as seen by the TURN server
         uint64_t lastMs = 0;
+        // datagrams each way since the last report, for the log: where a friend's connection lost the server
+        uint32_t toCount = 0, fromCount = 0, toMax = 0;
+        uint64_t toBytes = 0, fromBytes = 0, reportMs = 0;
     };
 
     void Thread();

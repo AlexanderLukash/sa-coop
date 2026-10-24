@@ -47,6 +47,7 @@ struct NetVehicle {
     uint32_t lastTime = 0;
     uint64_t lastSendMs = 0;
     uint64_t lastChangeMs = 0;  // owned: last time it moved or was used
+    float sentHealth = -1;      // owned: the health last sent (a car on its roof or on fire loses it standing still)
     VehicleLook look;            // owned: last sent; mirror: wanted
     bool hasLook = false;
     uint64_t lookCheckMs = 0, lookSentMs = 0;
@@ -77,6 +78,8 @@ public:
     // Local player became the driver of `nv`: take ownership.
     void TakeOwnership(NetVehicle& nv);
     bool IsMirror(const NetVehicle& nv) const;
+    // a mirror this game keeps when its owner deletes it: an ordinary car by this game's player (HandleRemove)
+    bool KeepsWhenDeleted(const NetVehicle& nv) const;
     // Applies a state received from the vehicle's driver (Players module, G_PLAYER_DRIVER).
     void ApplyDriverState(uint8_t from, uint16_t netId, const VehicleState& st);
     // a partner (re)started its game: announce our vehicles again
@@ -106,6 +109,7 @@ private:
     void Release(NetVehicle& nv);
     void GiveAway(NetVehicle& nv, uint8_t to);
     void HandleHandover(uint8_t from, Reader& r);
+    void TakeOver(NetVehicle& nv, uint8_t from);  // a mirror becomes this game's own car (handed over or kept)
     void HandleScriptFree(uint8_t from, Reader& r);
     void HandleClear(uint8_t from, Reader& r);
     void KeepCarWhileInside(game::CPlayerPed* me);

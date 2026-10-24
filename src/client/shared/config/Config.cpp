@@ -51,11 +51,15 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     windowY = ini.GetInt("game", "window_y", windowY);
     width = ini.GetInt("game", "width", 0);
     height = ini.GetInt("game", "height", 0);
+    borderless = ini.GetBool("game", "borderless", borderless);
+    windowTitle = ini.Get("game", "window_title", "");
     multiInstance = ini.GetBool("game", "multi_instance", multiInstance);
     runInBackground = ini.GetBool("game", "run_in_background", runInBackground);
     noPauseMenu = ini.GetBool("game", "no_pause_menu", noPauseMenu);
     userDir = ini.Get("game", "user_dir", "");
     skipIntro = ini.GetBool("game", "skip_intro", skipIntro);
+    partnerBlip = ini.GetBool("game", "partner_blip", partnerBlip);
+    nameTags = ini.GetBool("game", "name_tags", nameTags);
 
     voiceEnabled = ini.GetBool("voice", "enabled", voiceEnabled);
     voiceKey = ini.GetInt("voice", "push_to_talk_key", voiceKey);
@@ -71,8 +75,10 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     playerListKey = ini.GetInt("keys", "player_list", playerListKey);
 
     debugOverlay = ini.GetBool("debug", "overlay", debugOverlay);
+    cleanScreen = ini.GetBool("debug", "clean_screen", cleanScreen);
     verboseLog = ini.GetBool("debug", "verbose_log", verboseLog);
     forceRelay = ini.GetBool("debug", "force_relay", forceRelay);
+    firewallPrompt = ini.GetBool("debug", "firewall_prompt", firewallPrompt);
     serverData = ini.Get("debug", "server_data", serverData);
     while (!serverData.empty() && (serverData.back() == '\\' || serverData.back() == '/')) serverData.pop_back();
     if (serverData.empty()) serverData = "server-data";  // a trailing backslash would escape the quote around it

@@ -1,7 +1,7 @@
 // Cheats that change the shared world (weather, game speed, traffic, pedestrians, themes, car behaviour) work in both
 // games: the other game applies the same cheat (CCheat::ApplyCheat), a switch only when its own state differs. Cheats
 // for the player alone (weapons, money, health, wanted level, vehicles, body, skills) stay in the game where they were
-// typed.
+// typed, and so do a theme's clothes and katana.
 #include <cstring>
 
 #include "common/api/protocol/Protocol.h"
@@ -11,6 +11,7 @@
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
+#include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
 #include "shared/ui/chat/Chat.h"
@@ -19,6 +20,7 @@ namespace coop {
 
 namespace {
 using namespace game;
+using game::script::Cmd;
 
 constexpr uintptr_t kCheatString = 0x969110;   // CCheat::m_CheatString[30], the newest key first
 constexpr uintptr_t kCheatsActive = 0x969130;  // CCheat::m_aCheatsActive[92]
@@ -80,7 +82,23 @@ public:
             int id = r.U8();
             bool on = r.U8() != 0;
             if (!r.Ok() || !WorldCheat(id) || !core::IsPlayerReady() || !flow::InSharedWorld()) return;
+            CPlayerPed* me = FindPlayerPed(0);
+            CPedClothesDesc look = *me->ClothesDesc();
+            int melee = me->Weapons()[1].type, current = me->ActiveWeapon().type;  // the hand weapon's slot
             if (OneShot(id) || Active(id) != on) Call<0x438370>(id);  // CCheat::ApplyCheat
+            // A theme dresses whoever applies it (the beach party, the gimp suit, the funhouse, country) and the ninja one
+            // arms him with a katana: the theme is the world's, the look and the katana the typing player's (issue #43)
+            if (memcmp(me->ClothesDesc(), &look, sizeof look) != 0) {
+                *me->ClothesDesc() = look;
+                if (me->PedState() != 50) Call<0x5A82C0>(me, false);  // not PEDSTATE_DRIVING: CClothes::RebuildPlayer
+                LOGD("Cheat %d: our clothes kept", id);
+            }
+            if (int h = GetPedRef(me); me->Weapons()[1].type == 8 && melee != 8) {  // WEAPON_KATANA
+                Cmd(0x0555).I(h).I(8).Run();                         // REMOVE_WEAPON_FROM_CHAR
+                if (melee) Cmd(0x01B2).I(h).I(melee).I(1).Run();     // GIVE_WEAPON_TO_CHAR: its own back
+                Cmd(0x01B9).I(h).I(current).Run();                   // SET_CURRENT_CHAR_WEAPON
+                LOGD("Cheat %d: its katana taken back (%d in hand)", id, current);
+            }
             ui::TheChat().AddSystem(
                 Format(TR("Чит-код от %s действует и у вас.", "The cheat %s entered works for you too."), Net().PeerName(from).c_str()));
             LOGI("Cheat %d from player %d applied", id, from);

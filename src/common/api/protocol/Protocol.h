@@ -69,8 +69,9 @@ enum MsgId : uint8_t {
     G_PLAYER_PASSENGER = 66,  // unreliable
     G_PLAYER_AIM = 67,        // unreliable
     G_PLAYER_SPAWN = 68,      // reliable: (re)spawn, model, interior
-    G_PLAYER_DEATH = 69,
-    G_PLAYER_LOOK = 70,       // reliable: clothes, fat, muscle, u16 model, the special character's name (290-299)
+    G_PLAYER_DEATH = 69,      // reliable: i16 the default group's animation the sender's player fell with (its copies die so)
+    G_PLAYER_LOOK = 70,       // reliable: clothes, fat, muscle, u16 model, the special character's name (290-299),
+                              // u8 fighting style, u8 its moves
     G_PLAYER_STATS = 71,      // reliable: stats affecting the remote ped (skills, stamina, fight style)
     G_PLAYER_WEAPONS = 72,    // reliable: weapon inventory
     G_BULLET = 73,            // visual bullet replay
@@ -144,6 +145,25 @@ enum MsgId : uint8_t {
                               // (state: model, holder, how it hangs, look, own animation; gone)
     G_PED_SPEECH = 146,       // reliable: u8 player/ped, u16 net id, the line it starts (context, bank, sound, delay,
                               // volume, forced)
+    G_MISSION_POLICY = 147,   // reliable, host -> partner: the mission's police rules (u8 max wanted, u8 back-off bits,
+                              // f32 wanted multiplier)
+    G_VEH_SCRIPT = 148,       // reliable, host -> the driver's game: the host's mission moved, turned or froze a car that
+                              // the other player drives (u16 car, u8 its owner, u16 command, its three parameters)
+    G_INTERIOR_POP = 149,     // reliable, host -> partner: i8 area, vec3 at: its game made that interior's people
+    G_MAP_EDIT = 150,         // reliable, host -> partner: u16 command, vec3, f32 radius, i32 model, i32 state or model: a
+                              // map edit of the host's mission (an object's collision or visibility, a building's model)
+    G_PHOTO = 151,            // reliable, partner -> host: u8 n, u16 peds, u8 m, u16 mission objects: the host's own that
+                              // the partner's camera took (their copies there), for the mission's photo checks
+    G_IPL = 152,              // reliable, host -> partner: u8 op (0 in, 1 out, 2 out when far), str name: a part of the
+                              // map the host's mission brings in or takes out (REQUEST_IPL / REMOVE_IPL...)
+    G_HELI_SHOT = 153,        // reliable: u16 helicopter, vec3 gun from it, vec3 aimed at, u8 damage: a round of a police
+                              // helicopter of the sender's game
+    G_CONTACTS = 154,         // reliable, host -> partner: u8 n, the story's mission start points of the host's radar
+                              // (vec3, u8 sprite, u8 flags, u8 display, u32 colour, u16 size, i16 entrance)
+    G_GANG_WAR = 155,         // reliable, host -> partner: u8 fought: a gang war of the host's is being fought (sent on
+                              // a change and every 3 s while it is)
+    G_SIDE = 156,             // reliable: u8 op (1 offer, 2 accept, 3 decline, 4 end, 5 leave), u8 to (a player, 255 all),
+                              // str name (the side activity's mission script), i32 money (end: what it paid)
 
     G_VOICE = 200,            // unreliable: voice frame
     G_LAST = 255,

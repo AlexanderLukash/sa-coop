@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <thread>
 
 #include "common/api/net/Net.h"
 #include "common/config/version/Version.h"
@@ -106,6 +107,7 @@ void Server::Run() {
     enet_host_destroy(m_host);
     m_host = nullptr;
     net::Shutdown();
+    WaitProfileWrites();  // the last profiles reach the disk before the process ends
     LOGI("Сервер остановлен");
 }
 
@@ -390,8 +392,8 @@ void Server::HandleCommand(Player* p, const std::string& text) {
         if (admin)
             reply(kColorServer, "Для хоста: /kick <ник или номер> [причина], /say <текст>",
                   "For the host: /kick <nickname or number> [reason], /say <text>");
-        reply(kColorServer, "В игре: /tp (переместиться к напарнику), /tphere (позвать напарника к себе)",
-              "In the game: /tp (go to your partner), /tphere (bring your partner to you)");
+        reply(kColorServer, "В игре: /tp (переместиться к напарнику), /tphere (позвать напарника к себе), не в здании",
+              "In the game: /tp (go to your partner), /tphere (bring your partner to you), outside buildings");
     } else if (cmd == "players" || cmd == "status") {
         for (auto& o : m_players) {
             if (!o.joined) continue;
@@ -510,6 +512,7 @@ void Server::HostStartedNewGame() {
 // The profiles of an older game go aside (profiles\old\<date>\: a new game started by mistake loses nothing), and the
 // partners connected now get an empty one.
 void Server::ResetProfiles() {
+    WaitProfileWrites();  // an older game's profile written after this would come back
     std::wstring dir = m_cfg.dataDir + L"profiles\\";
     SYSTEMTIME t;
     GetLocalTime(&t);
@@ -651,10 +654,44 @@ void Server::SendInvite(Player* to) {
     else Broadcast(CH_RELIABLE, w);
 }
 
+// A profile goes to the disk on a thread of its own: flushed for a power cut, its write waited for the disk on the
+// network thread and stalled the relay of every state each time a partner sent its profile (~30 s: freezes, #43)
 void Server::SaveProfile(Player& p, const std::vector<uint8_t>& data) {
-    EnsureDirectory(m_cfg.dataDir + L"profiles");
-    if (!WriteFileBytes(ProfilePath(p.name), data.data(), data.size()))
-        LOGW("Не удалось записать профиль %s", p.name.c_str());
+    std::lock_guard<std::mutex> lock(m_writeMutex);
+    m_profileWrites[ProfilePath(p.name)] = data;
+    if (m_writing) return;
+    m_writing = true;
+    std::thread([this] { WriteProfiles(); }).detach();
+}
+
+void Server::WriteProfiles() {
+    for (;;) {
+        std::wstring path;
+        std::vector<uint8_t> data;
+        {
+            std::lock_guard<std::mutex> lock(m_writeMutex);
+            if (m_profileWrites.empty()) {
+                m_writing = false;
+                return;
+            }
+            auto it = m_profileWrites.begin();
+            path = it->first;
+            data = std::move(it->second);
+            m_profileWrites.erase(it);
+        }
+        EnsureDirectory(m_cfg.dataDir + L"profiles");
+        if (!WriteFileBytes(path, data.data(), data.size())) LOGW("Не удалось записать профиль %s", WideToUtf8(path).c_str());
+    }
+}
+
+void Server::WaitProfileWrites() {
+    for (int i = 0; i < 500; ++i) {
+        {
+            std::lock_guard<std::mutex> lock(m_writeMutex);
+            if (!m_writing) return;
+        }
+        Sleep(10);
+    }
 }
 
 void Server::Relay(Player& from, uint8_t channel, const uint8_t* data, size_t size, uint32_t flags) {

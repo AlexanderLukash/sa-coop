@@ -176,6 +176,11 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
     // direct (or punched) first; the relay when that does not answer within 4 s
     bool useRelay = relay.host && Cfg().forceRelay;
     uint64_t relayAt = relay.host && !useRelay ? GetTickCount64() + 4000 : 0;
+    auto viaRelay = [client] {  // what the connect handshake tells the server (net::kRelayMtu)
+        client->mtu = net::kRelayMtu;
+        enet_host_bandwidth_limit(client, net::kRelayBandwidth, 0);
+    };
+    if (useRelay) viaRelay();
     ENetPeer* peer = enet_host_connect(client, useRelay ? &relay : &addr, proto::CH_COUNT, 0);
     if (!peer) {
         enet_host_destroy(client);
@@ -208,6 +213,7 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
         if (!connected && relayAt && (GetTickCount64() >= relayAt || peer->state == ENET_PEER_STATE_DISCONNECTED)) {
             LOGI("Напрямую сервер не отвечает. Подключаемся через ретранслятор");
             enet_peer_reset(peer);
+            viaRelay();
             peer = enet_host_connect(client, &relay, proto::CH_COUNT, 0);
             relayAt = 0;
             if (!peer) break;
@@ -222,7 +228,7 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
                     connected = true;
                     m_state = State::Connected;
                     m_connectEvent = true;
-                    LOGI("Соединение с сервером установлено");
+                    LOGI("Соединение с сервером установлено (MTU %u)", peer->mtu);
                     break;
                 case ENET_EVENT_TYPE_DISCONNECT:
                     if (!connected && relayAt) {
