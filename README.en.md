@@ -288,6 +288,6 @@ and the repository contains no game files.
 
 ## Support a project
 
-<p align="center">
-  <a href="https://dalink.to/itscavalier"><img src="https://img.shields.io/badge/Support_the_channel-DonationAlerts-F57507?style=for-the-badge" alt="Support"></a>
+<p align="left">
+  <a href="https://dalink.to/itscavalier"><img src="https://img.shields.io/badge/DonationAlerts-F57507?style=for-the-badge" alt="Support"></a>
 </p>
