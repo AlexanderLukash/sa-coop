@@ -9,6 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Karimov-Akbar/sa-coop" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/GTA_San_Andreas-1.0_US-orange" alt="GTA San Andreas 1.0 US">
   <a href="https://t.me/cavalier_mods"><img src="https://img.shields.io/badge/News-Telegram-26A5E4?logo=telegram&logoColor=white" alt="News on Telegram"></a>
+  <a href="https://dalink.to/itscavalier"><img src="https://img.shields.io/badge/Support_the_project-DonationAlerts-F57507" alt="Support the project"></a>
 </p>
 
 <p align="center"><a href="README.md">Русский</a> · <b>English</b></p>
@@ -285,9 +286,3 @@ licenses, and their texts are in `third_party` and in the `coop\licenses` folder
 
 SA:COOP is not affiliated with Rockstar Games or Take-Two Interactive. You need your own copy of GTA San Andreas,
 and the repository contains no game files.
-
-## Support a project
-
-<p align="left">
-  <a href="https://dalink.to/itscavalier"><img src="https://img.shields.io/badge/DonationAlerts-F57507?style=for-the-badge" alt="Support"></a>
-</p>
