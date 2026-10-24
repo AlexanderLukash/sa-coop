@@ -262,34 +262,31 @@ bool Replicating() { return Net().Online() && Net().IsHost() && !Net().Peers().e
 // its end. Its people and cars are each game's own anyway; its levels (the paramedic's endless sprint) stay with who
 // played it. Either player may own one, the host or the partner.
 enum : uint8_t { SIDE_OFFER = 1, SIDE_ACCEPT = 2, SIDE_DECLINE = 3, SIDE_END = 4, SIDE_LEAVE = 5 };
-// What the call and its notices name it: "зовёт вас на совместное задание в такси", "конец совместной гонки"
-struct SideJob {
-    const char *script, *ruTo, *ruOf, *en;  // "на ..." (accusative), "из/конец ..." (genitive), the English noun
+bool SideJob(const std::string& name) {
+    static const char* const kJobs[] = {"taxiodd", "ambulan", "firetru", "copcar", "pimp", "freight", "bcour", "mtbiker", "stunt", "cprace"};
+    for (const char* j : kJobs)
+        if (!_stricmp(name.c_str(), j)) return true;
+    return false;
+}
+// What the call and its notices name it: "зовёт вас на совместное задание в такси" (to), "конец совместной гонки"
+// (of). Picked when shown: the language can be switched in the connect menu.
+struct JobNames {
+    const char *to, *of;
 };
-const SideJob* SideJobOf(const std::string& name) {
-    static const SideJob kJobs[] = {
-        {"taxiodd", "совместное задание в такси", "совместного задания в такси", "joint taxi job"},
-        {"ambulan", "совместное задание скорой", "совместного задания скорой", "joint paramedic job"},
-        {"firetru", "совместное задание пожарного", "совместного задания пожарного", "joint firefighter job"},
-        {"copcar", "совместное задание полиции", "совместного задания полиции", "joint vigilante job"},
-        {"pimp", "совместное задание сутенёра", "совместного задания сутенёра", "joint pimp job"},
-        {"freight", "совместное задание на поезде", "совместного задания на поезде", "joint freight train job"},
-        {"bcour", "совместную гонку", "совместной гонки", "joint race"},
-        {"mtbiker", "совместную гонку", "совместной гонки", "joint race"},
-        {"stunt", "совместную гонку", "совместной гонки", "joint race"},
-        {"cprace", "совместную гонку", "совместной гонки", "joint race"}};
-    for (const SideJob& j : kJobs)
-        if (!_stricmp(name.c_str(), j.script)) return &j;
-    return nullptr;
+JobNames NamesOf(const std::string& name) {
+    auto is = [&](const char* s) { return !_stricmp(name.c_str(), s); };
+    if (is("taxiodd")) return {TR("совместное задание в такси", "a joint taxi job"), TR("совместного задания в такси", "the joint taxi job")};
+    if (is("ambulan")) return {TR("совместное задание скорой", "a joint paramedic job"), TR("совместного задания скорой", "the joint paramedic job")};
+    if (is("firetru"))
+        return {TR("совместное задание пожарного", "a joint firefighter job"), TR("совместного задания пожарного", "the joint firefighter job")};
+    if (is("copcar")) return {TR("совместное задание полиции", "a joint vigilante job"), TR("совместного задания полиции", "the joint vigilante job")};
+    if (is("pimp")) return {TR("совместное задание сутенёра", "a joint pimp job"), TR("совместного задания сутенёра", "the joint pimp job")};
+    if (is("freight"))
+        return {TR("совместное задание на поезде", "a joint freight train job"), TR("совместного задания на поезде", "the joint freight train job")};
+    return {TR("совместную гонку", "a joint race"), TR("совместной гонки", "the joint race")};  // bcour, mtbiker, stunt, cprace
 }
-std::string JobTo(const std::string& name) {  // "совместное задание в такси", "a joint taxi job"
-    const SideJob* j = SideJobOf(name);
-    return !j ? name : TR(std::string(j->ruTo), "a " + std::string(j->en));
-}
-std::string JobOf(const std::string& name) {  // "совместного задания в такси", "the joint taxi job"
-    const SideJob* j = SideJobOf(name);
-    return !j ? name : TR(std::string(j->ruOf), "the " + std::string(j->en));
-}
+std::string JobTo(const std::string& name) { return SideJob(name) ? NamesOf(name).to : name; }
+std::string JobOf(const std::string& name) { return SideJob(name) ? NamesOf(name).of : name; }
 struct Side {
     std::string name;         // our own activity that may be shared, while it runs
     uint64_t offerUntil = 0;  // its call can be made until then (0: made, or too late)
@@ -2097,7 +2094,7 @@ void ForgetSent() {  // the owner's copy of what went to the joined game
 void SideUpdate() {
     void* script = FindMissionScript();
     std::string name = script ? std::string(Field<char[8]>(script, 0x08), strnlen(Field<char[8]>(script, 0x08), 8)) : "";
-    bool shareable = SideJobOf(name) != nullptr && !(Net().IsHost() && HostOnMission());
+    bool shareable = SideJob(name) && !(Net().IsHost() && HostOnMission());
     if (script && SideJoined()) LeaveSide();
     if (shareable && name != g_side.name) {  // ours started: who joins sees its marks from its start
         g_side.name = name;
@@ -2147,7 +2144,7 @@ void HandleSide(uint8_t from, Reader& r) {
     std::string name = r.Str(8);
     int32_t money = r.I32();
     if (!r.Ok() || (to != 0xFF && to != Net().MyId()) || !core::IsPlayerReady() || !flow::InSharedWorld()) return;
-    const SideJob* job = SideJobOf(name);
+    bool job = SideJob(name);
     std::string who = Net().PeerName(from);
     if (op == SIDE_OFFER) {
         bool busy = FindMissionScript() || SideJoined() || (Net().IsHost() ? HostOnMission() : HostMissionRecent(0));
