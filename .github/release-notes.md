@@ -20,7 +20,7 @@
 
 - Подключение по коду больше не обрывается, пока загружается мир хоста.
 - Исправлены вылеты при загрузке на сборках с CLEO, Project2DFX и другими модами, которые тоже рисуют поверх игры или перехватывают скрипты.
-- Во время войны банд хоста напарник больше не получает звёзды розыска за каждое убийство.
+- Одна звезда розыска снова гаснет сама. Раньше рядом стояли полицейские из игры другого игрока и не давали ей сгореть. Во время войны банд хоста напарник больше не получает звёзды за каждое убийство.
 - Процент прохождения у напарника больше не застывает на месте.
 - Копия второго игрока, присевшая с оружием, больше не дрожит. Раньше перекат в одну из сторон превращался у неё в шаг в присяди.
 - При выключенном уроне по напарнику его больше нельзя тихо убить ножом со спины.
@@ -66,7 +66,7 @@ A mod for GTA San Andreas 1.0 US that lets two players go through the story toge
 
 - Joining by code no longer drops while the host's world is loading.
 - Fixed crashes on loading in modpacks with CLEO, Project2DFX and other mods that also draw over the game or hook its scripts.
-- During the host's gang war the partner no longer gets wanted stars for every kill.
+- A single wanted star fades on its own again. Before, police officers from the other player's game stood nearby and kept it from fading. During the host's gang war the partner no longer gets wanted stars for every kill.
 - The partner's completion percentage no longer stays frozen.
 - The other player's copy no longer shakes when crouching with a gun. Before, a roll to one of the sides turned into a crouched step.
 - With damage to the partner turned off, they can no longer be stealth-killed from behind with a knife.
