@@ -24,7 +24,8 @@ and plays in the same world as a character of their own, with their own money, s
 
 ### The story for two
 
-The host starts a mission, but it only begins once both players stand in the marker. The partner sees the same
+The host starts a mission, but it only begins once both players stand in the marker. If the partner reaches the
+marker first, the host gets an invitation and presses Y to be there at once. The partner sees the same
 texts, subtitles, radar blips, markers, race checkpoints and timers, and the texts come in the language of the
 partner's own game. The partner also hears the lines characters say during missions outside cutscenes. Weapons
 the mission gives CJ go to the partner as well. Both players get the mission reward. Enemies attack both of them,
@@ -33,7 +34,10 @@ to the host. The mission's limits on the wanted level apply to both players, and
 opens or changes change for the partner too, as do the parts of the map a mission adds, such as the weed field
 in "Are You Going To San Fierro?". The partner can also take the photos a mission asks for. A partner
 killed during a mission comes back next to the host. If the host gets on a bike or into a vehicle with no seat
-left, the same kind of vehicle appears next to the partner.
+left, the same kind of vehicle appears next to the partner. The partner watches a mission's in-engine scenes
+through the same camera as the host. In the lowrider contest and the beach dance the partner plays next to the
+host, and their points go into the shared score. Either player can carry the crates in the house robbery with Ryder
+and load them into the van.
 
 | The host stands in the marker | The partner sees that the host is waiting |
 |---|---|
@@ -84,8 +88,9 @@ garage at a safe house, and the host's world keeps it.
 
 ### Your own progress
 
-Food and the gym, weapon and driving skills, clothes, haircuts, tattoos, money and side job rewards are separate
-for each player. What a player does at a diner, the gym, a barber's or a tattoo parlour, the other player sees as
+Food and the gym, weapon skills, clothes, haircuts, tattoos and money are separate for each player. Driving,
+motorbike, cycling and flying skills are shared: both players have the better of the two. The stats in the menu are
+shared too. A side job or challenge completed by one player counts for both, reward included. What a player does at a diner, the gym, a barber's or a tattoo parlour, the other player sees as
 well, along with a tray of food, a cigarette, a phone at the ear, a parachute jump, a fighting style learned at the
 gym, crouching with its rolls, reloading and walking in through shop doors. If a player changes their character model, for example with a skin selector, the other player sees the new
 model too. The friend comes into the host's world as their own CJ, in the clothes and with the tattoos their CJ
@@ -123,10 +128,13 @@ Side jobs (taxi, paramedic, firefighter, vigilante, pimp), races, schools, the s
 quarry are played by each player in their own game. A side job or a race can be played together: within 20 seconds
 of its start press Y, and the other player gets an invitation (Y: yes, N: no). Whoever accepts sees its markers,
 checkpoints, timers and hints, can ride along and help, for example put out burning cars or shoot the criminals, and
-gets the same money at its end. The job's levels stay with the player who started it. There is text chat and voice chat, and the farther away the
+gets the same money at its end. The job's levels stay with the player who started it, and the reward for
+completing the job goes to both. There is text chat and voice chat, and the farther away the
 partner is, the quieter they sound. A waypoint one player sets on the map shows up on the other player's radar,
 and a house one player buys appears for both. Above the partner's head you see their health, armour, weapon and
-wanted stars. Only the host starts turf wars, but both players' kills of rival gang members provoke them. Cheats
+wanted stars. Turf wars near the host are the host's, and both players' kills of rival gang members provoke
+them. A partner more than 100 m from the host can start a war of their own, and the host sees in the chat which
+district it is for and how it ended. Cheats
 for the weather, traffic, pedestrians and game speed work for both players, while weapon, money and health cheats
 only work for the player who typed them. Theme cheats such as the beach party change the pedestrians for both,
 but only the player who typed the code gets the outfit and the katana.
@@ -181,6 +189,7 @@ sees "The server does not answer", even on a home network. If an antivirus remov
 | T | chat: Enter sends a message, Esc closes the chat |
 | B | voice chat while the key is held |
 | G | get into the nearest car as a passenger |
+| Triangle (hold) | on a gamepad: get in as a passenger |
 | Right mouse button | as a passenger: lean out of the window with the gun, fire with the left button |
 | F2 | the player list |
 | Enter / Esc | in a cutscene: offer to skip it, agree / refuse |
@@ -203,12 +212,11 @@ section clears everything the mod draws: the chat, the names over the players an
 
 - The partner's girlfriend progress is not kept: it comes from the host's world. The income of the partner's
   businesses lies in the shared world, and either player can pick it up, as with the host's.
-- Only the host can start story missions, Cesar's races and turf wars. When a mission has CJ carry something, like
-  the crates in the house robbery with Ryder, the host does it.
+- Story missions and Cesar's races run in the host's game: a mission does not begin without the host in the marker.
 - You see the other player's train but cannot get into it: it is driven by the player whose game made it.
-- The partner gets story progress (new areas, gyms, mission markers) by loading the host's world after every
-  mission the host passes. Loading takes a few seconds, and the partner keeps their position, weapons and
-  progress.
+- The partner gets story progress (new areas, gyms) by loading the host's world. This happens in the next
+  mission's marker, or after 10 minutes without missions, and takes a couple of seconds. The partner keeps their
+  position, weapons and progress.
 - The host keeps the partner's profile under the partner's nickname. With a different nickname, money and skills
   start over.
 - The Ammu-Nation clerk, the shooting range's shooters, the casino dealers and other people that shop and activity

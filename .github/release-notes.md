@@ -2,37 +2,37 @@
 
 ## Что нового
 
-- **Подработки и гонки вдвоём.** Такси, скорая, пожарный, полицейский, сутенёр, грузовой поезд, курьер и гонки можно проходить вместе. Кто начал занятие, нажимает Y, и второй игрок получает приглашение: «Ivan зовёт вас на совместное задание в такси». Он видит метки, чекпоинты и таймеры, может ехать рядом и помогать, а в конце получает ту же награду. Звать может и хост, и напарник.
-- **Напарник в катсценах.** Напарник больше не пропадает в катсценах и стоит рядом с CJ. В поездках он садится в машину на свободное место. Если свободных мест нет, он стоит у машины.
-- **Субтитры катсцен.** Напарник снова видит субтитры катсцен.
-- **Брандмауэр.** Если друг видит «Сервер не отвечает», чаще всего его не пускает брандмауэр Windows у хоста. Теперь мод проверяет это сам, когда хост создаёт игру. Если доступ закрыт, Windows попросит разрешения. После него к хосту можно зайти и через интернет, и по локальной сети.
-- **Антивирусы.** Файлы мода теперь содержат сведения о версии и собраны без отладочной информации, поэтому антивирусы должны реже принимать их за вирус. Если антивирус всё же удалит сервер мода или не даст ему запуститься, игра скажет об этом прямо.
-- **Движения второго игрока.** Второй игрок двигается у вас так же, как у себя: входит в двери, приседает, делает перекаты из приседа в обе стороны, перезаряжает оружие, падает от удара и встаёт, забирается на уступы и раскрывает парашют. Сохраняются его стиль драки и походка толстого или накачанного CJ.
-- **Напарник дальше 20 метров.** Напарник, который отошёл от хоста дальше 20 метров, больше не стоит на месте и не скользит за ним, а бежит. Его прыжки и подъёмы на стены на таком расстоянии тоже видны.
-- **Точки начала миссий.** Точки начала миссий у напарника появляются и пропадают сразу вместе с хостом.
-- **Сцены на движке игры.** Пока у хоста идёт сцена на движке игры (с чёрными полосами), напарник рядом с ним стоит на месте и не может её сорвать.
-- **Прогресс побочных занятий.** У напарника сохраняется его прогресс в школах, подработках, спортзале, экспорте машин и трюковых прыжках, а также награды за них: машины у гаражей и доход с купленного имущества.
-- **Фотоаппарат.** Снимки, которые напарник делает для миссии хоста, засчитываются в ней.
-- **Мир.** Оба игрока видят выстрелы полицейского вертолёта, взрывчатку с детонатором, спуск спецназа по тросу, шары в бильярде и другие предметы побочных занятий. Поезда идут у обоих по одним путям. Полицейские машины остаются на месте после смерти хоста. Перемены на карте в миссиях хоста видны и напарнику, например поле конопли в «Are You Going To San Fierro?».
-- **Настройки.** В `coop.ini` появились `partner_blip` и `name_tags` в разделе `[game]`: они выключают метку напарника на радаре и подписи над игроками.
+- **Сцены на движке игры.** Сцены миссий на движке игры (с чёрными полосами) напарник смотрит той же камерой, что и хост, и слышит их реплики. Если миссия переносит хоста в другое место прямо перед сценой, напарник оказывается там вместе с ним. Подсказки во время таких сцен, например советы парикмахера после стрижки, напарник тоже видит.
+- **Лоурайдеры и танец на пляже вдвоём.** В конкурсе лоурайдеров («Cesar Vialpando») и в танце на пляже («Life's a Beach») напарник играет рядом с хостом под ту же музыку, и его очки идут в общий счёт. В машине напарника тоже сидит девушка, а камеры конкурса показывают его машину.
+- **«Home Invasion» вдвоём.** Ящики в ограблении дома с Райдером может носить и грузить в фургон любой из двоих. Напарник надевает ту же балаклаву и крадётся, у него своя полоска шума, а задние двери фургона открыты у обоих.
+- **Миссию может начать напарник.** Если напарник пришёл в маркер миссии первым, хост видит приглашение и по Y сразу оказывается рядом с ним. Миссия начинается, как только в маркере стоят оба.
+- **Без чёрного экрана после миссии.** Сюжетный прогресс хоста напарник теперь загружает в маркере следующей миссии, где экран и так темнеет перед её началом. Раньше загрузка случалась в случайный момент после каждой пройденной миссии и выглядела как лаг или чёрный экран. Если миссий нет 10 минут, мир загрузится в спокойный момент, как раньше.
+- **Общие навыки и статистика.** Навыки вождения машины, мотоцикла, велосипеда и самолёта общие: у обоих лучший из двух. Статистика в меню паузы тоже общая. Подработка или испытание, пройденные одним игроком, засчитываются обоим вместе с наградой.
+- **Своя война за территорию.** Напарник дальше 100 м от хоста может начать свою войну за район. Хост увидит в чате, за какой район она идёт и чем кончилась.
+- **Транспорт для напарника.** Если в миссии хост сел на велосипед, мотоцикл или в машину без свободного места, рядом с напарником появляется такой же транспорт. Если миссия посадила хоста в самолёт прямо в воздухе, как в конце «Freefall», напарник садится к нему пассажиром.
+- **Пассажир с геймпада.** Чтобы сесть пассажиром с геймпада, удерживайте треугольник полсекунды. На клавиатуре так же работает удержание клавиши входа.
 
 ## Исправления
 
-- Подключение по коду больше не обрывается, пока загружается мир хоста.
-- Исправлены вылеты при загрузке на сборках с CLEO, Project2DFX и другими модами, которые тоже рисуют поверх игры или перехватывают скрипты.
-- Одна звезда розыска снова гаснет сама. Раньше рядом стояли полицейские из игры другого игрока и не давали ей сгореть. Во время войны банд хоста напарник больше не получает звёзды за каждое убийство.
-- Процент прохождения у напарника больше не застывает на месте.
-- Копия второго игрока, присевшая с оружием, больше не дрожит. Раньше перекат в одну из сторон превращался у неё в шаг в присяди.
-- При выключенном уроне по напарнику его больше нельзя тихо убить ножом со спины.
-- Напарник видит метку миссии Райдера у двери, а не далеко от неё. То же со всеми метками у входов в здания.
-- Двери гаражей в миссиях хоста открываются и закрываются у обоих. Если миссия хоста убирает машину, в которой едет напарник, он выходит из неё, а не пропадает вместе с ней.
-- Продавцы в магазинах и Каталина больше не появляются дважды.
-- Копия второго игрока больше не стоит с раскинутыми руками, пока он играет в баскетбол или занимается в спортзале.
-- Дым из мотора разбитой машины одинаковый у обоих игроков. Разворот машины на месте у второго игрока теперь плавный.
-- Читы, которые меняют облик горожан, больше не переодевают второго игрока и не отбирают у него оружие ближнего боя.
-- Свою погоду из своей миссии напарник больше не теряет из-за погоды хоста.
-- Команды `/tp` и `/tphere` не срабатывают, пока кто-то из игроков в помещении.
-- Если игра зависла на загрузке, в отчёт о зависании попадает то, что она пыталась загрузить.
+- Убраны подвисания на 1–2 секунды. Их давал голосовой чат, даже когда никто не говорил, а ещё копия второго игрока, которая при каждом переодевании читала одежду с диска.
+- Тело, которое убрала игра его владельца, больше не появляется снова и не роняет деньги раз за разом. Эта ошибка появилась в 0.3.0.
+- После «The Green Sabre» напарник больше не получает 4 неснимаемые звезды в других городах, а заграждения между городами пропадают у него, как только он загрузит мир хоста в маркере следующей миссии.
+- Напарник видит красные маркеры назначения из миссий хоста. Раньше он не видел их вовсе.
+- Кассиры, продавцы Ammu-Nation, парикмахеры и татуировщики больше не появляются дважды.
+- Пассажир, который высунулся из окна с оружием не из списка (не узи, Tec-9 или MP5), больше не стреляет «из пальцев».
+- Клавиша T внутри чит-кода больше не открывает чат.
+- Машины второго игрока больше не пропадают, когда миссия хоста расчищает место вокруг себя.
+- Курсор в окне SA:COOP с кодом приглашения в полноэкранной игре больше не замирает.
+- Если игра стоит в Program Files, сервер больше не теряет профили напарников: тогда его данные лежат в `%LOCALAPPDATA%\SA-COOP`.
+- Если код приглашения не может связаться с ntfy.sh (в некоторых сетях этот сайт недоступен), игра так и пишет и советует VPN или открытый порт, а не винит брандмауэр.
+- Напарник получает звёзды розыска по правилам миссии, как и хост. Раньше в некоторых миссиях он получал звёзды там, где хост их не получает.
+- Копия второго игрока вздрагивает от ударов, как он сам.
+- Машина второго игрока больше не выглядит тормозящей, со стоп-сигналами и дымом из-под задних колёс.
+- Снимок фотоаппаратом больше не роняет игру в оконном режиме.
+- В доме из «Home Invasion» у напарника больше нет посторонних людей.
+- Граффити и собранные предметы у перезашедшего напарника такие же, как у хоста.
+- Название района в сообщениях о войне банд больше не превращается в набор знаков.
+- Если игра надолго подвисла, в `coop.log` теперь видно, на чём.
 
 ## Установка
 
@@ -40,7 +40,7 @@
 
 Чтобы обновиться с прошлой версии, распакуйте архив поверх старых файлов. Настройки и прогресс напарника останутся, а `install.bat` запускать второй раз не нужно.
 
-Версии 0.2.7 и 0.3.0 друг к другу не подключаются, поэтому обновиться нужно и хосту, и напарнику.
+Версии 0.3.0 и 0.3.1 друг к другу не подключаются, поэтому обновиться нужно и хосту, и напарнику.
 
 ## In English
 
@@ -48,42 +48,42 @@ A mod for GTA San Andreas 1.0 US that lets two players go through the story toge
 
 ### What's new
 
-- **Odd jobs and races together.** Taxi, paramedic, firefighter, vigilante, pimp, freight train, courier and races can be done together. Whoever starts one presses Y, and the other player gets an invitation: "Ivan invites you to a joint taxi job". They see the markers, checkpoints and timers, can ride along and help, and get the same reward at the end. Both the host and the partner can invite.
-- **The partner in cutscenes.** The partner no longer disappears in cutscenes and stands next to CJ. In scenes with a ride the partner takes a free seat in the car. If there is no free seat, the partner stands by the car.
-- **Cutscene subtitles.** The partner sees cutscene subtitles again.
-- **Firewall.** When a friend sees "Server not responding", it is most often Windows Firewall on the host's PC that keeps them out. The mod now checks this itself when the host creates a game. If access is closed, Windows asks for permission. Once it is given, friends can join over the internet and over a local network.
-- **Antivirus software.** The mod's files now carry version information and are built without debug data, so antivirus software should flag them less often. If an antivirus still removes the mod's server or blocks it, the game says so plainly.
-- **The other player's moves.** The other player moves on your screen the same way as in their own game: walks through doors, crouches, rolls from a crouch both ways, reloads, falls from a hit and gets up, climbs ledges and opens a parachute. Their fighting style and the walk of a fat or muscular CJ come along too.
-- **A partner beyond 20 metres.** A partner more than 20 metres from the host no longer stands still and slides after them but runs. Jumps and wall climbs at that distance are seen too.
-- **Mission start points.** The partner's mission start points appear and disappear together with the host's.
-- **In-game scenes.** While the host has an in-game scene (with black bars), a partner nearby stands still and cannot break it.
-- **Side activity progress.** The partner keeps their own progress in schools, odd jobs, gyms, car exports and stunt jumps, and the rewards for them: the cars at garages and the income from bought property.
-- **Camera.** Photos the partner takes for the host's mission count in it.
-- **The world.** Both players see the police helicopter's shots, remote explosives, SWAT officers sliding down ropes, pool balls and other objects of side activities. Trains run on the same tracks for both. Police cars stay where they are after the host's death. Map changes in the host's missions are seen by the partner too, for example the weed field in Are You Going To San Fierro?
-- **Settings.** `coop.ini` has two new keys in `[game]`: `partner_blip` and `name_tags`. They turn off the partner's radar blip and the name tags above the players.
+- **In-game scenes.** The partner watches the missions' in-game scenes (with black bars) through the same camera as the host and hears their lines. If the mission moves the host somewhere else right before a scene, the partner ends up there too. The partner also sees the help texts during such scenes, for example the barber's tips after a haircut.
+- **Lowriders and the beach dance for two.** In the lowrider contest (Cesar Vialpando) and the beach dance (Life's a Beach) the partner plays next to the host to the same music, and their points go to the shared score. A girl sits in the partner's car too, and the contest's cameras show the partner's car.
+- **Home Invasion for two.** Either player can carry the crates of Ryder's house robbery and load them into the van. The partner wears the same balaclava and sneaks, has their own noise bar, and the van's rear doors are open for both.
+- **The partner can start a mission.** If the partner reaches a mission marker first, the host gets an invitation and presses Y to be there at once. The mission begins as soon as both stand in the marker.
+- **No black screen after a mission.** The partner now loads the host's story progress in the next mission's marker, where the screen goes dark before the mission anyway. Before, the load came at a random moment after every passed mission and looked like lag or a black screen. With no mission for 10 minutes, the world loads at a quiet moment as before.
+- **Shared skills and stats.** Car, motorbike, bicycle and flying skills are shared: both players have the better of the two. The pause menu stats are shared too. An odd job or challenge one player completes counts for both, together with its reward.
+- **A gang war of your own.** A partner more than 100 m from the host can start their own war for a district. The host sees in the chat which district it is for and how it ended.
+- **A vehicle for the partner.** If the host gets on a bicycle or a motorbike, or into a car with no free seat during a mission, the same vehicle appears next to the partner. If the mission puts the host in a plane in mid-air, as at the end of Freefall, the partner gets in as a passenger.
+- **Passenger with a gamepad.** To get in as a passenger with a gamepad, hold triangle for half a second. Holding the enter key does the same on a keyboard.
 
 ### Fixes
 
-- Joining by code no longer drops while the host's world is loading.
-- Fixed crashes on loading in modpacks with CLEO, Project2DFX and other mods that also draw over the game or hook its scripts.
-- A single wanted star fades on its own again. Before, police officers from the other player's game stood nearby and kept it from fading. During the host's gang war the partner no longer gets wanted stars for every kill.
-- The partner's completion percentage no longer stays frozen.
-- The other player's copy no longer shakes when crouching with a gun. Before, a roll to one of the sides turned into a crouched step.
-- With damage to the partner turned off, they can no longer be stealth-killed from behind with a knife.
-- The partner sees Ryder's mission marker at the door, not far from it. The same goes for every marker at a building entrance.
-- Garage doors in the host's missions open and close for both players. If the host's mission removes a car the partner rides in, the partner gets out instead of vanishing with it.
-- Shop clerks and Catalina no longer appear twice.
-- The other player's copy no longer stands with its arms spread while they play basketball or work out at the gym.
-- The smoke from a damaged engine looks the same for both players. A car spinning on the spot turns smoothly for the other player now.
-- Cheats that change the look of the city's people no longer change the other player's clothes or take their melee weapon.
-- The partner no longer loses the weather of their own mission to the host's weather.
-- The `/tp` and `/tphere` commands do nothing while either player is indoors.
-- If the game hangs while loading, the hang report names what it was trying to load.
+- No more 1-2 second freezes. They came from the voice chat, even with nobody talking, and from the other player's copy reading its clothes from disk on every change.
+- A body removed by its owner's game no longer comes back and drops money over and over. This bug came with 0.3.0.
+- After The Green Sabre the partner no longer gets 4 wanted stars that never fade in the other cities, and the roadblocks between cities go away for them once they load the host's world in the next mission's marker.
+- The partner sees the red destination markers of the host's missions. Before, the partner saw none of them.
+- Cashiers, Ammu-Nation clerks, barbers and tattoo artists no longer appear twice.
+- A passenger leaning out with a weapon not on the list (not an Uzi, Tec-9 or MP5) no longer shoots "from their fingers".
+- The T key in the middle of a cheat code no longer opens the chat.
+- The other player's cars no longer vanish when the host's mission clears the area around it.
+- The cursor in the SA:COOP window with the invite code no longer freezes in a fullscreen game.
+- With the game in Program Files, the server no longer loses the partners' profiles: its data then goes to `%LOCALAPPDATA%\SA-COOP`.
+- When the invite code cannot reach ntfy.sh (some networks block it), the game says so and suggests a VPN or an open port instead of blaming the firewall.
+- The partner gets wanted stars by the mission's rules, like the host. Before, in some missions the partner got stars where the host gets none.
+- The other player's copy flinches from hits the way they do.
+- The other player's car no longer looks like it is braking, with brake lights and smoke from the rear wheels.
+- Taking a photo with the camera no longer crashes the game in windowed mode.
+- The partner no longer finds strangers in the house of Home Invasion.
+- Tags and collected items look the same for a partner who rejoins as for the host.
+- District names in gang war messages no longer turn into gibberish.
+- When the game freezes for long, `coop.log` now shows what it was busy with.
 
-### Installing
+### Installation
 
-Unpack `SA-COOP.zip` into the game folder so that `coop.asi`, `install.bat` and the `coop` folder sit next to `gta_sa.exe`, then run `install.bat`. The mod is described in detail in `README.en.md` in the repository.
+Unpack `SA-COOP.zip` into the game folder so that `coop.asi`, `install.bat` and the `coop` folder sit next to `gta_sa.exe`, and run `install.bat`. The archive has detailed instructions in `Инструкция.txt` (Russian), and the repository's README describes the mod.
 
-To update from an earlier version, unpack the archive over the old files. Your settings and the partner's progress stay, and there is no need to run `install.bat` again.
+To update from the previous version, unpack the archive over the old files. The settings and the partner's progress stay, and `install.bat` does not need to run again.
 
-Versions 0.2.7 and 0.3.0 cannot connect to each other, so both the host and the partner need to update.
+Versions 0.3.0 and 0.3.1 cannot connect to each other, so both the host and the partner need to update.
