@@ -13,6 +13,7 @@
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
 #include "entities/ped/Peds.h"
+#include "entities/mission/Mission.h"
 #include "entities/player/Players.h"
 #include "entities/vehicle/Vehicles.h"
 #include "shared/api/net-session/Session.h"
@@ -60,12 +61,18 @@ void UpdateSuppression() {
         CPlayerPed* me = FindPlayerPed(0);
         if (me->AreaCode() == 0) g_guest = false;
         else want = want || (g_guest && OtherPlayerInside(me->GetPosition()));
+        // indoors during the host's mission: its interiors hold who its script put there. The game fills a house's chairs
+        // and television (its attractors) by the density, and "Home Invasion" puts it back to 1 while the host is out:
+        // the partner alone in the house had people standing about
+        if (!Net().IsHost() && me->AreaCode() != 0 && HostMissionRecent(0)) want = true;
     }
     if (want != g_suppress) LOGI("Population generation %s (host nearby: %d)", want ? "handed to the host" : "local", want);
     // The engine adds one ped a frame at the edge of view: the empty streets around would fill slowly. The countdowns of
     // a game's start (and of a respawn) fill them at once, but they place people 10 m away in view and park cars next to
     // the player ("NPCs and cars pop up in front of me"): only behind a dark screen.
-    if (g_suppress && !want && Ref<float>(addr::TheCamera + 0xBFC) > 200.0f) {  // CCamera's fade alpha
+    // Not indoors: the countdown filled the house of "Home Invasion" with people behind its fades.
+    if (g_suppress && !want && Ref<float>(addr::TheCamera + 0xBFC) > 200.0f &&  // CCamera's fade alpha
+        core::IsPlayerReady() && FindPlayerPed(0)->AreaCode() == 0) {
         Ref<uint8_t>(0xC0EC23) = 2;  // CPopulation::m_CountDownToPedsAtStart
         Ref<uint8_t>(0x9690C0) = 2;  // CCarCtrl::CountDownToCarsAtStart
     }
@@ -207,6 +214,14 @@ bool HostPopulated(int8_t area, const CVector& at) {
     return !Net().IsHost() && NowMs() - g_hostPopMs < 5000 && g_hostPopArea == area && (g_hostPopAt - at).Length() < 80.0f;
 }
 
+// A house's people (InteriorGroup_c::SetupPeds, its family about the furniture) during the host's mission: none here.
+using SetupPedsFn = void(__fastcall*)(void*, void*);
+SetupPedsFn g_origSetupPeds = nullptr;
+void __fastcall HookSetupPeds(void* group, void* edx) {
+    if (Net().Online() && !Net().IsHost() && HostMissionRecent(0)) return;
+    g_origSetupPeds(group, edx);
+}
+
 using PopulateInteriorFn = void(__cdecl*)(int, CVector);
 PopulateInteriorFn g_origPopulateInterior = nullptr;
 void __cdecl HookPopulateInterior(int count, CVector at) {  // CEntryExit::GenerateAmbientPeds, on coming in
@@ -215,6 +230,12 @@ void __cdecl HookPopulateInterior(int count, CVector at) {  // CEntryExit::Gener
     g_guest = OtherPlayerInside(at) || HostPopulated(area, at);
     if (g_guest) {
         LOGI("The interior's people are the other game's (%d not made here)", count);
+        return;
+    }
+    // the host's mission runs: its interiors hold who its script put there ("Home Invasion"'s house, through the door the
+    // mission opens, had a family walking about in the partner's game only)
+    if (!Net().IsHost() && Net().Online() && HostMissionRecent(0)) {
+        LOGI("The host's mission runs: no people of our own in this interior (%d not made)", count);
         return;
     }
     g_origPopulateInterior(count, at);
@@ -301,6 +322,7 @@ public:
     void OnInstallHooks() override {
         mem::RedirectCallFn(0x59690F, &HookSetupInteriorPeds, &g_origSetupInteriorPeds);  // InteriorGroup_c::Update
         mem::RedirectCallFn(0x43E983, &HookPopulateInterior, &g_origPopulateInterior);    // CEntryExit::GenerateAmbientPeds
+        mem::RedirectCallFn(0x59690F, &HookSetupPeds, &g_origSetupPeds);                // InteriorGroup_c::Update
         mem::RedirectCallFn(0x4407B7, &HookRemoveAllRandomPeds, &g_origRemoveAllRandom);  // CEntryExit::TransitionFinished
         mem::RedirectCallFn(0x616837, &HookAttractorPeds, &g_origAttractorPeds);          // CPopulation::Update
         // CPedPlacement::IsPositionClearForPed in AddToPopulation where "not clear" gives up (its other two calls use

@@ -38,6 +38,8 @@ public:
     bool TakeConnectEvent() { return m_connectEvent.exchange(false); }
     uint64_t BytesIn() const { return m_bytesIn.load(); }
     uint64_t BytesOut() const { return m_bytesOut.load(); }
+    // the last connect by an invite code could not reach its channel (ntfy.sh): the host never heard of us
+    bool SignalFailed() const;
 
 private:
     void ThreadMain(std::string host, uint16_t port);

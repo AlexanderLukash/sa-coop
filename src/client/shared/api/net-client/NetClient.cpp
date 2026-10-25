@@ -16,6 +16,7 @@ uint8_t g_stunTx[12];
 nat::Endpoint g_mapped;
 std::atomic<bool> g_stunWaiting{false};
 ENetAddress g_lanServer{};  // answer to the LAN discovery
+std::atomic<bool> g_signalFailed{false};  // the invite code's channel (ntfy.sh) did not take our address
 
 int ENET_CALLBACK Intercept(ENetHost* h, ENetEvent*) {
     const uint8_t* d = h->receivedData;
@@ -54,6 +55,7 @@ ENetAddress FindRelay(const std::string& code) {
 void PrepareNat(ENetHost* client, ENetAddress& server, ENetAddress& relay, const std::string& code) {
     client->intercept = &Intercept;
     g_mapped = {};
+    g_signalFailed = false;
     for (const std::string& s : nat::StunServers()) {
         size_t colon = s.rfind(':');
         ENetAddress stun{};
@@ -71,6 +73,7 @@ void PrepareNat(ENetHost* client, ENetAddress& server, ENetAddress& relay, const
     g_stunWaiting = false;
     if (g_mapped.Valid()) {
         bool ok = nat::SignalPublish(nat::kDefaultSignalUrl, nat::SignalTopic(code), "PUNCH " + g_mapped.ToString());
+        g_signalFailed = !ok;
         LOGI("Наш внешний адрес: %s. Хост %s", g_mapped.ToString().c_str(), ok ? "оповещён" : "не оповещён (нет связи с ntfy)");
         if (ok) relay = FindRelay(code);  // the host allows our address on its relay when it gets the message
         if (relay.host) LOGI("У хоста есть ретранслятор: %s", nat::Endpoint{relay.host, relay.port}.ToString().c_str());
@@ -146,6 +149,8 @@ void NetClient::Poll(std::vector<Packet>& out) {
         m_in.clear();
     }
 }
+
+bool NetClient::SignalFailed() const { return g_signalFailed; }
 
 void NetClient::ThreadMain(std::string host, uint16_t port) {
     ENetHost* client = enet_host_create(nullptr, 1, proto::CH_COUNT, 0, 0);

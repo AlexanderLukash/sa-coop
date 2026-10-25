@@ -100,6 +100,15 @@ void Session::Update() {
         bool wasOnline = m_state == State::Online;
         if (m_state == State::Connecting) {
             m_state = State::Failed;
+            if (m_failReason.empty() && m_net.SignalFailed())
+                // the code's channel is how the host opens its NAT to us: unreachable (blocked in some networks), only an
+                // open port gets us in
+                m_failReason = TR("Не удалось подключиться: нет связи с ntfy.sh, через который код приглашения открывает "
+                                  "путь к хосту. Возможно, этот сайт недоступен в вашей сети. Попробуйте VPN или попросите "
+                                  "хоста открыть порт на роутере (UPnP или проброс порта).",
+                                  "Could not connect: ntfy.sh, through which the invite code opens the way to the host, cannot "
+                                  "be reached. It may be blocked in your network. Try a VPN, or ask the host to open the port "
+                                  "on the router (UPnP or port forwarding).");
             if (m_failReason.empty())
                 // the host's own game is in through 127.0.0.1: what keeps a friend out is mostly its firewall or antivirus
                 m_failReason = TR("Сервер не отвечает. Чаще всего к нему не пускает брандмауэр или антивирус хоста: пусть хост "

@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstring>
 
 #include "common/lib/log/Log.h"
@@ -44,6 +45,23 @@ void Input::SetKeyboardCapture(bool on) {
     m_kbCapture = on;
 }
 
+// In exclusive fullscreen the game holds the mouse in DirectInput's exclusive mode (its play: diMouseInit(fullscreen and no
+// menu)): Windows' cursor stands still, and ours (GetCursorPos) froze on the F9 window with the invite code (issue #66).
+// Ours then moves by the game's own reading of the mouse. Taking the game's device into the shared mode while ours was out
+// and back left it unacquired: the camera stood still after the window closed, and after joining, till an alt-tab.
+static bool GameMouseExclusive() {
+    auto* ps = game::Ref<uint8_t*>(0xC17054);  // RsGlobal.ps
+    return ps && game::Field<int32_t>(ps, 0x08) && !game::Ref<uint8_t>(0xBA67A4);  // fullScreen, no menu of the game's
+}
+
+bool Input::CursorFromGameMouse() const { return m_mouseCapture && GameMouseExclusive(); }
+
+void Input::FeedGameMouse(float dx, float dy, bool lmb, int wheel) {
+    m_gameX += dx * 1.25f, m_gameY += dy * 1.25f;
+    m_gameLmb = lmb;
+    m_state.wheel += wheel;  // the window gets no wheel messages either
+}
+
 void Input::SetMouseCapture(bool on) {
     if (on == m_mouseCapture) return;
     m_mouseCapture = on;
@@ -75,11 +93,18 @@ void Input::UpdateMouse(float bbW, float bbH) {
     GetClientRect((HWND)m_hwnd, &rc);
     float cw = (float)(rc.right - rc.left), ch = (float)(rc.bottom - rc.top);
     if (cw <= 0 || ch <= 0) return;
+    bool fromGame = CursorFromGameMouse();
+    if (fromGame && !m_fromGame) m_gameX = (float)p.x, m_gameY = (float)p.y, m_gameLmb = false;  // ours starts where Windows' stands
+    m_fromGame = fromGame;
+    if (fromGame) {
+        m_gameX = std::clamp(m_gameX, 0.0f, cw - 1.0f), m_gameY = std::clamp(m_gameY, 0.0f, ch - 1.0f);
+        p.x = (LONG)m_gameX, p.y = (LONG)m_gameY;
+    }
     m_state.mouseX = (float)p.x * bbW / cw;
     m_state.mouseY = (float)p.y * bbH / ch;
     m_state.ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     m_state.shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-    bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 && game::IsForeground();
+    bool down = fromGame ? m_gameLmb : (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 && game::IsForeground();
     if (down && !m_state.lmb) m_state.lmbPressed = true;
     if (!down && m_state.lmb) m_state.lmbReleased = true;
     m_state.lmb = down;
