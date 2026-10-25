@@ -10,10 +10,31 @@
 #include "common/lib/sync/RemovalHistory.h"
 #include "common/lib/sync/MissionCapacity.h"
 #include "common/lib/sync/GarageRestore.h"
+#include "common/lib/sync/ProfileExtension.h"
 
 using namespace coop;
 
 int main() {
+    // A pre-update fork profile preserves its home owners and has no moves byte.
+    Writer legacyProfile;
+    legacyProfile.U32(0x80000008u);
+    Reader legacy(legacyProfile.Data(), legacyProfile.Size());
+    uint32_t homes = 0;
+    uint8_t moves = 255;
+    assert(sync::ReadProfileExtension(legacy, 4, homes, moves));
+    assert(homes == 0x80000008u && moves == 0 && legacy.Remaining() == 0);
+    // New profiles keep homes, moves and the following side-progress bytes separate.
+    Writer profile;
+    sync::WriteProfileExtension(profile, homes, 7);
+    profile.U32(0x12345678);
+    Reader current(profile.Data(), profile.Size());
+    assert(sync::ReadProfileExtension(current, 6, homes, moves));
+    assert(homes == 0x80000008u && moves == 7 && current.U32() == 0x12345678);
+    Reader incompatible(profile.Data(), profile.Size());
+    assert(!sync::ReadProfileExtension(incompatible, 5, homes, moves));
+    Reader truncated(profile.Data(), 4);
+    assert(!sync::ReadProfileExtension(truncated, 6, homes, moves));
+
     // A reliable TRAIN_GONE can overtake an older state on the other channel.
     sync::RemovalHistory removed;
     constexpr uint32_t trainA = (1u << 16) | 7, trainB = (2u << 16) | 7;

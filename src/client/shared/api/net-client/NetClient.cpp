@@ -16,6 +16,7 @@ uint8_t g_stunTx[12];
 nat::Endpoint g_mapped;
 std::atomic<bool> g_stunWaiting{false};
 ENetAddress g_lanServer{};  // answer to the LAN discovery
+std::atomic<bool> g_signalFailed{false};  // the invite code's channel (ntfy.sh) did not take our address
 
 int ENET_CALLBACK Intercept(ENetHost* h, ENetEvent*) {
     const uint8_t* d = h->receivedData;
@@ -54,6 +55,7 @@ ENetAddress FindRelay(const std::string& code) {
 void PrepareNat(ENetHost* client, ENetAddress& server, ENetAddress& relay, const std::string& code) {
     client->intercept = &Intercept;
     g_mapped = {};
+    g_signalFailed = false;
     for (const std::string& s : nat::StunServers()) {
         size_t colon = s.rfind(':');
         ENetAddress stun{};
@@ -71,6 +73,7 @@ void PrepareNat(ENetHost* client, ENetAddress& server, ENetAddress& relay, const
     g_stunWaiting = false;
     if (g_mapped.Valid()) {
         bool ok = nat::SignalPublish(nat::kDefaultSignalUrl, nat::SignalTopic(code), "PUNCH " + g_mapped.ToString());
+        g_signalFailed = !ok;
         LOGI("Наш внешний адрес: %s. Хост %s", g_mapped.ToString().c_str(), ok ? "оповещён" : "не оповещён (нет связи с ntfy)");
         if (ok) relay = FindRelay(code);  // the host allows our address on its relay when it gets the message
         if (relay.host) LOGI("У хоста есть ретранслятор: %s", nat::Endpoint{relay.host, relay.port}.ToString().c_str());
@@ -122,6 +125,10 @@ void NetClient::Stop() {
     m_state = State::Idle;
     std::lock_guard<std::mutex> a(m_outMutex);
     m_out.clear();
+    // what came after the last poll (a refusal's reason, a world chunk) belonged to that connection: it was handled
+    // in the next one ("the world arrived damaged")
+    std::lock_guard<std::mutex> b(m_inMutex);
+    m_in.clear();
 }
 
 void NetClient::Send(uint8_t channel, const Writer& w) { Send(channel, w.Data(), w.Size()); }
@@ -142,6 +149,8 @@ void NetClient::Poll(std::vector<Packet>& out) {
         m_in.clear();
     }
 }
+
+bool NetClient::SignalFailed() const { return g_signalFailed; }
 
 void NetClient::ThreadMain(std::string host, uint16_t port) {
     ENetHost* client = enet_host_create(nullptr, 1, proto::CH_COUNT, 0, 0);
@@ -172,6 +181,11 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
     // direct (or punched) first; the relay when that does not answer within 4 s
     bool useRelay = relay.host && Cfg().forceRelay;
     uint64_t relayAt = relay.host && !useRelay ? GetTickCount64() + 4000 : 0;
+    auto viaRelay = [client] {  // what the connect handshake tells the server (net::kRelayMtu)
+        client->mtu = net::kRelayMtu;
+        enet_host_bandwidth_limit(client, net::kRelayBandwidth, 0);
+    };
+    if (useRelay) viaRelay();
     ENetPeer* peer = enet_host_connect(client, useRelay ? &relay : &addr, proto::CH_COUNT, 0);
     if (!peer) {
         enet_host_destroy(client);
@@ -184,6 +198,8 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
 
     std::vector<Packet> outLocal;
     bool connected = false;
+    // the connection just before it ended, for the log: ENet resets the peer before it reports the end
+    enet_uint32 lastLoss = 0, lastInTransit = 0, lastHeard = 0;
     while (!m_quit) {
         // flush outgoing
         {
@@ -202,6 +218,7 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
         if (!connected && relayAt && (GetTickCount64() >= relayAt || peer->state == ENET_PEER_STATE_DISCONNECTED)) {
             LOGI("Напрямую сервер не отвечает. Подключаемся через ретранслятор");
             enet_peer_reset(peer);
+            viaRelay();
             peer = enet_host_connect(client, &relay, proto::CH_COUNT, 0);
             relayAt = 0;
             if (!peer) break;
@@ -216,7 +233,7 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
                     connected = true;
                     m_state = State::Connected;
                     m_connectEvent = true;
-                    LOGI("Соединение с сервером установлено");
+                    LOGI("Соединение с сервером установлено (MTU %u)", peer->mtu);
                     break;
                 case ENET_EVENT_TYPE_DISCONNECT:
                     if (!connected && relayAt) {
@@ -224,6 +241,10 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
                         break;
                     }
                     LOGW("Соединение с сервером %s", connected ? "потеряно" : "не установлено");
+                    if (connected)
+                        LOGI("Перед разрывом: пинг %u мс, потери %.1f%%, без подтверждения %u байт, сервер молчал %u мс, код %u",
+                             m_rtt.load(), lastLoss * 100.0 / (double)ENET_PEER_PACKET_LOSS_SCALE, lastInTransit,
+                             enet_time_get() - lastHeard, ev.data);
                     connected = false;
                     m_state = State::Disconnected;
                     m_disconnectEvent = true;
@@ -234,6 +255,9 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
                     Packet p{ev.channelID, std::vector<uint8_t>(ev.packet->data, ev.packet->data + ev.packet->dataLength)};
                     enet_packet_destroy(ev.packet);
                     std::lock_guard<std::mutex> lock(m_inMutex);
+                    // a game that stands (a long load, a hang, alt-tab without run_in_background) piled up every state
+                    // and applied them all at once, stale: past a few thousand only the reliable ones are kept
+                    if (m_in.size() > 4000 && (p.channel == proto::CH_STATE || p.channel == proto::CH_VOICE)) break;
                     m_in.push_back(std::move(p));
                     break;
                 }
@@ -243,14 +267,30 @@ void NetClient::ThreadMain(std::string host, uint16_t port) {
             if (m_quit) break;
             rc = enet_host_check_events(client, &ev);
         }
-        if (connected) m_rtt = peer->roundTripTime;
+        if (connected) {
+            m_rtt = peer->roundTripTime;
+            lastLoss = peer->packetLoss;
+            lastInTransit = peer->reliableDataInTransit;
+            lastHeard = peer->lastReceiveTime;
+        }
     }
 
     if (connected) {
+        // what the game queued last goes first (the partner's profile on leaving): enet_peer_disconnect drops the
+        // queues, enet_peer_disconnect_later sends them and then disconnects
+        {
+            std::lock_guard<std::mutex> lock(m_outMutex);
+            outLocal.swap(m_out);
+        }
+        for (auto& p : outLocal) {
+            ENetPacket* pkt = net::MakePacket(p.data.data(), p.data.size(), p.channel);
+            if (enet_peer_send(peer, p.channel, pkt) != 0) enet_packet_destroy(pkt);
+        }
+        outLocal.clear();
         // graceful quit: data = 1 tells the server it was not a timeout
-        enet_peer_disconnect(peer, 1);
+        enet_peer_disconnect_later(peer, 1);
         ENetEvent ev;
-        uint64_t deadline = GetTickCount64() + 500;
+        uint64_t deadline = GetTickCount64() + 1000;
         while (GetTickCount64() < deadline && enet_host_service(client, &ev, 50) >= 0) {
             if (ev.type == ENET_EVENT_TYPE_RECEIVE) enet_packet_destroy(ev.packet);
             if (ev.type == ENET_EVENT_TYPE_DISCONNECT) break;

@@ -23,6 +23,7 @@
 #include "common/lib/sync/StateTiming.h"
 #include "common/lib/util/Util.h"
 #include "entities/profile/Profile.h"
+#include "entities/session/Flow.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
@@ -63,6 +64,7 @@ uint32_t g_hostMine = 0;
 uint32_t g_lastOwnershipMask = UINT32_MAX;
 bool g_buying = false;                            // a BUYPRO1 runs
 bool g_ours = false;                              // ... launched here for the host's partner
+int g_buyIndex = -1;                              // ... for this property ($6940 when it began)
 
 uint32_t LocalMask() {
     uint32_t mask = Net().IsHost() ? g_hostMine : PersonalPropertyMask();
@@ -153,7 +155,7 @@ public:
     void OnInstallHooks() override {
         Net().SetHandler(proto::G_PROPERTY, [](uint8_t from, Reader& r) {
             int k = r.U8();
-            if (r.Ok() && k < kProperties) {
+            if (r.Ok() && k < kProperties && flow::InSharedWorld()) {
                 if (k >= 3) g_owner[k] = from;
                 g_pending.emplace_back(from, k);
             }
@@ -222,9 +224,13 @@ public:
         SendOwnership();  // also publishes profile restores and new-game resets
         // a purchase made here
         bool buying = FindScript("buypro1") != nullptr;
+        if (buying && !g_buying) g_buyIndex = Global(6940);
+        // a story purchase belongs to the story: the partners get the host's world after it, as after a mission (it was
+        // no mission for them, and they could buy the property again)
+        if (!buying && g_buying && Net().IsHost() && g_buyIndex >= 0 && g_buyIndex < 3) flow::WorldProgressed();
         if (buying && !g_buying && !g_ours) {
             int k = Global(6940);
-            if (k >= 0 && k < kProperties) {
+            if (k >= 0 && k < kProperties && flow::InSharedWorld()) {
                 Send(k);
                 if (!Net().IsHost()) g_mine.insert(k);
                 MarkOwnedHere(k);

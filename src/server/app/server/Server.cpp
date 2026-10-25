@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <thread>
 
 #include "common/api/net/Net.h"
 #include "common/config/version/Version.h"
@@ -20,7 +21,11 @@ static constexpr uint32_t kColorError = 0xFF6464FF;
 bool Server::Start(const Config& cfg) {
     m_cfg = cfg;
     if (m_cfg.maxPlayers < 1) m_cfg.maxPlayers = 1;
-    if (m_cfg.maxPlayers > kMaxPlayers) m_cfg.maxPlayers = kMaxPlayers;
+    if (m_cfg.maxPlayers > kGamePlayers) {
+        LOGW("В max_players указано %d, но игра поддерживает только %d игроков. Мест будет %d.", m_cfg.maxPlayers, kGamePlayers,
+             kGamePlayers);
+        m_cfg.maxPlayers = kGamePlayers;
+    }
     EnsureDirectory(m_cfg.dataDir + L"profiles");
     EnsureDirectory(m_cfg.dataDir + L"world");
 
@@ -44,7 +49,7 @@ bool Server::Start(const Config& cfg) {
     // initial world: explicit file from the launcher, otherwise the last uploaded one
     if (!m_cfg.worldFile.empty()) {
         if (LoadWorld(m_cfg.worldFile, WideToUtf8(m_cfg.worldFile)))
-            WriteFileBytes(WorldPath(), m_world.data(), m_world.size());
+            WriteFileBytes(WorldPath(), m_world.data(), m_world.size(), false);  // the network thread: no wait for the disk
     } else if (m_cfg.newGame) {
         DeleteFileW(WorldPath().c_str());  // an older game's world: partners follow the new one instead
     } else {
@@ -84,7 +89,7 @@ void Server::Run() {
         for (auto& c : cmds) HandleCommand(nullptr, c);
         if (m_worldWantedTime && NowMs() - m_worldWantedTime > 10000) {
             LOGW("Хост не прислал свежий мир за 10 с. Отправляю сохранённый");
-            FlushWorldRequests();
+            FlushWorldRequests(false);
         }
         if (NowMs() - m_lastPings > 2000) {
             m_lastPings = NowMs();
@@ -102,6 +107,7 @@ void Server::Run() {
     enet_host_destroy(m_host);
     m_host = nullptr;
     net::Shutdown();
+    WaitProfileWrites();  // the last profiles reach the disk before the process ends
     LOGI("Сервер остановлен");
 }
 
@@ -137,7 +143,9 @@ void Server::OnConnect(ENetPeer* peer) {
     char ip[64];
     enet_address_get_host_ip(&peer->address, ip, sizeof(ip));
     Player* slot = nullptr;
-    for (int i = 0; i < m_cfg.maxPlayers; ++i)
+    // every slot: a player coming back after a crash finds its old connection still holding one (it times out in 10 to
+    // 20 s); the number of players is checked at the hello, where that old one is let go
+    for (int i = 0; i < kMaxPlayers; ++i)
         if (!m_players[i].used) {
             slot = &m_players[i];
             break;
@@ -233,7 +241,7 @@ void Server::OnPacket(ENetPeer* peer, uint8_t channel, const uint8_t* data, size
             RequestWorld(*p);
             break;
         case C_WORLD_KEEP:
-            if (p->isHost) FlushWorldRequests();
+            if (p->isHost) FlushWorldRequests(false);
             break;
         case C_WORLD_NEWGAME:
             if (p->isHost) HostStartedNewGame();
@@ -245,6 +253,10 @@ void Server::OnPacket(ENetPeer* peer, uint8_t channel, const uint8_t* data, size
             uint8_t st = r.U8();
             bool becameInGame = st == STATUS_INGAME && p->status != STATUS_INGAME;
             p->status = st;
+            // the host is in a game again (it loaded a save): the partners play the world it left
+            if (becameInGame && p->isHost)
+                for (auto& o : m_players)
+                    if (o.used && o.joined && !o.isHost && o.status == STATUS_INGAME) o.staleWorld = true;
             // the host just entered the game: partners waiting for a world can get a fresh one
             if (becameInGame && p->isHost && !m_worldWaiters.empty() && !m_worldWantedTime) {
                 Writer w(S_WORLD_WANTED);
@@ -270,17 +282,32 @@ void Server::HandleHello(Player& p, Reader& r) {
         enet_peer_disconnect_later(p.peer, 0);
         p.joined = false;
     };
-    if (!h.Read(r)) return reject("клиент прислал повреждённые данные", "the client sent damaged data");
-    if (h.protocol != kProtocolVersion)
+    // the version comes first in every hello: an older client's shorter one was told "damaged data" instead
+    bool read = h.Read(r);
+    if (h.protocol != 0 && h.protocol != kProtocolVersion)
         return reject(Format("у вас другая версия мода (у сервера %u, у вас %u). Версия должна быть одинаковой у обоих",
                              kProtocolVersion, h.protocol),
                       Format("your version of the mod differs (the server has %u, you have %u). Both players need the "
                              "same version", kProtocolVersion, h.protocol));
+    if (!read) return reject("клиент прислал повреждённые данные", "the client sent damaged data");
     std::string name = SanitizeNickname(h.name);
     if (name.size() < 2)
         return reject("в нике должно быть от 2 до 20 символов (буквы, цифры, знаки _-.[])",
                       "a nickname needs 2 to 20 characters (letters, digits, _-.[])");
-    if (FindByName(name)) return reject("игрок с таким ником уже на сервере", "a player with this nickname is already here");
+    if (ReservedFileName(name))  // the profile is a file named after it: profiles\con.bin is a device on Windows 10
+        return reject("такой ник занят системой Windows, выберите другой", "this nickname is reserved by Windows, pick another one");
+    if (Player* old = FindByName(name)) {
+        // the same player again while its old connection has not timed out (its game crashed, the line dropped): the
+        // old one goes when it has been silent for 3 s (ENet pings a live game twice a second)
+        enet_uint32 silent = old->peer ? m_host->serviceTime - old->peer->lastReceiveTime : 0;  // ENet's clock, wraps
+        if (silent < 3000 || silent >= 0x80000000u)
+            return reject("игрок с таким ником уже на сервере", "a player with this nickname is already here");
+        ENetPeer* ghost = old->peer;
+        LOGI("%s подключается снова: старое соединение закрыто", name.c_str());
+        Leave(*old, LEAVE_TIMEOUT);
+        enet_peer_reset(ghost);
+    }
+    if (JoinedCount() >= m_cfg.maxPlayers) return reject("на сервере нет свободных мест", "the server is full");
     if (!m_cfg.password.empty() && h.password != m_cfg.password) return reject("неверный пароль", "wrong password");
 
     p.name = name;
@@ -328,7 +355,10 @@ void Server::HandleHello(Player& p, Reader& r) {
 }
 
 void Server::HandleChat(Player& p, const std::string& rawText) {
-    std::string text = Trim(rawText);
+    std::string text = rawText;
+    for (char& c : text)  // control characters: the chat draws none, Trim and Split would disagree on them
+        if ((unsigned char)c < 0x20) c = ' ';
+    text = Trim(text);
     if (text.empty()) return;
     if (text[0] == '/') {
         HandleCommand(&p, text);
@@ -380,7 +410,7 @@ void Server::HandleCommand(Player* p, const std::string& text) {
         }
     } else if (cmd == "pm" && parts.size() >= 3 && p) {
         Player* to = FindById(atoi(parts[1].c_str()));
-        std::string msg = Trim(rest.substr(parts[1].size()));
+        std::string msg = rest.size() > parts[1].size() ? Trim(rest.substr(parts[1].size())) : std::string();
         if (!to || !to->joined) return reply(kColorError, "Нет такого игрока.", "There is no such player.");
         SendChat(to, kServerId, 0xFFFF80FF, Format("[ЛС от %s] %s", p->name.c_str(), msg.c_str()),
                  Format("[PM from %s] %s", p->name.c_str(), msg.c_str()));
@@ -430,7 +460,8 @@ void Server::HandleWorldBegin(Player& p, Reader& r) {
 void Server::HandleWorldChunk(Player& p, Reader& r) {
     uint32_t off = r.U32();
     auto bytes = r.Bytes(kWorldChunk);
-    if (!r.Ok() || p.upload.empty() || (size_t)off + bytes.size() > p.upload.size()) return;
+    // off + size wraps in 32 bits: the bound is checked without the sum
+    if (!r.Ok() || p.upload.empty() || off > p.upload.size() || bytes.size() > p.upload.size() - off) return;
     memcpy(p.upload.data() + off, bytes.data(), bytes.size());
 }
 
@@ -442,7 +473,7 @@ void Server::HandleWorldEnd(Player& p) {
     } else {
         m_world.swap(p.upload);
         m_worldLabel = p.uploadLabel;
-        WriteFileBytes(WorldPath(), m_world.data(), m_world.size());
+        WriteFileBytes(WorldPath(), m_world.data(), m_world.size(), false);  // the network thread: no wait for the disk
         LOGI("Хост %s обновил сохранение мира: %s (%u байт)", p.name.c_str(), m_worldLabel.c_str(),
              (unsigned)m_world.size());
         m_prologue = false;
@@ -450,14 +481,16 @@ void Server::HandleWorldEnd(Player& p) {
         // the host's story progress every partner in the game gets it (it loads at a safe moment)
         bool progress = m_worldLabel == "progress";
         for (auto& o : m_players)
-            if (o.used && o.joined && !o.isHost && (o.follower || (progress && o.status == STATUS_INGAME))) {
-                o.follower = false;
+            if (o.used && o.joined && !o.isHost && (o.follower || o.staleWorld || (progress && o.status == STATUS_INGAME))) {
+                o.follower = o.staleWorld = false;
                 SendWorld(o);
+                // one that had asked for it as well got it twice (FlushWorldRequests below), and loaded it twice
+                m_worldWaiters.erase(std::remove(m_worldWaiters.begin(), m_worldWaiters.end(), o.id), m_worldWaiters.end());
             }
     }
     p.upload.clear();
     p.upload.shrink_to_fit();
-    FlushWorldRequests();
+    FlushWorldRequests(true);
 }
 
 // The host plays a new game's prologue alone (it is a mission and cannot be saved), and the stored world belongs to an
@@ -484,6 +517,7 @@ void Server::HostStartedNewGame() {
 // The profiles of an older game go aside (profiles\old\<date>\: a new game started by mistake loses nothing), and the
 // partners connected now get an empty one.
 void Server::ResetProfiles() {
+    WaitProfileWrites();  // an older game's profile written after this would come back
     std::wstring dir = m_cfg.dataDir + L"profiles\\";
     SYSTEMTIME t;
     GetLocalTime(&t);
@@ -551,8 +585,9 @@ void Server::RequestWorld(Player& p) {
         SendChat(&p, kServerId, kColorInfo, "Хост сохраняет мир. Подождите...", "The host is saving the world. Please wait...");
         return;
     }
-    if (m_world.empty()) {
-        // nothing to send yet: wait until the host loads a game and uploads it
+    // Nothing to send yet, or a host still in the menu: wait until the host loads a game and uploads it. The world
+    // stored here is its last session's, and a partner who took it played another world than the save the host loaded.
+    if (m_world.empty() || host) {
         m_worldWaiters.push_back(p.id);
         Writer w(S_WORLD_NONE);
         net::Send(p.peer, CH_BULK, w);
@@ -562,13 +597,22 @@ void Server::RequestWorld(Player& p) {
     SendWorld(p);
 }
 
-void Server::FlushWorldRequests() {
+void Server::FlushWorldRequests(bool fresh) {
     m_worldWantedTime = 0;
-    if (m_world.empty()) return;
+    if (m_world.empty()) {  // nothing to give yet: they wait on (the partner gave up after 2 minutes without this)
+        for (uint8_t id : m_worldWaiters)
+            if (Player* w = FindById(id); w && w->joined) net::Send(w->peer, CH_BULK, Writer(S_WORLD_NONE));
+        return;
+    }
     auto waiters = m_worldWaiters;
     m_worldWaiters.clear();
     for (uint8_t id : waiters)
-        if (Player* w = FindById(id); w && w->joined) SendWorld(*w);
+        if (Player* w = FindById(id); w && w->joined) {
+            // the stored world (the host could not save in a car, or did not answer): its next upload goes to them too,
+            // else they played last session's world until the host passed a mission
+            w->staleWorld = !fresh;
+            SendWorld(*w);
+        }
 }
 
 void Server::SendWorld(Player& p) {
@@ -615,10 +659,44 @@ void Server::SendInvite(Player* to) {
     else Broadcast(CH_RELIABLE, w);
 }
 
+// A profile goes to the disk on a thread of its own: flushed for a power cut, its write waited for the disk on the
+// network thread and stalled the relay of every state each time a partner sent its profile (~30 s: freezes, #43)
 void Server::SaveProfile(Player& p, const std::vector<uint8_t>& data) {
-    EnsureDirectory(m_cfg.dataDir + L"profiles");
-    if (!WriteFileBytes(ProfilePath(p.name), data.data(), data.size()))
-        LOGW("Не удалось записать профиль %s", p.name.c_str());
+    std::lock_guard<std::mutex> lock(m_writeMutex);
+    m_profileWrites[ProfilePath(p.name)] = data;
+    if (m_writing) return;
+    m_writing = true;
+    std::thread([this] { WriteProfiles(); }).detach();
+}
+
+void Server::WriteProfiles() {
+    for (;;) {
+        std::wstring path;
+        std::vector<uint8_t> data;
+        {
+            std::lock_guard<std::mutex> lock(m_writeMutex);
+            if (m_profileWrites.empty()) {
+                m_writing = false;
+                return;
+            }
+            auto it = m_profileWrites.begin();
+            path = it->first;
+            data = std::move(it->second);
+            m_profileWrites.erase(it);
+        }
+        EnsureDirectory(m_cfg.dataDir + L"profiles");
+        if (!WriteFileBytes(path, data.data(), data.size())) LOGW("Не удалось записать профиль %s", WideToUtf8(path).c_str());
+    }
+}
+
+void Server::WaitProfileWrites() {
+    for (int i = 0; i < 500; ++i) {
+        {
+            std::lock_guard<std::mutex> lock(m_writeMutex);
+            if (!m_writing) return;
+        }
+        Sleep(10);
+    }
 }
 
 void Server::Relay(Player& from, uint8_t channel, const uint8_t* data, size_t size, uint32_t flags) {
@@ -631,8 +709,10 @@ void Server::Relay(Player& from, uint8_t channel, const uint8_t* data, size_t si
     bool sent = false;
     for (auto& o : m_players) {
         if (!o.joined || &o == &from) continue;
-        enet_peer_send(o.peer, channel, pkt);
-        sent = true;
+        // states for a player still loading or in the menu piled up there and came stale all at once (voice goes on:
+        // players talk while one of them loads)
+        if (channel == CH_STATE && o.status != STATUS_INGAME) continue;
+        sent = enet_peer_send(o.peer, channel, pkt) == 0 || sent;  // a peer going away takes nothing
     }
     if (!sent) enet_packet_destroy(pkt);
 }

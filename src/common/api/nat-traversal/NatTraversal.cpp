@@ -150,7 +150,7 @@ static std::string HttpBody(const std::string& resp, int* status = nullptr) {
             size_t e = body.find("\r\n", i);
             if (e == std::string::npos) break;
             size_t len = strtoul(body.substr(i, e - i).c_str(), nullptr, 16);
-            if (len == 0) break;
+            if (len == 0 || len > body.size() - (e + 2)) break;  // a length past the end wrapped i in 32 bits
             out += body.substr(e + 2, len);
             i = e + 2 + len + 2;
         }
@@ -495,6 +495,7 @@ unsigned long __stdcall SignalSubscriber::ThreadProc(void* param) {
     CrackedUrl base;
     if (!Crack(self->m_url, base)) return 0;
     std::string lastTime;  // newest event seen: a reconnect asks for what it missed (?since=)
+    bool reachable = true;
     while (!self->m_quit) {
         CrackedUrl u = base;
         if (!lastTime.empty()) u.path += L"?since=" + std::wstring(lastTime.begin(), lastTime.end());
@@ -515,6 +516,13 @@ unsigned long __stdcall SignalSubscriber::ThreadProc(void* param) {
         self->m_request = req;
         bool ok = req && WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) &&
                   WinHttpReceiveResponse(req, nullptr);
+        // the channel down (or blocked in the host's network): friends behind a NAT never get their way in by the code
+        if (ok != reachable) {
+            reachable = ok;
+            if (ok) LOGI("Канал связи для кода приглашения снова доступен");
+            else LOGW("Нет связи с каналом кода приглашения %ls (ошибка %lu): друзья подключатся, только если порт сервера "
+                      "открыт на роутере (UPnP или проброс)", base.host.c_str(), GetLastError());
+        }
         std::string pending;
         while (ok && !self->m_quit) {
             // ask what arrived first: a plain read would wait for a full buffer of this slow stream

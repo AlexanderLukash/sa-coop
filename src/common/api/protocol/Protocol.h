@@ -20,6 +20,7 @@ inline bool IsValidEntityId(uint16_t id) {
     uint16_t ownerNamespace = id >> 12;
     return ownerNamespace >= 1 && ownerNamespace <= kMaxPlayers;
 }
+constexpr int kGamePlayers = kMaxPlayers;
 constexpr uint8_t kServerId = 255;
 constexpr size_t kMaxChatLen = 160;
 constexpr size_t kWorldChunk = 16 * 1024;
@@ -72,8 +73,9 @@ enum MsgId : uint8_t {
     G_PLAYER_PASSENGER = 66,  // unreliable
     G_PLAYER_AIM = 67,        // unreliable
     G_PLAYER_SPAWN = 68,      // reliable: (re)spawn, model, interior
-    G_PLAYER_DEATH = 69,
-    G_PLAYER_LOOK = 70,       // reliable: u16 skin model, bytes clothes (fat/muscle included)
+    G_PLAYER_DEATH = 69,      // reliable: i16 the default group's animation the sender's player fell with (its copies die so)
+    G_PLAYER_LOOK = 70,       // reliable: clothes, fat, muscle, u16 model, the special character's name (290-299),
+                              // u8 fighting style, u8 its moves
     G_PLAYER_STATS = 71,      // reliable: stats affecting the remote ped (skills, stamina, fight style)
     G_PLAYER_WEAPONS = 72,    // reliable: weapon inventory
     G_BULLET = 73,            // visual bullet replay
@@ -97,10 +99,11 @@ enum MsgId : uint8_t {
     G_PED_OWNER = 93,         // reliable: u16 netId, u8 to: the owner gives its ped away (the mirror becomes its own)
     G_PED_STATUS = 94,        // reliable: death, weapon, task hints
     G_RESYNC = 95,            // reliable: "my game (re)started", the others announce their vehicles and peds again
-    G_OBJ_CREATE = 100,       // reliable: an object of the host's mission
+    G_OBJ_CREATE = 100,       // reliable: an object of the host's mission (its last u8: 1 liftable, 2 in the host's hands)
     G_OBJ_REMOVE = 101,       // reliable: it is gone (or broke)
-    G_OBJ_SYNC = 102,         // unreliable: it moved
-    G_PICKUP_EVENT = 103,     // reliable: a pickup was collected
+    G_OBJ_SYNC = 102,         // unreliable: it moved (and the same flags byte, i8 its interior)
+    G_PICKUP_EVENT = 103,     // reliable: a pickup was collected, a tag painted; host: the tags and collectibles as they are
+                              // (to a restarted partner), its mission's SET_TAG_STATUS_IN_AREA
     G_PICKUP_CREATE = 104,    // reliable: a pickup appeared (loot, the host's mission)
     G_OBJ_DAMAGE = 105,       // reliable: the partner hit a mirror object, its owner applies it
     G_FIRE = 106,             // reliable: a fire started / went out
@@ -139,13 +142,71 @@ enum MsgId : uint8_t {
     G_WATER_CANNON = 141,     // unreliable: u16 vehicle, the jet's offset from it and speed (a fire truck shoots water)
     G_TRAIN = 142,            // a train of the sender's game (u8 op, u16 id; state: kind, track, direction, rails, speed,
                               // pos), unreliable; gone: reliable
-    G_SCENE_CAMERA = 145,     // host: its mission's script holds the camera (a scene on the engine, not a cutscene):
-                              // u8 on[, vec source, vec front, vec up, f32 fov, u8 cut]; unreliable while on, reliable off
-    G_MISSION_AUDIO = 147,    // reliable: host mission audio, u8 op, u8 slot[, i32 event]
-    G_PROPERTY_OWNERS = 146,  // reliable: partner-owned safe-house bitset (u32, bits 3..31)
-    G_RACE = 148,             // cooperative 8-Track race: operation and race data
-
-    G_RADIO = 149,            // driver radio: vehicle, station, queued tracks and playback position
+    G_MISSION_AUDIO = 143,    // reliable, host -> partner: u8 op, u8 slot of the mission's speech (load: i32 sample;
+                              // attach: u8 kind, u16 net id; position: vec3; play; clear)
+    G_GARAGE_DOOR = 144,      // reliable: u8 garage, u8 door of a shop garage (0 shut, 1 open, 2 none: the sender's
+                              // door follows ours)
+    G_PROP = 173,             // reliable: u8 op, u16 id of an object the sender's player or ped holds or carries
+                              // (state: model, holder, how it hangs, look, own animation; gone)
+    G_PED_SPEECH = 174,       // reliable: u8 player/ped, u16 net id, the line it starts (context, bank, sound, delay,
+                              // volume, forced)
+    G_MISSION_POLICY = 175,   // reliable, host -> partner: the mission's police rules (u8 max wanted, u8 back-off bits,
+                              // f32 wanted multiplier), u8 city level (STAT_CITY_UNLOCKED), u8 1: its stars were cleared,
+                              // f32 density of people, f32 density of cars
+    G_VEH_SCRIPT = 176,       // reliable, host -> the driver's game: the host's mission moved, turned or froze a car that
+                              // the other player drives (u16 car, u8 its owner, u16 command, its three parameters)
+    G_INTERIOR_POP = 177,     // reliable, host -> partner: i8 area, vec3 at: its game made that interior's people
+    G_MAP_EDIT = 150,         // reliable, host -> partner: u16 command, vec3, f32 radius, i32 model, i32 state or model: a
+                              // map edit of the host's mission (an object's collision or visibility, a building's model)
+    G_PHOTO = 151,            // reliable, partner -> host: u8 n, u16 peds, u8 m, u16 mission objects: the host's own that
+                              // the partner's camera took (their copies there), for the mission's photo checks
+    G_IPL = 152,              // reliable, host -> partner: u8 op (0 in, 1 out, 2 out when far), str name: a part of the
+                              // map the host's mission brings in or takes out (REQUEST_IPL / REMOVE_IPL...)
+    G_HELI_SHOT = 153,        // reliable: u16 helicopter, vec3 gun from it, vec3 aimed at, u8 damage: a round of a police
+                              // helicopter of the sender's game
+    G_CONTACTS = 154,         // reliable, host -> partner: u8 n, the story's mission start points of the host's radar
+                              // (vec3, u8 sprite, u8 flags, u8 display, u32 colour, u16 size, i16 entrance)
+    G_GANG_WAR = 155,         // reliable, host -> partner: u8 fought: a gang war of the host's is being fought (sent on
+                              // a change and every 3 s while it is)
+    G_SIDE = 156,             // reliable: u8 op (1 offer, 2 accept, 3 decline, 4 end, 5 leave), u8 to (a player, 255 all),
+                              // str name (the side activity's mission script), i32 money (end: what it paid)
+    G_SCENE_CAM = 157,        // host -> partner, a scene of its story mission on the engine: u8 op 1 sample (state
+                              // channel): u8 scene, u8 shot, u32 host ms, vec3 camera, vec3 front, f32 fov, i8 area, u8
+                              // flags (1 wide, 2 control off); u8 op 2 end (reliable): u8 scene
+    G_TURF_WAR = 158,         // reliable: a gang war the partner's game fights: u8 op (1 start, 2 zone, 3 end, 4 stop), u16
+                              // zone info, then start: u16 navigation zone, u8 gang; zone: 16 zone bytes; end: u8 result
+    G_STAT_SYNC = 159,        // reliable: u8 full (0 changes, 1 all records: answer, 2 the answer), u8 n, n x {u16 stat,
+                              // u8 rule (1 add, 2 max, 3 min non-zero, 4 set: host -> partner), u32 value}
+    G_SIDE_DONE = 160,        // reliable: u8 n, n x {u16 global, i32 value}: side jobs and challenges done in the sender's
+                              // game (the receiver sets the flag and gives its reward)
+    G_BEAT = 161,             // reliable, host -> partner: a music minigame of its story mission: u8 op 1 lowrider (i16 track,
+                              // u8 kind, vec3 the host's car, f32 heading), 2 play, 3 stop, 5 dance (u8 streamed script,
+                              // vec3 spot, f32 heading, i16 track, f32[30] its five fixed cameras: x, y, z, then aim x, y, z)
+    G_BEAT_SCORE = 162,       // reliable, partner -> host: u8 op (1 joined, 2 points, 3 done), u8 kind, i32 beat, i32 points
+                              // (the lowrider: this beat's; the dance: its running total)
+    G_MISSION_IFP = 165,      // reliable, host -> partner: u8 1 the story mission loads an animation file (REQUEST_ANIMATION),
+                              // 0 lets it go; str its name: the partner keeps it in memory too, for its scenes' gestures
+    G_MISSION_FACE = 166,     // reliable, host -> partner: a scene's face talk: u8 kind (2 ped, 3 player), u16 id, i32 ms
+                              // (0: it stops)
+    G_CAR_DOOR = 167,         // reliable, host -> partner: the story mission's door command on a car: u16 car, u16 opcode
+                              // (OPEN_CAR_DOOR, CLOSE_ALL_CAR_DOORS, POP_CAR_DOOR, FIX_CAR_DOOR, OPEN_CAR_DOOR_A_BIT),
+                              // i32 door, i32 its other parameter (the bits of a float for OPEN_CAR_DOOR_A_BIT)
+    G_NOISE = 168,            // reliable, partner -> host: its own noise meter of "Home Invasion" is full
+    G_MISSION_HINT = 169,     // reliable, host -> partner: u8 1 show (0 take away) a help of the host's mission meant for the
+                              // partner's own doing, str its GXT key (the crate's load at the van)
+    G_MISSION_LOOK_AT = 170,  // reliable, host -> partner: a scene's head turn (TASK_LOOK_AT_CHAR): u8 kind (2 ped, 3 player),
+                              // u16 id of who looks, the same of whom, i32 ms
+    G_PED_NO_COLLIDE = 171,   // reliable, host -> partner: SET_CHAR_USES_COLLISION_CLOSEST_OBJECT_OF_TYPE of the story mission
+                              // on a shared person: u8 kind, u16 id, vec3 at, f32 radius, i32 model, u8 state
+    G_PED_ATTACH = 172,       // reliable, host -> partner: the story mission puts a shared person on a car (ATTACH_CHAR_TO_CAR):
+                              // u8 1 on (0 off), u8 kind, u16 id, u16 car, vec3 offset, i32 heading, f32 range, i32 weapon
+    G_MISSION_LOOK = 164,     // reliable, host -> partner: what the story mission put on its player, worn over the
+                              // partner's own look: u8 n, n x (u8 key index 0..27 of CPedClothesDesc, u32 key); 0: off
+    G_OBJ_HOLD = 163,         // reliable: the partner holds the copy of a host's mission object: u8 op (1 hold, 2 release,
+                              // 3 enter pressed, 4 deny: host -> partner), u16 object, release: vec3 pos, quat rot
+    G_PROPERTY_OWNERS = 146,  // fork: partner-owned safe houses
+    G_RACE = 148,             // fork: cooperative 8-Track
+    G_RADIO = 149,            // fork: shared car radio
 
     G_VOICE = 200,            // unreliable: voice frame
     G_LAST = 255,

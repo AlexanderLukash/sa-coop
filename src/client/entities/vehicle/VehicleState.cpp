@@ -127,8 +127,11 @@ VehicleState VehicleState::Capture(game::CVehicle* v) {
     s.gas = v->GasPedal();
     s.brake = v->BrakePedal();
     s.health = v->Health();
+    // the horn: our player's held button (CPad::GetHorn), a driver of the game's own a honk (CVehicle::m_HornCounter)
+    game::CPlayerPed* me = game::FindPlayerPed(0);
+    bool horn = me && v->Driver() == me ? game::CallMethod<0x53FEE0, bool>(game::GetPad(0)) : game::Field<uint32_t>(v, 0x514) > 0;
     s.flags = (v->EngineOn() ? F_ENGINE : 0) | (v->LightsOn() ? F_LIGHTS : 0) | (v->SirenOn() ? F_SIREN : 0) |
-              (v->Status() == 5 ? F_WRECKED : 0);
+              (horn ? F_HORN : 0) | (v->Status() == 5 ? F_WRECKED : 0) | (v->VehicleFlagsLo() & 0x20 ? F_HANDBRAKE : 0);
     int type = v->VehicleSubClass();
     if (type <= game::VEHICLE_TYPE_PLANE || type == game::VEHICLE_TYPE_TRAILER) {  // CAutomobile and its subclasses
         s.extras |= X_MISC;
@@ -143,6 +146,19 @@ VehicleState VehicleState::Capture(game::CVehicle* v) {
         s.extras |= X_TURRET;
         s.turretYaw = game::Field<float>(v, 0x94C);   // CAutomobile::m_fDoomVerticalRotation
         s.turretPitch = game::Field<float>(v, 0x950);  // m_fDoomHorizontalRotation
+    }
+    // CBike::ProcessControl works the lean out of the step's sideways speed change (0x6BBA69): a copy's speed is set
+    // from every state, and it rocked from side to side with its rider's weight never forward or back
+    if (type == game::VEHICLE_TYPE_BIKE || type == game::VEHICLE_TYPE_BMX) {
+        s.extras |= X_BIKE;
+        s.lean = game::Field<float>(v, 0x648);     // m_RideAnimData.LeanAngle
+        s.leanFwd = game::Field<float>(v, 0x650);  // LeanFwd
+    }
+    // CHeli::ProcessControl (0x6C7050) lights it for the police AI or a player's Police Maverick (the horn)
+    if (type == game::VEHICLE_TYPE_HELI && game::Field<uint8_t>(v, 0xA11) && game::Field<float>(v, 0xA00) > 0.0f) {
+        s.extras |= X_LIGHT;
+        s.lightTarget = game::Field<CVector>(v, 0x9F4);
+        s.lightPower = game::Field<float>(v, 0xA00);
     }
     return s;
 }
@@ -165,6 +181,15 @@ void VehicleState::Write(Writer& w) const {
         w.I16(Writer::Quant(turretYaw, 3.2f));
         w.I16(Writer::Quant(turretPitch, 3.2f));
     }
+    if (extras & X_LIGHT) {
+        w.Vec(V(lightTarget));
+        w.Unit8(lightPower);
+    }
+    if (extras & X_TOW) w.U16(tower);
+    if (extras & X_BIKE) {
+        w.I16(Writer::Quant(lean, 3.2f));
+        w.I16(Writer::Quant(leanFwd, 3.2f));
+    }
 }
 
 bool VehicleState::Read(Reader& r) {
@@ -179,7 +204,7 @@ bool VehicleState::Read(Reader& r) {
     health = (float)r.U16();
     flags = r.U8();
     extras = r.U8();
-    if ((flags & ~uint8_t(0x3F)) || (extras & ~uint8_t(X_MISC | X_GEAR | X_TURRET))) {
+    if ((flags & ~uint8_t(0x3F)) || (extras & ~uint8_t(X_MISC | X_GEAR | X_TURRET | X_LIGHT | X_TOW | X_BIKE))) {
         r.Fail();
         return false;
     }
@@ -188,6 +213,15 @@ bool VehicleState::Read(Reader& r) {
     if (extras & X_TURRET) {
         turretYaw = r.I16() / 32767.0f * 3.2f;
         turretPitch = r.I16() / 32767.0f * 3.2f;
+    }
+    if (extras & X_LIGHT) {
+        lightTarget = G(r.Vec());
+        lightPower = r.Unit8();
+    }
+    if (extras & X_TOW) tower = r.U16();
+    if (extras & X_BIKE) {
+        lean = r.I16() / 32767.0f * 3.2f;
+        leanFwd = r.I16() / 32767.0f * 3.2f;
     }
     return r.Ok() && sync::PlausiblePosition(V(pos)) && sync::PlausibleVelocity(V(vel), 700.0f) &&
            sync::PlausibleVelocity(V(turn), 80.0f);

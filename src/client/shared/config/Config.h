@@ -25,11 +25,15 @@ struct ClientConfig {
     bool windowedStrict = false;      // test setups: quit at once if windowed mode could not be applied
     int windowX = -1, windowY = -1;   // -1 = centre
     int width = 0, height = 0;        // 0 = use the game's video mode
+    bool borderless = false;          // windowed without a frame, up to the whole screen (a fullscreen look)
+    std::string windowTitle;          // the window's caption (empty: the game's): tells two copies apart to a recorder
     bool multiInstance = false;       // allow several game copies (testing)
     bool runInBackground = true;      // keep simulating when the window is not focused
     bool noPauseMenu = true;          // the world keeps running while the pause menu is open
     std::string userDir;              // custom "GTA San Andreas User Files" directory (empty = auto)
     bool skipIntro = true;
+    bool partnerBlip = true;          // the other players' marks on the radar and the map
+    bool nameTags = true;             // their names, health and armour over their heads (off for a blind shoot-out)
 
     // [voice]
     bool voiceEnabled = true;
@@ -49,8 +53,10 @@ struct ClientConfig {
 
     // [debug]
     bool debugOverlay = false;
+    bool cleanScreen = false;         // the mod draws nothing over the game (chat, names, menus): video recording
     bool verboseLog = false;
     bool forceRelay = false;          // invite codes: skip the direct attempt (relay tests)
+    bool firewallPrompt = true;       // hosting: ask Windows to let the server through its firewall (off in test setups)
     std::string serverData = "server-data";  // the hosted server's folder in coop\ (test setups keep theirs apart)
     std::string launcherSession;       // correlates status with one launch, ignoring stale files
 

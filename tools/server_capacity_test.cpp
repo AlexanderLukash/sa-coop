@@ -20,7 +20,8 @@ void Check(bool ok, const char* message) {
 struct Clients {
     std::array<ENetHost*, 9> hosts{};
     std::array<ENetPeer*, 9> peers{};
-    std::array<int, 9> ids{}, rosters{}, relays{}, raceRelays{}, radioRelays{};
+    std::array<int, 9> ids{}, rosters{}, relays{};
+    std::array<std::array<int, 256>, 9> featureRelays{};
     std::array<bool, 9> welcomed{}, rejected{};
     std::array<std::string, 9> reasons{};
     ENetAddress address{};
@@ -72,9 +73,9 @@ struct Clients {
                         r.Str();
                         reasons[i] = r.Str();
                         rejected[i] = true;
-                    } else if (msg == G_RACE || msg == G_RADIO) {
+                    } else if (msg >= G_MISSION_AUDIO && msg <= G_INTERIOR_POP) {
                         Check(r.U8() == 7 && r.U32() == 0x12345678 && r.Ok(), "bad feature relay sender/payload");
-                        ++(msg == G_RACE ? raceRelays[i] : radioRelays[i]);
+                        ++featureRelays[i][msg];
                     } else if (msg == G_PLAYER_ONFOOT) {
                         Check(r.U8() == 7 && r.U32() == 0x87654321 && r.Ok(), "bad relay sender/payload");
                         ++relays[i];
@@ -124,19 +125,30 @@ int main(int argc, char** argv) {
                     });
                     Check(clients.relays[7] == 0, "relay echoed to sender");
                     // Both new message IDs must survive the real server's relay unchanged.
-                    for (auto msg : {G_RACE, G_RADIO}) {
+                    for (auto msg : {G_RACE, G_RADIO, G_PROPERTY_OWNERS, G_MISSION_AUDIO, G_GARAGE_DOOR,
+                                     G_PROP, G_PED_SPEECH, G_MISSION_POLICY, G_VEH_SCRIPT, G_INTERIOR_POP,
+                                     G_MAP_EDIT, G_PHOTO, G_IPL, G_HELI_SHOT, G_CONTACTS, G_GANG_WAR, G_SIDE,
+                                     G_SCENE_CAM, G_TURF_WAR, G_STAT_SYNC, G_SIDE_DONE, G_BEAT, G_BEAT_SCORE,
+                                     G_MISSION_IFP, G_MISSION_FACE, G_CAR_DOOR, G_NOISE, G_MISSION_HINT,
+                                     G_MISSION_LOOK_AT, G_PED_NO_COLLIDE, G_PED_ATTACH, G_MISSION_LOOK, G_OBJ_HOLD}) {
                         Writer feature(msg);
                         feature.U32(0x12345678);
                         enet_peer_send(clients.peers[7], CH_RELIABLE,
                             enet_packet_create(feature.Data(), feature.Size(), ENET_PACKET_FLAG_RELIABLE));
                     }
                     clients.Until([&] {
-                        for (int i = 0; i < 7; ++i)
-                            if (clients.raceRelays[i] != 1 || clients.radioRelays[i] != 1) return false;
+                        // 33 distinct IDs: every client must receive each exactly once.
+                        for (int i = 0; i < 7; ++i) {
+                            int total = 0;
+                            for (int count : clients.featureRelays[i]) {
+                                Check(count <= 1, "feature message IDs collided");
+                                total += count;
+                            }
+                            if (total != 33) return false;
+                        }
                         return true;
                     });
-                    Check(clients.raceRelays[7] == 0 && clients.radioRelays[7] == 0,
-                          "feature relay echoed to sender");
+                    for (int count : clients.featureRelays[7]) Check(count == 0, "feature relay echoed to sender");
                 }
                 clients.Connect(capacity);
                 clients.Until([&] { return clients.rejected[capacity]; });

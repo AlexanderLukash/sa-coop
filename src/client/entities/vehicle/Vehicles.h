@@ -41,6 +41,7 @@ struct NetVehicle {
     uint64_t missionUnheldMs = 0;   // root: mission script released it; retain support cars briefly
     uint8_t origBy = 0;        // what this game had it created by before it became a mirror here (0: spawned as one)
     bool heldHere = false;     // a script of this game held it when it became a mirror here
+    bool crashProofHere = false;  // made collision-proof here as a mirror (taken off when it is this game's again)
 
     VehicleSpawn spawn;  // fallback for recreating a locally lost mirror before its first state
     uint64_t mirrorRetryMs = 0;
@@ -50,6 +51,7 @@ struct NetVehicle {
     uint32_t lastTime = 0;
     uint64_t lastSendMs = 0;
     uint64_t lastChangeMs = 0;  // owned: last time it moved or was used
+    float sentHealth = -1;      // owned: the health last sent (a car on its roof or on fire loses it standing still)
     VehicleLook look;            // owned: last sent; mirror: wanted
     bool hasLook = false;
     uint64_t lookCheckMs = 0, lookSentMs = 0;
@@ -60,6 +62,7 @@ public:
     void ForgetOwnedBy(uint8_t owner);  // its game started over: its mirrors go, the others are this game's again
     const char* Name() const override { return "Vehicles"; }
     void OnInstallHooks() override;
+    void OnSessionStart() override;
     void OnSessionEnd() override;
     void OnPeerLeave(uint8_t id) override;
     void OnGameStarted() override;
@@ -70,12 +73,17 @@ public:
     static Vehicles& Instance();
 
     NetVehicle* Find(uint16_t netId);
+    // the record's vehicle is still there (one deleted in the last frame stays listed until OnPreProcess, after the
+    // network handlers that use its handle)
+    static bool Alive(const NetVehicle& nv) { return nv.veh && game::GetVehicle(nv.handle) == nv.veh; }
     NetVehicle* Find(game::CVehicle* v);
     // Makes a local vehicle known to the other player (announces it) and returns its record.
     NetVehicle* EnsureNetworked(game::CVehicle* v);
     // Local player became the driver of `nv`: take ownership.
     void TakeOwnership(NetVehicle& nv);
     bool IsMirror(const NetVehicle& nv) const;
+    // a mirror this game keeps when its owner deletes it: an ordinary car by this game's player (HandleRemove)
+    bool KeepsWhenDeleted(const NetVehicle& nv) const;
     // Applies a state received from the vehicle's driver (Players module, G_PLAYER_DRIVER).
     void ApplyDriverState(uint8_t from, uint16_t netId, const VehicleState& st);
     // a partner (re)started its game: announce our vehicles again
@@ -105,6 +113,7 @@ private:
     void Release(NetVehicle& nv);
     void GiveAway(NetVehicle& nv, uint8_t to);
     void HandleHandover(uint8_t from, Reader& r);
+    void TakeOver(NetVehicle& nv, uint8_t from);  // a mirror becomes this game's own car (handed over or kept)
     void HandleScriptFree(uint8_t from, Reader& r);
     void HandleClear(uint8_t from, Reader& r);
     void UpdateMissionFleets();

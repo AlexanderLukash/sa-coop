@@ -53,6 +53,12 @@ jobs:
       - name: Build the archive
         run: python tools/build.py dist
 
+      - name: Test client packet formats
+        run: python tools/test_network_state.py
+
+      - name: Test server capacity and feature relay
+        run: python tools/test_server_capacity.py
+
       - uses: actions/upload-artifact@v4
         with:
           name: SA-COOP

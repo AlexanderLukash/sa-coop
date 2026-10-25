@@ -3,6 +3,8 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 
 #include "app/crash-handler/CrashHandler.h"
 #include "app/patches/Patches.h"
@@ -63,17 +65,45 @@ void __fastcall HookGenerateGameFilename(void* self, void* edx, int slot, char* 
 
 void CommonFrame();
 
+// A frame of over half a second, or over 0.7 s from the last one (the 1-2 s lags players report), goes into the log
+// with where its time went: our modules before or after the game's own process, the game's process (its streaming,
+// its scripts), or neither (drawing, a world load)
+uint64_t g_lastFrameMs = 0;  // when the last frame (or the menu's) began
+void RunModules(bool pre, const char*& slowest, uint64_t& slowestMs) {
+    for (auto* m : Modules()) {
+        uint64_t a = NowMs();
+        if (pre) m->OnPreProcess();
+        else m->OnPostProcess();
+        if (uint64_t d = NowMs() - a; d > slowestMs) slowestMs = d, slowest = m->Name();
+    }
+}
+
 void __cdecl HookGameProcess() {
     ++g_frameNo;
     patches::MuteBackgroundInput();
+    uint64_t t0 = NowMs(), gap = g_lastFrameMs ? t0 - g_lastFrameMs : 0;
+    g_lastFrameMs = t0;
+    const char* slowest = "-";
+    uint64_t slowestMs = 0;
     CommonFrame();
-    for (auto* m : Modules()) m->OnPreProcess();
+    RunModules(true, slowest, slowestMs);
+    uint64_t t1 = NowMs();
     g_origGameProcess();
-    for (auto* m : Modules()) m->OnPostProcess();
+    uint64_t t2 = NowMs();
+    // The frame a new game's player is made in (MAIN's CREATE_PLAYER): the game starts for the modules next frame
+    // (OnGameStarted, G_RESYNC), and what they announced in this one was forgotten here and made twice there.
+    if (g_gameStarted || !IsPlayerReady()) RunModules(false, slowest, slowestMs);
+    uint64_t t3 = NowMs();
+    if (IsPlayerReady() && (t3 - t0 > 500 || gap > 700))
+        LOGW("Long frame: %u ms from the last one, %u ms its process: ours %u before the game's and %u after (slowest %s %u), "
+             "the game's %u",
+             (unsigned)gap, (unsigned)(t3 - t0), (unsigned)(t1 - t0), (unsigned)(t3 - t2), slowest, (unsigned)slowestMs,
+             (unsigned)(t2 - t1));
 }
 
 void __fastcall HookMenuProcess(void* self, void* edx) {
     g_origMenuProcess(self, edx);
+    g_lastFrameMs = NowMs();  // a pause in the menu is no lag
     // FrontendIdle: CGame::Process is not running
     if (game::GameState() != game::GAME_STATE_IDLE) {
         ++g_frameNo;
@@ -92,6 +122,8 @@ void RenderOverlay() {
         g_screenshotPath.clear();
     }
     if (!g.Begin()) return;
+    // a recording takes the game's picture alone: the modules still run (the cutscene partner is placed from here)
+    g.SetHidden(Cfg().cleanScreen);
     ui::In().UpdateMouse(g.Width(), g.Height());
     if (IsPlayerReady())
         for (auto* m : Modules()) m->OnRender();
@@ -106,14 +138,47 @@ void RenderOverlay() {
     }
 }
 
+bool g_overlayDrawn = false;  // by the game's own last 2D call this frame (DrawOverlayIfMissed clears it)
+
 void __cdecl HookDebugTextIngame() {
     if (g_origDebugTextIngame) g_origDebugTextIngame();
     RenderOverlay();
+    g_overlayDrawn = true;
 }
 
 void __cdecl HookDebugTextMenu() {
     if (g_origDebugTextMenu) g_origDebugTextMenu();
     RenderOverlay();
+    g_overlayDrawn = true;
+}
+
+// The overlay is drawn from the game's last 2D call (Idle -> CDebug::DebugDisplayTextBuffer). A plugin that took that
+// call without passing it on left a player with no chat, no F9 window and no invite code to give: then it is drawn
+// right before the frame's camera update ends. (Drawn at IDirect3DDevice9::Present it ran outside any RenderWare
+// camera and crashed the game on its loading screens, issue #46.)
+using CameraEndUpdateFn = void*(__cdecl*)(void*);
+CameraEndUpdateFn g_origEndUpdateIngame = nullptr, g_origEndUpdateMenu = nullptr;
+
+void DrawOverlayIfMissed() {
+    static bool said = false;
+    if (!g_overlayDrawn) {
+        if (!said) {
+            said = true;
+            LOGW("The overlay's draw call is not reached (another plugin took it): drawn as the frame ends instead");
+        }
+        RenderOverlay();
+    }
+    g_overlayDrawn = false;
+}
+
+void* __cdecl HookEndUpdateIngame(void* camera) {
+    DrawOverlayIfMissed();
+    return g_origEndUpdateIngame(camera);
+}
+
+void* __cdecl HookEndUpdateMenu(void* camera) {
+    DrawOverlayIfMissed();
+    return g_origEndUpdateMenu(camera);
 }
 
 void __cdecl HookShutDownForRestart() {
@@ -175,6 +240,7 @@ void CommonFrame() {
         if (void* hwnd = game::GameWindow()) {
             ui::In().Install(hwnd);
             patches::FixPluginWrappers();  // the first frame: the ASI plugins are loaded
+            ReclaimCrashFilter();
         }
     }
     static uint64_t lastPlacement = 0;
@@ -190,18 +256,25 @@ void CommonFrame() {
         else flow::Join(cfg.host, (uint16_t)cfg.port, cfg.password);
     }
 
-    Net().Update();
-    flow::Update();
-
-    // detect "game became playable"
+    // detect "game became playable" before this frame's messages: handled first, they made copies (trains, peds,
+    // cars, fires) that every module's OnGameStarted then forgot, left in the world untracked
     if (!g_gameStarted && IsPlayerReady()) {
         g_gameStarted = true;
         LOGI("Game started (player ready)");
+        // The scripts are held from CGame::ShutDownForRestart to InitialiseWhenRestarting. A load that went another way
+        // (a plugin's) never let them go: no script ran, PSAVE1 left the loaded save's mission flag up, no story markers.
+        if (g_restarting) {
+            g_restarting = false;
+            LOGW("The scripts were still held after the world load (no InitialiseWhenRestarting seen): let go");
+        }
         g_redirectPath.clear();
         patches::FixPluginWrappers();  // and the ones loaded later
         flow::OnGameStarted();
         for (auto* m : Modules()) m->OnGameStarted();
     }
+
+    Net().Update();
+    flow::Update();
 
     ui::TheChat().ProcessInput();
     ui::ProcessConnectMenu();
@@ -308,8 +381,42 @@ void RequestScreenshot(const std::string& bmpPath, bool withOverlay, int scale, 
 void ShowConnectMenu(bool show) { ui::SetConnectMenuVisible(show); }
 bool ConnectMenuVisible() { return ui::IsConnectMenuVisible(); }
 
+// The game's cheat codes with a T after their first letter (the letter codes and the phrases of the same hashes, all
+// checked against CCheat::m_aCheatHashKeys): the chat key T in the middle of one is the code's (issue #69)
+const char* const kCheatsWithT[] = {
+    "AFPHULTL", "AIWPRTON", "AQTBCODX", "ATTACKOFTHEVILLAGEPEOPLE", "BETTERSTAYINDOORS", "BGKGTJH", "BMTPWHR",
+    "BRINGITON", "BTCDBCB", "CANTSEEWHEREIMGOING", "CELEBRITYSTATUS", "CHITTYCHITTYBANGBANG", "CPKTNWT", "CRAZYTOWN",
+    "DONTBRINGONTHENIGHT", "DONTTRYANDSTOPME", "EEGCYXT", "FLYINGTOSTUNT", "FOOOXFT", "FVTMNBZ", "GHOSTTOWN",
+    "HITTHEROADJACK", "ICANGOALLNIGHT", "ITSALLBULL", "IWANTTOHOVER", "JQNTDMH", "JUMPJET", "JUSTTRYANDSTOPME",
+    "LETSGOBASEJUMPING", "MANFROMATLANTIS", "MONSTERMASH", "NATURALTALENT", "NIGHTPROWLER", "NINJATOWN", "NOONECANHURTME",
+    "NOONECANSTOPUS", "NOTFORPUBLICROADS", "NUTTERSTOYS", "PINKISTHENEWCOOL", "PLEASANTLYWARM", "PPGWJHT",
+    "PROFESSIONALSKIT", "ROCKETMAN", "ROCKETMAYHEM", "SCOTTISHSUMMER", "SLOWITDOWN", "SOLONGASITSBLACK", "SPEEDITUP",
+    "STATEOFEMERGENCY", "STAYINANDWATCHTV", "STICKLIKEGLUE", "STINGLIKEABEE", "STOPPICKINGONME", "SURROUNDEDBYNUTTERS",
+    "TIMEJUSTFLIESBY", "TIMETOKICKASS", "TOODAMNHOT", "TURNDOWNTHEHEAT", "TURNUPTHEHEAT", "VPJTQWV", "WANRLTW",
+    "WHERESTHEFUNERAL", "WHOATEALLTHEPIES", "YLTEICZ"};
+uint64_t g_lastLetterMs = 0;
+
+// The key goes on a code being typed: the game's last keys (CCheat::m_CheatString, newest first) and this one begin one
+// of the codes. Only right after another letter (one letter before it only within 0.4 s: S then T is also walking back
+// and the chat), so a T long after is the chat again.
+bool TypingCheat(int vk) {
+    if (vk < 'A' || vk > 'Z' || NowMs() - g_lastLetterMs > 1500) return false;
+    const char* typed = (const char*)0x969110;
+    size_t n = strnlen(typed, 29);
+    char tail[32];
+    for (size_t k = n; k >= 1; --k) {  // the longest run of the last keys first
+        for (size_t i = 0; i < k; ++i) tail[i] = (char)toupper((unsigned char)typed[k - 1 - i]);
+        tail[k] = (char)vk;
+        for (const char* code : kCheatsWithT)
+            if (!strncmp(code, tail, k + 1)) return k >= 2 || NowMs() - g_lastLetterMs < 400;
+    }
+    return false;
+}
+
 bool OnKeyDown(int vk, bool repeat) {
     auto& cfg = Cfg();
+    bool typingCheat = !repeat && TypingCheat(vk);
+    if (!repeat && vk >= 'A' && vk <= 'Z') g_lastLetterMs = NowMs();
     if (ui::IsConnectMenuVisible()) {
         if (vk == VK_ESCAPE || vk == VK_F9) {
             if (!repeat) ui::SetConnectMenuVisible(false);
@@ -320,12 +427,13 @@ bool OnKeyDown(int vk, bool repeat) {
     if (ui::TheChat().IsOpen()) return true;
     if (repeat) return false;
     if (vk == VK_ESCAPE && CutsceneSkipDecline()) return true;  // "watch on", not the pause menu
+    if ((vk == 'Y' || vk == 'N') && !game::MenuActive() && SideCallKey(vk == 'Y')) return true;  // a side activity's call
     if (vk == VK_F9) {
         ui::SetConnectMenuVisible(true);
         return true;
     }
     bool inMenu = game::MenuActive();
-    if (vk == cfg.chatKey && !inMenu && (IsPlayerReady() || Net().Online())) {
+    if (vk == cfg.chatKey && !inMenu && (IsPlayerReady() || Net().Online()) && !typingCheat) {
         ui::TheChat().Open();
         MSG m;  // the key's own letter, queued already by TranslateMessage ("t", or "е" in a Russian layout)
         PeekMessageW(&m, nullptr, WM_CHAR, WM_CHAR, PM_REMOVE);
@@ -375,6 +483,20 @@ static std::string ToAnsiPath(const std::wstring& w) {
     return s;
 }
 
+// The game opens its files by relative paths (CGame::Init2 reads ANIM\PED.IFP and crashes in RwStreamRead when it
+// can't): a current folder left elsewhere by a plugin or a dialog crashed every start of a game on its loading screen
+void KeepGameFolder() {
+    std::string root = (const char*)0xB71AE0;  // CFileMgr::ms_rootDirName: the folder the game started in, with '\'
+    while (root.size() > 3 && root.back() == '\\') root.pop_back();
+    char cur[MAX_PATH];
+    DWORD n = GetCurrentDirectoryA(MAX_PATH, cur);
+    if (!root.empty() && (n == 0 || n >= MAX_PATH || _stricmp(cur, root.c_str()) != 0)) {
+        LOGW("The current folder was %s, not the game's %s: set back", n && n < MAX_PATH ? cur : "?", root.c_str());
+        SetCurrentDirectoryA(root.c_str());
+    }
+    if (GetFileAttributesA("anim\\ped.ifp") == INVALID_FILE_ATTRIBUTES) LOGW("anim\\ped.ifp is missing: the game can't start");
+}
+
 bool LoadSaveFile(const std::wstring& path) {
     if (!FileExists(path)) {
         LOGE("LoadSaveFile: no file %s", WideToUtf8(path).c_str());
@@ -402,6 +524,7 @@ bool LoadSaveFile(const std::wstring& path) {
     game::Ref<uint8_t>(0xB72910) = 0;         // CGame::bMissionPackGame
     game::Ref<uint8_t>(mm + 0x60) = 1;        // m_bLoadingData
     LOGI("Loading save %s", g_redirectPath.c_str());
+    KeepGameFolder();
     return true;
 }
 
@@ -413,6 +536,7 @@ bool StartNewGame() {  // what the menu's "Start new game, yes" does (MENU_ACTIO
     game::CallMethod<0x573330>((void*)mm);  // DoSettingsBeforeStartingAGame: m_bStartGameLoading
     game::Ref<uint8_t>(mm + 0x32) = 1;      // m_bDontDrawFrontEnd
     LOGI("Starting a new game");
+    KeepGameFolder();
     return true;
 }
 
@@ -506,6 +630,8 @@ void Init(void* hModule) {
     mem::RedirectCallFn(0x53E7A5, &HookMenuProcess, &g_origMenuProcess);      // FrontendIdle -> CMenuManager::Process
     mem::RedirectCallFn(0x53EBE4, &HookDebugTextIngame, &g_origDebugTextIngame);  // Idle -> DebugDisplayTextBuffer
     mem::RedirectCallFn(0x53E86C, &HookDebugTextMenu, &g_origDebugTextMenu);  // FrontendIdle -> DebugDisplayTextBuffer
+    mem::RedirectCallFn(0x53EBF5, &HookEndUpdateIngame, &g_origEndUpdateIngame);  // Idle -> RwCameraEndUpdate
+    mem::RedirectCallFn(0x53E87D, &HookEndUpdateMenu, &g_origEndUpdateMenu);      // FrontendIdle -> RwCameraEndUpdate
     mem::HookFn(0x6190A0, &HookGenerateGameFilename, &g_origGenerateGameFilename, "C_PcSave::GenerateGameFilename");
     mem::HookFn(0x53C550, &HookShutDownForRestart, &g_origShutDownForRestart, "CGame::ShutDownForRestart");
     mem::HookFn(0x53C680, &HookInitialiseWhenRestarting, &g_origInitWhenRestarting, "CGame::InitialiseWhenRestarting");
@@ -539,6 +665,7 @@ void Init(void* hModule) {
     net.onWorldWanted = [] { flow::RequestFreshWorld(); };
     net.onWorldNewGame = [] { flow::OnNewGameFromHost(); };
     net.onWorldWait = [] { flow::OnHostInPrologue(); };
+    net.onWorldNone = [] { flow::OnWorldNone(); };
     net.onInvite = [](const std::string& code) {
         if (Net().IsHost())
             ui::TheChat().AddSystem(Format(TR("Код для друга: %s. Скопировать его можно в окне F9.",

@@ -47,8 +47,8 @@ void RenderOverlay() {
     std::string st, hint;
     if (phase == flow::Phase::WaitingWorld || phase == flow::Phase::StartingServer || phase == flow::Phase::Connecting)
         st = flow::StatusText();
-    else if (!frontend && (st = CutsceneSkipText(hint)).empty() && (st = MissionWaitText()).empty())
-        st = RaceStatusText();
+    else if (!frontend && (st = CutsceneSkipText(hint)).empty() && (st = SideCallText(hint)).empty())
+        if ((st = MissionWaitText(hint)).empty()) st = RaceStatusText();
     if (!core::ConnectMenuVisible() && !st.empty()) {
         float w = std::max(g.TextWidth(FONT_MENU, st), hint.empty() ? 0.0f : g.TextWidth(FONT_SMALL, hint)) + 48 * s;
         float h = g.LineHeight(FONT_MENU) + 24 * s + (hint.empty() ? 0.0f : g.LineHeight(FONT_SMALL) + 6 * s);

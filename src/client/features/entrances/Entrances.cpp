@@ -12,6 +12,7 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "entities/session/Flow.h"
 #include "common/lib/util/Util.h"
 #include "entities/player/Players.h"
 #include "shared/api/net-session/Session.h"
@@ -86,7 +87,7 @@ public:
         Net().SetHandler(proto::G_ENEX, [](uint8_t from, Reader& r) {
             int n = r.U16();
             CPoolHeader* pool = Pool();
-            if (from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !pool) return;
+            if (from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld() || !pool) return;
             for (int k = 0; k < n; ++k) {
                 char name[8];
                 r.Raw(name, 8);

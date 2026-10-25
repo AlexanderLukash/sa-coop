@@ -49,6 +49,10 @@ public:
         dy = m_motionY;
         m_motionX = m_motionY = 0;
     }
+    // Captured while the game holds the mouse exclusively (its fullscreen play): our cursor moves by the game's own
+    // reading of the mouse, fed here from CPad::UpdateMouse (Patches)
+    bool CursorFromGameMouse() const;
+    void FeedGameMouse(float dx, float dy, bool lmb, int wheel);
 
     InputState& State() { return m_state; }
     void EndFrame();  // clears per-frame events
@@ -67,6 +71,9 @@ private:
     bool m_mouseCapture = false;
     bool m_mouseRelative = false;
     float m_motionX = 0, m_motionY = 0;
+    bool m_fromGame = false;          // the cursor below is ours (CursorFromGameMouse)
+    float m_gameX = 0, m_gameY = 0;  // in client pixels
+    bool m_gameLmb = false;
     InputState m_state;
 };
 

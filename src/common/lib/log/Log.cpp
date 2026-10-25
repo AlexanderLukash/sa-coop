@@ -17,6 +17,11 @@ static void (*g_sink)(Level, const char*) = nullptr;
 void Open(const std::wstring& path, bool alsoConsole) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_file) fclose(g_file);
+    // the last run's log stays as *.old.log: a game restarted after a crash wrote over the log the report needed
+    std::wstring old = path;
+    size_t dot = old.rfind(L'.');
+    old.insert(dot == std::wstring::npos ? old.size() : dot, L".old");  // coop.log -> coop.old.log
+    MoveFileExW(path.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING);
     g_file = _wfopen(path.c_str(), L"wb");
     if (g_file) fputs("\xEF\xBB\xBF", g_file);  // UTF-8 BOM so Notepad shows Cyrillic correctly
     g_console = alsoConsole;
@@ -40,6 +45,10 @@ void Write(Level lvl, const char* fmt, ...) {
     snprintf(line, sizeof(line), "[%02d:%02d:%02d.%03d] %s %s\n", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
              names[(int)lvl], msg);
 
+    // a fault in here with the lock held, reported by the crash handler on the same thread, waited for itself
+    static thread_local bool writing = false;
+    if (writing) return;
+    writing = true;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_file) {
         fputs(line, g_file);
@@ -51,6 +60,7 @@ void Write(Level lvl, const char* fmt, ...) {
         fflush(stdout);
     }
     if (g_sink) g_sink(lvl, line);
+    writing = false;
 }
 
 }  // namespace coop::log

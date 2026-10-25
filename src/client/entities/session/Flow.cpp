@@ -1,6 +1,7 @@
 #include "entities/session/Flow.h"
 
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <cmath>
@@ -22,6 +23,7 @@
 #include "shared/game/Game.h"
 #include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
+#include "shared/lib/firewall/Firewall.h"
 #include "shared/ui/chat/Chat.h"
 
 namespace coop::flow {
@@ -46,10 +48,13 @@ bool g_keepSent = false;            // host: the stored world goes out meanwhile
 bool g_prologue = false;            // host: a new game's prologue runs (it cannot be saved)
 bool g_afterPrologue = false;       // host: and is over, no save of this game has gone out yet
 bool g_prologueWait = false;        // partner: the host plays a new game's prologue
+bool g_worldNone = false;           // partner: the server has no world for us yet (the host is still in the menu)
 uint64_t g_gameStartedAt = 0, g_snapshotTriedAt = 0;
 bool g_follower = false;            // partner: in a new game of its own next to the host, until its first save
 bool g_progressUpload = false;      // host: the next snapshot goes to the partners in the game as well
 std::vector<uint8_t> g_pendingWorld;  // partner: the host's world after its progress, loaded at a safe moment
+uint64_t g_pendingSince = 0, g_pendingToldMs = 0;  // partner: when it came, when the log last said what holds it
+uint64_t g_reloadFadeMs = 0;                       // partner: when the screen began to go black for that load
 SavedSpot g_spot;
 bool g_hasSpot = false;
 
@@ -70,13 +75,89 @@ void Fail(const std::string& why) {
     Cfg().WriteLauncherStatus("failed", why);
 }
 
+// A server of this install left by an earlier game whose process hung after a crash holds the port: the new server
+// cannot open it and this game would join the old one (a wrong password, an old world)
+void StopLeftoverServers(const std::wstring& exe) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, L"coop-server.exe")) continue;
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+        if (!p) continue;
+        wchar_t path[MAX_PATH];
+        DWORD n = MAX_PATH;
+        if (QueryFullProcessImageNameW(p, 0, path, &n) && !_wcsicmp(path, exe.c_str()) && TerminateProcess(p, 0))
+            LOGW("A server left by an earlier game was stopped (pid %lu)", pe.th32ProcessID);
+        CloseHandle(p);
+    }
+    CloseHandle(snap);
+}
+
+// Friends reach the server through Windows Firewall, and many could not ("the server does not answer", on a home
+// network too): its "Windows Security Alert" stays behind the full-screen game, and cancelled or unseen it leaves rules
+// that block coop-server.exe; ticked for private networks only, it does not let it through on a public one. The host
+// is asked for Windows' permission (its UAC prompt) to allow the server on every network instead, at each start of the
+// server while it is still kept out.
+void LetServerThroughFirewall(const std::wstring& exe) {
+    firewall::State state = firewall::Check(exe);
+    LOGI("Windows Firewall for the server: %s", state == firewall::State::Allowed   ? "allowed"
+                                                : state == firewall::State::Blocked ? "blocked"
+                                                : state == firewall::State::NoRule  ? "no rule for it"
+                                                                                    : "not readable");
+    if ((state != firewall::State::Blocked && state != firewall::State::NoRule) || !Cfg().firewallPrompt) return;
+    ui::TheChat().AddSystem(TR("Брандмауэр Windows не пропускает друзей к серверу. Подтвердите запрос Windows, и мод разрешит coop-server.exe.",
+                               "Windows Firewall keeps friends from the server. Confirm the Windows prompt and the mod will allow coop-server.exe."));
+    if (!firewall::AllowElevated(exe))
+        ui::TheChat().AddError(TR("Без этого разрешения друг не подключится. Разрешите coop-server.exe в брандмауэре Windows вручную.",
+                                  "Without it your friend cannot connect. Allow coop-server.exe in Windows Firewall yourself."));
+}
+
+// Why Windows did not start the server, in words. 4550-4583 are its code integrity policy: on Windows 11 that is Smart
+// App Control, which runs no program without a digital signature (error 4551 in a player's report).
+std::string StartError(DWORD err) {
+    if (err == ERROR_VIRUS_INFECTED || err == ERROR_VIRUS_DELETED || err == ERROR_ACCESS_DENIED)
+        return Format(TR("Антивирус не дал запустить coop-server.exe (ошибка %lu). Добавьте папку игры в исключения антивируса.",
+                         "An antivirus kept coop-server.exe from starting (error %lu). Add the game folder to the antivirus exclusions."),
+                      err);
+    if (err >= 4550 && err <= 4583)
+        return Format(TR("Windows не дал запустить сервер (ошибка %lu). Интеллектуальное управление приложениями не пускает "
+                         "программы без цифровой подписи, а у coop-server.exe её нет. К другу можно подключиться и так: для "
+                         "этого сервер не нужен.",
+                         "Windows kept the server from starting (error %lu). Smart App Control runs no program without a "
+                         "digital signature, and coop-server.exe has none. You can still join a friend: that needs no server."),
+                      err);
+    if (err == ERROR_ACCESS_DISABLED_BY_POLICY)
+        return Format(TR("Запуск coop-server.exe запрещён правилами Windows (ошибка %lu): групповой политикой, AppLocker или "
+                         "родительским контролем.",
+                         "Windows rules forbid starting coop-server.exe (error %lu): a group policy, AppLocker or parental "
+                         "controls."),
+                      err);
+    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND || err == ERROR_BAD_EXE_FORMAT)
+        return Format(TR("Файл coop\\coop-server.exe пропал или повреждён (ошибка %lu). Распакуйте архив мода заново.",
+                         "The file coop\\coop-server.exe is missing or damaged (error %lu). Unpack the mod again."),
+                      err);
+    wchar_t* text = nullptr;
+    FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, err, 0,
+                   (wchar_t*)&text, 0, nullptr);
+    std::string why = text ? Trim(WideToUtf8(text)) : std::string();
+    if (text) LocalFree(text);
+    if (why.empty()) return Format(TR("Не удалось запустить сервер (ошибка %lu).", "Could not start the server (error %lu)."), err);
+    return Format(TR("Не удалось запустить сервер (ошибка %lu: %s).", "Could not start the server (error %lu: %s)."), err, why.c_str());
+}
+
 bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
     auto& cfg = Cfg();
     std::wstring exe = cfg.coopDir + L"coop-server.exe";
     if (!FileExists(exe)) {
-        Fail(TR("Нет файла coop\\coop-server.exe. Переустановите мод.", "The file coop\\coop-server.exe is missing. Reinstall the mod."));
+        Fail(TR("Нет файла coop\\coop-server.exe. Скорее всего, его удалил антивирус: добавьте папку игры в исключения "
+                "антивируса и распакуйте архив мода заново.",
+                "The file coop\\coop-server.exe is missing. Most likely an antivirus removed it: add the game folder to the "
+                "antivirus exclusions and unpack the mod again."));
         return false;
     }
+    StopLeftoverServers(exe);
+    LetServerThroughFirewall(exe);
     std::wstring cmd = BuildServerCommand(cfg, g_port, g_password, worldPath, newGame);
 
     if (!g_serverJob) {
@@ -89,14 +170,14 @@ bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
     PROCESS_INFORMATION pi{};
     std::vector<wchar_t> buf(cmd.begin(), cmd.end());
     buf.push_back(0);
-    if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
-                        cfg.coopDir.c_str(), &si, &pi)) {
-        Fail(Format(TR("Не удалось запустить сервер (ошибка %lu).", "Could not start the server (error %lu)."), GetLastError()));
+    // Started running, not suspended to be put in the job first: a process made suspended and resumed is how malware
+    // hollows one out, and antiviruses watch for it. The server starts no process of its own before the job takes it.
+    if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, cfg.coopDir.c_str(), &si, &pi)) {
+        Fail(StartError(GetLastError()));
         return false;
     }
     // the server dies together with the game
     AssignProcessToJobObject(g_serverJob, pi.hProcess);
-    ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
     g_serverProcess = pi.hProcess;
     LOGI("Local server started (pid %lu)", pi.dwProcessId);
@@ -155,7 +236,10 @@ void OnOnline() {
             else g_worldUploadPending = true;  // give the server a fresh world
         }
     } else {
-        g_follower = g_prologueWait = false;  // a new session: the server says again whether the host is in a prologue
+        g_follower = g_prologueWait = g_worldNone = false;  // a new session: the server says again whether the host is in a prologue
+        // what was waiting from a session that dropped is older than the world asked for now (it was loaded over it)
+        g_pendingWorld.clear();
+        g_hasSpot = false;
         ui::TheChat().AddSystem(TR("Запрашиваем мир у хоста...", "Asking the host for the world..."));
         Writer w(C_WORLD_REQUEST);
         net.Send(CH_BULK, w);
@@ -306,9 +390,10 @@ void Join(const std::string& hostArg, uint16_t port, const std::string& password
 }
 
 void Leave() {
+    SaveProfileNow();  // saved every 30 s otherwise: up to that much of the partner's progress was lost on leaving
     Net().Disconnect();
     StopServerProcess();
-    g_isHosting = g_follower = g_prologueWait = g_progressUpload = g_hasSpot = false;
+    g_isHosting = g_follower = g_prologueWait = g_worldNone = g_progressUpload = g_hasSpot = false;
     g_pendingWorld.clear();
     SetPhase(Phase::Idle);
     ui::TheChat().AddSystem(TR("Вы вышли из совместной игры.", "You left the co-op game."));
@@ -318,10 +403,27 @@ namespace {
 void LoadHostWorld(const std::vector<uint8_t>& data);
 
 // a reload must not cut into anything: on foot, alive, no cutscene, no mission here or at the host's
-bool SafeToReload() {
+int WantedLevel() {
+    void* wanted = game::Call<0x56E230, void*>(-1);  // FindPlayerWanted
+    return wanted ? game::Field<int32_t>(wanted, 0x2C) : 0;  // CWanted::m_nWantedLevel
+}
+
+// Casino tables, the barber's chair, a meal, the gym's machines, basketball and the dance raise no mission flag: the
+// world reloaded under them. The player's own control and its plain on-foot task (type 0) say it does nothing of that.
+// What keeps the host's world from loading now, or null. Stars wait (the host's world wipes the stars of a chase) unless
+// anyStars: the forbidden territories of an old world give 4 that never fade.
+const char* ReloadBlocker(bool anyStars) {
     game::CPlayerPed* me = game::FindPlayerPed(0);
-    return core::IsPlayerReady() && me && !me->InVehicle() && me->Health() > 0.0f && !game::Ref<uint8_t>(0xB5F851) &&
-           !core::IsOnMission() && !HostMissionRecent(5000);
+    if (!core::IsPlayerReady() || !me) return "no player";
+    if (me->InVehicle()) return "in a vehicle";
+    if (me->Health() <= 0.0f) return "dead";
+    if (game::Ref<uint8_t>(0xB5F851)) return "a cutscene";
+    if (core::IsOnMission()) return "a mission here";
+    if (HostMissionRecent(5000)) return "the host's mission";
+    if (game::GetPad(0)->DisablePlayerControls != 0) return "no control";
+    if (ActivePrimaryTaskType(me) != 0) return "busy";
+    if (!anyStars && WantedLevel() != 0) return "wanted";
+    return nullptr;
 }
 
 void SaveSpot() {
@@ -374,12 +476,21 @@ void Update() {
         g_error = net.FailReason();
     }
     wasOnline = online;
+    // the screen went black for a reload of the host's world that is off now (the session dropped): back from black
+    if (g_reloadFadeMs && (g_pendingWorld.empty() || g_phase != Phase::Playing) && core::IsPlayerReady()) {
+        g_reloadFadeMs = 0;
+        game::script::Cmd(0x016A).I(300).I(1).Run();  // DO_FADE in
+    }
 
     switch (g_phase) {
         case Phase::StartingServer:
             if (!ServerProcessAlive()) {
-                Fail(TR("Сервер не запустился. Возможно, порт уже занят. Подробности в файле coop\\server-data\\server.log.",
-                        "The server did not start. Perhaps the port is taken. See coop\\server-data\\server.log for details."));
+                Fail(TR("Сервер не запустился: порт уже занят, или его остановил антивирус. Подробности в файле "
+                        "coop\\server-data\\server.log (если игра стоит в Program Files, то в %LOCALAPPDATA%\\SA-COOP\\server-data), "
+                        "а если он пустой, добавьте папку игры в исключения антивируса.",
+                        "The server did not start: the port is taken, or an antivirus stopped it. See coop\\server-data\\server.log "
+                        "(%LOCALAPPDATA%\\SA-COOP\\server-data for a game in Program Files), and if it is empty, add the game "
+                        "folder to the antivirus exclusions."));
                 break;
             }
             if (NowMs() - g_phaseTime > 400) {
@@ -399,13 +510,34 @@ void Update() {
             }
             break;
         case Phase::WaitingWorld:
-            if (NowMs() - g_phaseTime > 120000 && net.WorldProgress() < 0 && !g_prologueWait)
+            if (NowMs() - g_phaseTime > 120000 && net.WorldProgress() < 0 && !g_prologueWait && !g_worldNone)
                 Fail(TR("Хост так и не прислал мир.", "The host never sent the world."));
             break;
         case Phase::LoadingWorld:
             break;
         case Phase::Playing:
-            if (!g_pendingWorld.empty() && !net.IsHost() && SafeToReload()) {
+            if (!g_pendingWorld.empty() && !net.IsHost()) {
+                // The load holds the picture still for a second or so: players took it for a lag after every passed mission,
+                // and behind a fade for a black screen out of nowhere. It waits for the next mission's start point, where the
+                // screen goes dark for the mission anyway and the host's start waits for it, or ten minutes with no mission.
+                const char* why = ReloadBlocker(NowMs() - g_pendingSince > 60000);
+                if (!why && !AtMissionMarker() && NowMs() - g_pendingSince < 600000) why = "the next mission's start point";
+                if (why) {
+                    if (g_reloadFadeMs) g_reloadFadeMs = 0, game::script::Cmd(0x016A).I(300).I(1).Run();  // DO_FADE: not now
+                    if (NowMs() - g_pendingToldMs > 30000) {
+                        g_pendingToldMs = NowMs();
+                        LOGI("The host's world waits: %s", why);
+                    }
+                    break;
+                }
+                // into black first: the load holds the picture still for a second or so, which players took for a lag
+                if (!g_reloadFadeMs) {
+                    g_reloadFadeMs = NowMs();
+                    game::script::Cmd(0x016A).I(300).I(0).Run();  // DO_FADE out
+                    break;
+                }
+                if (NowMs() - g_reloadFadeMs < 350) break;
+                g_reloadFadeMs = 0;
                 std::vector<uint8_t> data = std::move(g_pendingWorld);
                 g_pendingWorld.clear();
                 SaveSpot();
@@ -413,6 +545,7 @@ void Update() {
                 ui::TheChat().AddSystem(TR("Хост продвинулся по сюжету. Загружаем его мир, вы останетесь на своём месте...",
                                            "The host moved on in the story. Loading their world, you stay where you are..."));
                 LoadHostWorld(data);
+                if (g_phase != Phase::LoadingWorld) game::script::Cmd(0x016A).I(300).I(1).Run();  // it failed: back from black
             }
             break;
         default:
@@ -458,6 +591,14 @@ void RequestFreshWorld() {
     g_keepSent = false;  // a new request gets its own answer
 }
 
+// The server keeps us waiting for the host's game (it gives no stored world while the host is in the menu): no time
+// limit then, as in the prologue. The partner gave up after 2 minutes, "the host never sent the world".
+void OnWorldNone() {
+    if (Net().IsHost()) return;
+    g_worldNone = true;
+    g_phaseTime = NowMs();
+}
+
 void OnHostInPrologue() {
     if (Net().IsHost() || g_prologueWait) return;
     g_prologueWait = true;
@@ -481,6 +622,10 @@ void OnNewGameFromHost() {
 bool IsFollower() { return g_follower && Net().Online() && !Net().IsHost(); }
 
 bool InHostWorld() { return Net().Online() && g_phase == Phase::Playing && !g_prologueWait; }
+bool HostWorldWaiting() { return !g_pendingWorld.empty(); }
+bool HostWorldLoading() { return g_reloadFadeMs != 0 || g_phase == Phase::LoadingWorld; }
+
+bool InSharedWorld() { return Net().Online() && (Net().IsHost() || InHostWorld()); }
 
 // The story moved on in the host's game (a mission passed, the call that unlocks something after it): a new
 // snapshot goes to the partners already playing, who load it, staying where they are.
@@ -550,7 +695,25 @@ void LoadHostWorld(const std::vector<uint8_t>& data) {
     }
     EnsureDirectory(Cfg().worldDir);
     std::wstring path = PartnerWorldPath();
-    if (!WriteFileBytes(path, data.data(), data.size())) {
+    // An antivirus holding the file a moment, a folder with no write access (a game in Program Files, Windows' controlled
+    // folder access): a few tries, then the user's own folder.
+    bool written = false;
+    for (int i = 0; i < 5 && !written; ++i) {
+        written = WriteFileBytes(path, data.data(), data.size());
+        if (!written) {
+            LOGW("The world save did not go to %s (error %lu)", WideToUtf8(path).c_str(), GetLastError());
+            Sleep(100);
+        }
+    }
+    wchar_t local[MAX_PATH];
+    if (DWORD n = written ? 0 : GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH); n && n < MAX_PATH) {
+        std::wstring dir = std::wstring(local) + L"\\SA-COOP\\world\\";
+        EnsureDirectory(dir);
+        path = dir + L"partner_world.b";
+        written = WriteFileBytes(path, data.data(), data.size());
+        LOGI("The world save goes to %s instead: %s", WideToUtf8(path).c_str(), written ? "written" : "failed too");
+    }
+    if (!written) {
         Fail(TR("Не удалось записать сохранение мира на диск.", "Could not write the world save to disk."));
         return;
     }
@@ -568,9 +731,11 @@ void LoadHostWorld(const std::vector<uint8_t>& data) {
 
 void OnWorldReceived(const std::vector<uint8_t>& data) {
     if (Net().IsHost()) return;
-    if (g_phase == Phase::Playing && core::IsPlayerReady() && !g_follower) {  // the host's progress: at a safe moment
+    g_worldNone = false;
+    if (g_phase == Phase::Playing && core::IsPlayerReady() && !g_follower) {  // the host's progress: at the next start point
         g_pendingWorld = data;
-        LOGI("The host's world after its progress came: loaded at a safe moment");
+        g_pendingSince = g_pendingToldMs = NowMs();
+        LOGI("The host's world after its progress came: kept for the next mission's start point");
         return;
     }
     LoadHostWorld(data);
