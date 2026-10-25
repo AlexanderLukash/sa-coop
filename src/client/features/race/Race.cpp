@@ -521,7 +521,7 @@ void DeleteDoomed() {
     }
     for (auto it = g_doomedCars.begin(); it != g_doomedCars.end();) {
         NetVehicle* nv = Vehicles::Instance().Find(it->first);
-        bool mine = nv && !Vehicles::Instance().IsMirror(*nv) && Vehicles::Alive(*nv);
+        bool mine = nv && !Vehicles::Instance().IsMirror(*nv) && (nv->veh && GetVehicle(nv->handle) == nv->veh);
         if (mine && !(nv->veh->Driver() && nv->veh->Driver()->IsPlayer())) {
             Cmd(0x00A6).I(nv->handle).Run();  // DELETE_CAR
             LOGD("Race racer's car %04X deleted", it->first);
@@ -671,6 +671,14 @@ void LeaveRace() {
     g_standings.clear();
 }
 
+bool RaceCarHasRoom() {
+    CPoolHeader* pool = VehiclePool();
+    if (!pool || !pool->byteMap) return false;
+    int free = 0;
+    for (int i = 0; i < pool->size; ++i) free += pool->byteMap[i] < 0;
+    return free > 10;  // leave slots for the mission and the game
+}
+
 void HandleStart(uint8_t from, Reader& r) {
     Ride ride;
     ride.owner = from;
@@ -700,7 +708,8 @@ void HandleStart(uint8_t from, Reader& r) {
         float h = r.F32();
         if (id == Net().MyId()) mine = true, spot = {p.x, p.y, p.z}, heading = h;
     }
-    if (!r.Ok() || !ride.kind || from != g_lobby.owner || ride.cps < 2 || ride.laps < 1 || ride.next >= ride.cps ||
+    if (!r.Ok() || !g_lobby.open || g_ride.on || !ride.kind || from != g_lobby.owner ||
+        ride.kind != g_lobby.kind || ride.cps < 2 || ride.cps > kRouteMax || ride.laps < 1 || ride.next >= ride.cps ||
         !IsVehicleModel(model))
         return;
     bool wasJoined = g_joined;
@@ -711,6 +720,7 @@ void HandleStart(uint8_t from, Reader& r) {
             ui::TheChat().AddError(TR("Гонка началась без вас: вас не успели записать.", "The race started without you: you were not counted in time."));
         return;
     }
+    if (!wasJoined) return;  // a start packet cannot enter an uninvited player
     CPlayerPed* me = FindPlayerPed(0);
     auto cannot = [](const char* why) {
         SendFinish(true, 0);  // the owner does not wait for this one
@@ -718,7 +728,7 @@ void HandleStart(uint8_t from, Reader& r) {
         LOGW("Not in the race: %s", why);
     };
     if (!me || !core::IsPlayerReady() || me->InVehicle()) return cannot("not on foot");
-    if (!HasRoom(VehiclePool(), kKeepVehicles, "vehicle") || !LoadModelNow(model)) return cannot("no car");
+    if (!RaceCarHasRoom() || !LoadModelNow(model)) return cannot("no car");
     int handle = GetPedRef(me);
     Cmd(0x0792).I(handle).Run();  // CLEAR_CHAR_TASKS_IMMEDIATELY
     Cmd(0x04BB).I(ride.area).Run();  // SET_AREA_VISIBLE
@@ -897,6 +907,8 @@ void HandleRace(uint8_t from, Reader& r) {
             break;
         }
         case OP_BOTS: {
+            // Only the race owner may retire its mission racers, including on spectators.
+            if (from != g_lobby.owner || (!g_ride.on && g_lobby.open)) return;
             std::vector<uint16_t> cars, peds;
             for (int i = 0, n = r.U8(); i < n && r.Ok(); ++i) cars.push_back(r.U16());
             for (int i = 0, n = r.U8(); i < n && r.Ok(); ++i) peds.push_back(r.U16());

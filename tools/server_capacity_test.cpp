@@ -20,7 +20,7 @@ void Check(bool ok, const char* message) {
 struct Clients {
     std::array<ENetHost*, 9> hosts{};
     std::array<ENetPeer*, 9> peers{};
-    std::array<int, 9> ids{}, rosters{}, relays{};
+    std::array<int, 9> ids{}, rosters{}, relays{}, raceRelays{}, radioRelays{};
     std::array<bool, 9> welcomed{}, rejected{};
     std::array<std::string, 9> reasons{};
     ENetAddress address{};
@@ -72,6 +72,9 @@ struct Clients {
                         r.Str();
                         reasons[i] = r.Str();
                         rejected[i] = true;
+                    } else if (msg == G_RACE || msg == G_RADIO) {
+                        Check(r.U8() == 7 && r.U32() == 0x12345678 && r.Ok(), "bad feature relay sender/payload");
+                        ++(msg == G_RACE ? raceRelays[i] : radioRelays[i]);
                     } else if (msg == G_PLAYER_ONFOOT) {
                         Check(r.U8() == 7 && r.U32() == 0x87654321 && r.Ok(), "bad relay sender/payload");
                         ++relays[i];
@@ -120,6 +123,20 @@ int main(int argc, char** argv) {
                         return true;
                     });
                     Check(clients.relays[7] == 0, "relay echoed to sender");
+                    // Both new message IDs must survive the real server's relay unchanged.
+                    for (auto msg : {G_RACE, G_RADIO}) {
+                        Writer feature(msg);
+                        feature.U32(0x12345678);
+                        enet_peer_send(clients.peers[7], CH_RELIABLE,
+                            enet_packet_create(feature.Data(), feature.Size(), ENET_PACKET_FLAG_RELIABLE));
+                    }
+                    clients.Until([&] {
+                        for (int i = 0; i < 7; ++i)
+                            if (clients.raceRelays[i] != 1 || clients.radioRelays[i] != 1) return false;
+                        return true;
+                    });
+                    Check(clients.raceRelays[7] == 0 && clients.radioRelays[7] == 0,
+                          "feature relay echoed to sender");
                 }
                 clients.Connect(capacity);
                 clients.Until([&] { return clients.rejected[capacity]; });
