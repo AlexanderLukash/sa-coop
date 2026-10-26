@@ -50,16 +50,29 @@ async function main() {
       }),
       delay(5000).then(() => { throw new Error('Timed out connecting to the launcher renderer.'); }),
     ]);
-    const title = await new Promise((resolve, reject) => {
+    const readTitle = () => new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Timed out reading the launcher title.')), 5000);
-      ws.addEventListener('message', event => {
+      const onMessage = event => {
         const data = JSON.parse(event.data);
         if (data.id !== 1) return;
         clearTimeout(timer);
+        ws.removeEventListener('message', onMessage);
         resolve(data.result?.result?.value);
-      });
+      };
+      ws.addEventListener('message', onMessage);
       ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'document.title', returnByValue: true } }));
     });
+    // The DevTools page target exists before its HTML has finished loading.
+    // Wait for the document title rather than treating that empty initial title
+    // as a broken AppImage.
+    let title;
+    const titleDeadline = Date.now() + 15000;
+    while (Date.now() < titleDeadline) {
+      if (child.exitCode !== null) throw new Error(`AppImage exited early (${child.exitCode}).`);
+      title = await readTitle();
+      if (title === 'SA COOP — Back to the Grove') break;
+      await delay(250);
+    }
     if (title !== 'SA COOP — Back to the Grove') throw new Error(`Unexpected renderer title: ${title}`);
     console.log(`AppImage renderer opened: ${title}`);
   } finally {
