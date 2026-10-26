@@ -334,6 +334,7 @@ void Server::HandleHello(Player& p, Reader& r) {
     // the default greeting has an English one, a greeting of the server's owner is shown as it is
     wel.motdEn = m_cfg.motd == Config{}.motd ? "Welcome! Type /help to see the commands." : "";
     wel.friendlyFire = m_cfg.friendlyFire;
+    wel.allowCheats = m_cfg.allowCheats;
     wel.worldAvailable = !m_world.empty();
     Writer w(S_WELCOME);
     wel.Write(w);
@@ -701,6 +702,24 @@ void Server::WaitProfileWrites() {
 
 void Server::Relay(Player& from, uint8_t channel, const uint8_t* data, size_t size, uint32_t flags) {
     if (channel >= CH_COUNT) return;
+    if (data[0] == G_CHEAT && !m_cfg.allowCheats) return;
+    if (data[0] == G_PLAYER_BALANCE) {
+        Reader r(data + 1, size - 1);
+        BalanceChange change;
+        if (!from.isHost || channel != CH_RELIABLE || !(flags & ENET_PACKET_FLAG_RELIABLE) ||
+            !change.Read(r)) return;
+        Player* player = FindById(change.target);
+        if (!player || !player->joined || (player->status != STATUS_INGAME && player->status != STATUS_PAUSED)) {
+            SendChat(&from, kServerId, kColorError, "Игрок ещё не в игре. Повторите после загрузки.",
+                     "The player is not in game yet. Try again after loading.");
+            return;
+        }
+    }
+    if (data[0] == G_BALANCE_RESULT) {
+        Reader r(data + 1, size - 1);
+        int32_t amount = r.I32();
+        if (channel != CH_RELIABLE || !r.Ok() || r.Remaining() || amount < 0 || amount > 999999999) return;
+    }
     // [id][sender][payload]
     ENetPacket* pkt = enet_packet_create(nullptr, size + 1, flags & (ENET_PACKET_FLAG_RELIABLE | ENET_PACKET_FLAG_UNSEQUENCED));
     pkt->data[0] = data[0];

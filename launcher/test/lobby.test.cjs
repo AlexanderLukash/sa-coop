@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
 const { LanLobbyServer, LobbyClient, parseLobbyAddress, discover } = require('../src/core/lobby.cjs');
-const settings = { name: 'Test crew', maxPlayers: 8, gamePort: 7788, loadSlot: -1, friendlyFire: false };
+const settings = { name: 'Test crew', maxPlayers: 8, gamePort: 7788, loadSlot: -1, friendlyFire: false, allowCheats: false };
 async function until(check, timeout = 3000) {
   const deadline = Date.now() + timeout;
   while (!check()) {
@@ -22,6 +22,7 @@ test('LAN discovery finds real UDP responder; mismatched mods are rejected', asy
     const info = await server.start(0);
     const address = `sacoop://127.0.0.1:${info.port}/${info.code}`;
     await host.connect(address, 'Host', '', info.hostToken, 'expected-build');
+    await until(() => host.room?.settings.allowCheats === false);
     await assert.rejects(guest.connect(address, 'Guest', '', undefined, 'other-build'), /Версія мода/);
     const found = await discover(300, ['127.0.0.1']);
     assert.ok(found.some(r => r.code === info.code && r.name === settings.name && r.count === 1));

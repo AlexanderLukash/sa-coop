@@ -25,10 +25,12 @@ async function main() {
     await page.fill('[name="nickname"]', 'GroveCrew');
     await page.fill('[name="serverName"]', 'Our LAN crew');
     await page.selectOption('[name="maxPlayers"]', '8');
+    await page.uncheck('[name="allowCheats"]');
     await page.click('[form="settings-form"]');
     await page.waitForFunction(() => document.querySelector('#profile-name').textContent === 'GroveCrew');
     const settings = JSON.parse(await fs.readFile(path.join(data, 'settings.json'), 'utf8'));
     assert.equal(settings.nickname, 'GroveCrew'); assert.equal(settings.maxPlayers, 8);
+    assert.equal(settings.allowCheats, false);
     await page.screenshot({ path: path.join(output, 'settings.png') });
     await page.click('[data-page="files"]');
     assert.equal(await page.isDisabled('#install-mod'), true);

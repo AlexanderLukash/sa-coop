@@ -3,6 +3,18 @@
 Use the rebuilt client on every player. These checks require running GTA SA;
 compilation and the portable sync tests do not verify native engine behavior.
 
+- Start Drive-Thru with two players. On both clients, Big Smoke, Sweet and Ryder
+  must appear in the same seats, and the partner must not be able to occupy an
+  NPC's seat. Check NPCs protected by SET_CHAR_CANT_BE_DRAGGED_OUT both when first
+  announced and when entering an already synchronized car. Repeat with delayed
+  vehicle/model loading: occupied seats must stay reserved until mirrors spawn.
+- With the host and three NPCs in a four-seat mission car, two players need one
+  shared support car. With two NPCs, two players need none and three players need
+  one. With eight players and three NPCs, expect two support cars. Wait 30 seconds
+  and check the count stays stable without extra cars created by each partner.
+  Have a partner drive the mission car, then release NPC seats and check unused
+  support cars are removed while occupied support cars stay available.
+
 - With two players, start Sweet & Kendl. Let the host reach the cemetery
   transition. Both players should move to the cemetery, including when the
   partner was on Grove Street. Repeat with a partner in a vehicle.

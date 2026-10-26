@@ -138,6 +138,7 @@ void Session::HandleService(uint8_t id, Reader& r) {
             m_hostId = w.hostId;
             m_serverName = w.serverName;
             m_friendlyFire = w.friendlyFire;
+            m_allowCheats = w.allowCheats;
             m_peers.clear();
             for (auto& p : w.players) m_peers[p.id] = PeerInfo{p.id, p.name, p.isHost, 0};
             m_state = State::Online;

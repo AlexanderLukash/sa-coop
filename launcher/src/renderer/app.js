@@ -92,6 +92,7 @@ function renderRoom() {
   $('#room-name').textContent = room.settings.name;
   $('#room-details').textContent = `${room.members.length} / ${room.settings.maxPlayers} гравців · ${room.settings.friendlyFire ? 'Дружній вогонь увімкнено' : 'Без дружнього вогню'} · ${room.settings.loadSlot < 0 ? 'Нова гра' : room.settings.loadSlot === 0 ? 'Вибір збереження в GTA' : 'Збереження ' + room.settings.loadSlot}`;
   $('#room-state').textContent = { waiting: 'ЛОББІ ВІДКРИТО', starting: 'ЗАПУСКАЄМО СЕРВЕР…', running: 'СЕСІЯ ТРИВАЄ' }[room.status] || 'ЛОББІ';
+  $('#room-details').textContent += room.settings.allowCheats === false ? ' · Чит-коди заборонено' : ' · Чит-коди дозволено';
   const startButton = $('#start-session'), readyButton = $('#ready-button');
   const members = $('#members'); members.replaceChildren(); members.dataset.count = room.members.length;
   for (const player of room.members) {

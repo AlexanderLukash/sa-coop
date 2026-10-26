@@ -86,7 +86,7 @@ int wmain(int argc, wchar_t** argv) {
         ENetPeer* peer = enet_host_connect(host, &address, proto::CH_COUNT, 0);
         Check(peer != nullptr, "enet connect failed");
         bool online = false;
-        uint64_t deadline = NowMs() + 45000;
+        uint64_t deadline = NowMs() + 180000;
         while (NowMs() < deadline && !FileExists(coopDir + L"probe-stop")) {
             ENetEvent event{};
             if (enet_host_service(host, &event, 30) <= 0) continue;

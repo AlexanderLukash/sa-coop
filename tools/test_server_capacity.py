@@ -30,6 +30,7 @@ def main():
         (None, None, 8, "current"), (4, None, 4, "current"),
         (2, 8, 8, "current"), (None, 99, 8, "current"),
         (None, None, 8, "old"),
+        (None, None, 8, "rules-on"), (None, None, 8, "rules-off"),
     ]:
         with tempfile.TemporaryDirectory(prefix="sacoop-capacity-") as directory:
             base = Path(directory)
@@ -43,6 +44,8 @@ def main():
                        "--data", str(base / "data"), "--port", str(port)]
             if maximum is not None:
                 command += ["--max", str(maximum)]
+            if protocol.startswith("rules-"):
+                command += ["--allow-cheats", "1" if protocol == "rules-on" else "0"]
             with (base / "output.log").open("w") as output:
                 process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output,
                                            stderr=subprocess.STDOUT,
@@ -56,7 +59,11 @@ def main():
                                                (log.read_text(encoding="utf-8", errors="replace") if log.exists() else "no log"))
                         time.sleep(0.05)
                     print(f"config={configured}, --max={maximum}, protocol={protocol}", flush=True)
-                    subprocess.run(RUNNER + [str(test), str(port), str(capacity), protocol], check=True, timeout=30)
+                    try:
+                        subprocess.run(RUNNER + [str(test), str(port), str(capacity), protocol], check=True, timeout=30)
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                        print(log.read_text(encoding="utf-8", errors="replace"), flush=True)
+                        raise
                 finally:
                     process.terminate()
                     process.wait(timeout=5)

@@ -26,6 +26,7 @@ inline std::wstring BuildServerCommand(const ClientConfig& cfg, uint16_t port,
     if (!password.empty()) command += L" --password " + QuoteProcessArgument(Utf8ToWide(password));
     if (!world.empty()) command += L" --world " + QuoteProcessArgument(world);
     if (newGame) command += L" --new-game";
-    return command + (cfg.friendlyFire ? L" --friendly-fire 1" : L" --friendly-fire 0");
+    return command + (cfg.friendlyFire ? L" --friendly-fire 1" : L" --friendly-fire 0") +
+        (cfg.allowCheats ? L" --allow-cheats 1" : L" --allow-cheats 0");
 }
 } // namespace coop

@@ -261,6 +261,7 @@ void SaveConnectSettings() {
     ini.SetInt("connect", "port", cfg.port);
     ini.Set("connect", "password", cfg.password);
     ini.SetInt("connect", "friendly_fire", cfg.friendlyFire);
+    ini.SetInt("connect", "allow_cheats", cfg.allowCheats);
     ini.Save(cfg.iniPath);
 }
 

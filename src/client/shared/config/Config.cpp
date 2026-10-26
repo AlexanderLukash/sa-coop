@@ -51,6 +51,7 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     wantsHost = ToLower(ini.Get("connect", "mode", "join")) == "host";
     loadSlot = ini.GetInt("connect", "load_slot", 0);
     friendlyFire = ini.GetBool("connect", "friendly_fire", friendlyFire);
+    allowCheats = ini.GetBool("connect", "allow_cheats", allowCheats);
 
     windowed = ini.GetBool("game", "windowed", windowed);
     windowedStrict = ini.GetBool("game", "windowed_strict", windowedStrict);

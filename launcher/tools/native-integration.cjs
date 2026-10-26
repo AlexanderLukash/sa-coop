@@ -111,11 +111,32 @@ async function main() {
     console.log('Wrong password: real server rejects native client and reports failure to launcher status: OK');
     // Guest exits its process, changes its per-lobby identity and rejoins the live server.
     await fs.writeFile(path.join(guestGame, 'coop/probe-stop'), 'stop');
-    await until(async () => !(await guest.evaluate(() => window.launcher.state())).playing, 'guest process exit');
+    try {
+      await until(async () => !(await guest.evaluate(() => window.launcher.state())).playing, 'guest process exit');
+    } catch (error) {
+      console.error('Guest exit diagnostics:', await guest.evaluate(async () => {
+        const state = await window.launcher.state();
+        return { playing: state.playing, launching: state.launching, roomStatus: state.room?.status };
+      }));
+      console.error('Guest native status:', await fs.readFile(path.join(guestGame, 'coop/launcher.ini.status.json'), 'utf8').catch(() => 'missing'));
+      console.error('Guest child handles:', await apps[1].evaluate(() => process._getActiveHandles()
+        .filter(handle => handle.constructor.name === 'ChildProcess')
+        .map(handle => ({ pid: handle.pid, exitCode: handle.exitCode, spawnfile: handle.spawnfile }))));
+      throw error;
+    }
     await fs.rm(path.join(guestGame, 'coop/probe-stop'));
     await guest.evaluate(() => window.launcher.profile({ name: 'Повернувся_Ї', skin: 105, remember: false }));
     await guest.evaluate(() => window.launcher.ready(true));
-    await until(async () => (await result(guestGame))?.nickname === 'Повернувся_Ї', 'rejoin native handshake');
+    try {
+      await until(async () => (await result(guestGame))?.nickname === 'Повернувся_Ї', 'rejoin native handshake');
+    } catch (error) {
+      console.error('Rejoin state:', await guest.evaluate(async () => {
+        const state = await window.launcher.state();
+        return { playing: state.playing, launching: state.launching, members: state.room?.members, roomStatus: state.room?.status };
+      }));
+      console.error('Rejoin status:', await fs.readFile(path.join(guestGame, 'coop/launcher.ini.status.json'), 'utf8').catch(() => 'missing'));
+      throw error;
+    }
     assert.equal((await result(guestGame)).skin, 105);
     console.log('Exit, lobby nickname/skin change, and rejoin of running actual server: OK');
     await fs.writeFile(path.join(hostGame, 'coop/probe-stop'), 'stop');

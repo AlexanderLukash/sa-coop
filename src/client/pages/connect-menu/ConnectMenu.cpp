@@ -9,6 +9,7 @@
 #include "common/config/version/Version.h"
 #include "common/lib/util/Util.h"
 #include "entities/session/Flow.h"
+#include "features/balance/Balance.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
@@ -36,6 +37,10 @@ std::vector<flow::SaveSlotInfo> g_slots;
 uint64_t g_slotsTime = 0;
 uint64_t g_copiedMs = 0;
 bool g_skinBrowser = false;
+bool g_balanceEditor = false;
+uint8_t g_balanceTarget = 255;
+std::wstring g_balanceAmount;
+std::string g_balanceStatus;
 std::wstring g_skinSearch;
 int g_skinPage = 0;
 
@@ -106,6 +111,7 @@ void SetConnectMenuVisible(bool visible) {
     if (visible == g_visible) return;
     g_visible = visible;
     if (visible) {
+        g_balanceEditor = false;
         LoadFields();
         if (TheChat().IsOpen()) TheChat().Close();
         In().SetKeyboardCapture(true);
@@ -182,7 +188,39 @@ void RenderConnectMenu() {
         return w::Button(id, px - room, py, g.TextWidth(FONT_MENU, label) + 2 * room, rowH, label, enabled, lit);
     };
 
-    if (g_skinBrowser) {
+    if (g_balanceEditor && online && net.IsHost()) {
+        g.Text(FONT_BIG, cx, cy, TR("Баланс игроков", "Player balances"), kText, 0);
+        cy += bh + 18 * s;
+        std::vector<uint8_t> targets{net.MyId()};
+        for (const auto& [id, peer] : net.Peers()) targets.push_back(id);
+        auto selected = std::find(targets.begin(), targets.end(), g_balanceTarget);
+        if (selected == targets.end()) {
+            g_balanceTarget = net.MyId(); selected = targets.begin();
+            g_balanceAmount.clear(); g_balanceStatus.clear();
+        }
+        int index = (int)(selected - targets.begin());
+        int step = w::Selector("balance-player", cx, cy, cw, rowH, net.PeerName(g_balanceTarget));
+        if (step) {
+            index = (index + step + (int)targets.size()) % (int)targets.size();
+            g_balanceTarget = targets[index];
+            g_balanceAmount.clear();
+            g_balanceStatus.clear();
+        }
+        cy += rowH + 18 * s;
+        caption(cx, TR("Новый баланс (0–999999999)", "New balance (0–999999999)"));
+        cy += ch + 6 * s;
+        bool enter = w::TextBox("balance-amount", cx, cy, cw, rowH, g_balanceAmount, 9, false, true);
+        cy += rowH + 18 * s;
+        bool valid = !g_balanceAmount.empty() && g_balanceAmount.size() <= 9 &&
+            std::all_of(g_balanceAmount.begin(), g_balanceAmount.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; });
+        if ((w::Button("balance-apply", cx, cy, cw, rowH, TR("Установить баланс", "Set balance"), valid) || (enter && valid))) {
+            if (SetPlayerBalance(g_balanceTarget, _wtoi(g_balanceAmount.c_str())))
+                g_balanceStatus = TR("Запрос принят. Результат появится в чате.", "Request accepted. Check the chat for the result.");
+            else g_balanceStatus = TR("Игрок недоступен.", "Player unavailable.");
+        }
+        cy += rowH + 18 * s;
+        para(g_balanceStatus, kSaMuted);
+    } else if (g_skinBrowser) {
         g.Text(FONT_BIG, cx, cy, TR("Выбор персонажа", "Your character"), kText, 0);
         cy += bh + 18 * s;
         w::TextBox("skin-search", cx, cy, cw, rowH, g_skinSearch, 40, false, false,
@@ -259,6 +297,13 @@ void RenderConnectMenu() {
         if (host && net.Peers().empty()) para(TR("Ждём друга...", "Waiting for your friend..."), kSaMuted);
         cy += 12 * s;
         if (w::Button("skins-online", cx, cy, cw, rowH, TR("Изменить персонажа", "Change character"))) g_skinBrowser = true;
+        cy += rowH + 8 * s;
+        if (host && w::Button("balances", cx, cy, cw, rowH, TR("Баланс игроков", "Player balances"))) {
+            g_balanceEditor = true;
+            g_balanceTarget = net.MyId();
+            g_balanceAmount.clear();
+            g_balanceStatus.clear();
+        }
     } else if (busy) {
         // ---- connecting / starting / loading, in the middle of the body
         float barH = 6 * s;
@@ -342,6 +387,8 @@ void RenderConnectMenu() {
         if (g_tab == 1) {  // the host decides for the whole game; saved with the other settings when the server starts
             w::Checkbox("ff", cx, cy, TR("Урон по напарнику", "Friendly fire"), Cfg().friendlyFire);
             cy += lh * 0.8f + 22 * s;
+            w::Checkbox("cheats", cx, cy, TR("Разрешить чит-коды", "Allow cheat codes"), Cfg().allowCheats);
+            cy += lh * 0.8f + 22 * s;
         }
 
         // the main action: a big menu item in the middle, lit like the selected entry of the game's menus
@@ -371,7 +418,9 @@ void RenderConnectMenu() {
 
     // ---- footer: like "Back" on the game's pages
     g.Rect(cx, bodyBottom, cw, std::max(1.0f, s), kSaLine);
-    if (g_skinBrowser) {
+    if (g_balanceEditor) {
+        if (item("back-balances", cx, by, TR("Назад", "Back"))) g_balanceEditor = false;
+    } else if (g_skinBrowser) {
         if (item("back-skins", cx, by, TR("Готово", "Done"))) g_skinBrowser = false;
     } else if (online || busy) {
         if (item("leave", cx, by, online ? TR("Отключиться", "Disconnect") : TR("Отмена", "Cancel"))) flow::Leave();

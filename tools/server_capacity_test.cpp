@@ -21,6 +21,8 @@ struct Clients {
     std::array<ENetHost*, 9> hosts{};
     std::array<ENetPeer*, 9> peers{};
     std::array<int, 9> ids{}, rosters{}, relays{};
+    std::array<int, 9> balances{}, cheats{};
+    std::array<bool, 9> cheatsAllowed{};
     std::array<std::array<int, 256>, 9> featureRelays{};
     std::array<bool, 9> welcomed{}, rejected{};
     std::array<std::string, 9> reasons{};
@@ -63,6 +65,7 @@ struct Clients {
                     if (msg == S_WELCOME) {
                         Welcome welcome;
                         Check(welcome.Read(r), "malformed welcome");
+                        cheatsAllowed[i] = welcome.allowCheats;
                         ids[i] = welcome.yourId;
                         rosters[i] = (int)welcome.players.size();
                         Check(welcome.hostId == 0, "unexpected host ID");
@@ -73,6 +76,13 @@ struct Clients {
                         r.Str();
                         reasons[i] = r.Str();
                         rejected[i] = true;
+                    } else if (msg == G_PLAYER_BALANCE) {
+                        Check(r.U8() == 0, "non-host balance update relayed");
+                        BalanceChange change;
+                        Check(change.Read(r) && change.target == 1 && change.amount == 12345, "bad balance update");
+                        ++balances[i];
+                    } else if (msg == G_CHEAT) {
+                        ++cheats[i];
                     } else if (msg >= G_MISSION_AUDIO && msg <= G_INTERIOR_POP) {
                         Check(r.U8() == 7 && r.U32() == 0x12345678 && r.Ok(), "bad feature relay sender/payload");
                         ++featureRelays[i][msg];
@@ -91,7 +101,15 @@ struct Clients {
             Poll();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        Check(done(), "timed out waiting for server");
+        if (!done()) {
+            for (int i = 0; i < 9; ++i) {
+                int features = 0;
+                for (int count : featureRelays[i]) features += count;
+                std::fprintf(stderr, "client %d: welcomed=%d rejected=%d id=%d relays=%d features=%d balances=%d\n",
+                             i, welcomed[i], rejected[i], ids[i], relays[i], features, balances[i]);
+            }
+            throw std::runtime_error("timed out waiting for server");
+        }
     }
 };
 
@@ -108,6 +126,51 @@ int main(int argc, char** argv) {
                 clients.Until([&] { return clients.rejected[0]; });
                 Check(!clients.welcomed[0] && clients.reasons[0].find("version") != std::string::npos,
                       "old protocol was not rejected");
+            } else if (std::string(argv[3]).find("rules-") == 0) {
+                const bool allowed = std::string(argv[3]) == "rules-on";
+                for (int i = 0; i < 2; ++i) {
+                    clients.Connect(i);
+                    clients.Until([&] { return clients.welcomed[i]; });
+                    Check(clients.cheatsAllowed[i] == allowed, "cheat policy not sent in welcome");
+                }
+                auto send = [&](int who, const Writer& packet) {
+                    enet_peer_send(clients.peers[who], CH_RELIABLE,
+                        enet_packet_create(packet.Data(), packet.Size(), ENET_PACKET_FLAG_RELIABLE));
+                    enet_host_flush(clients.hosts[who]);
+                };
+                auto pump = [&] {
+                    auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+                    while (std::chrono::steady_clock::now() < end) {
+                        clients.Poll();
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                };
+                Writer balance(G_PLAYER_BALANCE);
+                BalanceChange{1, 12345}.Write(balance);
+                send(0, balance);  // loading target: must be rejected
+                pump();
+                Check(clients.balances[1] == 0, "balance sent to loading player");
+                Writer status(C_STATUS); status.U8(STATUS_INGAME);
+                send(1, status);
+                pump();
+                send(1, balance);  // partner cannot administer balances
+                for (int32_t amount : {-1, 1000000000}) {
+                    Writer invalid(G_PLAYER_BALANCE);
+                    BalanceChange{1, amount}.Write(invalid);
+                    send(0, invalid);
+                }
+                Writer truncated(G_PLAYER_BALANCE); truncated.U8(1);
+                send(0, truncated);
+                pump();
+                Check(clients.balances[0] == 0 && clients.balances[1] == 0, "unauthorized/invalid balance relayed");
+                send(0, balance);
+                clients.Until([&] { return clients.balances[1] == 1; });
+                Writer cheat(G_CHEAT); cheat.U8(6); cheat.U8(1);
+                send(0, cheat);
+                send(1, cheat);
+                pump();
+                Check(clients.cheats[0] == (allowed ? 1 : 0) && clients.cheats[1] == (allowed ? 1 : 0),
+                      "server did not enforce cheat policy");
             } else {
                 for (int i = 0; i < capacity; ++i) {
                     clients.Connect(i);

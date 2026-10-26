@@ -6,6 +6,9 @@ const path = require('node:path');
 const { defaults, validate, updateIni, launchSpec, writeGameConfig } = require('../src/core/config.cjs');
 
 test('validate rejects config injection and out-of-range server options', () => {
+  assert.equal(validate({ ...defaults }).allowCheats, true);
+  assert.equal(validate({ ...defaults, allowCheats: false }).allowCheats, false);
+  assert.throws(() => validate({ ...defaults, allowCheats: 'false' }));
   for (const change of [{ nickname: 'ab\n[game]' }, { serverName: 'x\npassword=y' }, { maxPlayers: 9 }, { port: 0 }, { password: 'x\r\ny' }, { releaseRepo: '../bad' }])
     assert.throws(() => validate({ ...defaults, ...change }));
   assert.equal(validate({ ...defaults, nickname: 'AlexanderLukash' }).maxPlayers, 8);
@@ -52,6 +55,11 @@ test('game integration writes LAN server and client configs without changing coo
     for (const loadSlot of [0, 1, 8, -1]) {
       await writeGameConfig({ ...defaults, gameDir: dir, loadSlot }, { mode: 'host' });
       assert.match(await fs.readFile(path.join(dir, 'coop/launcher.ini'), 'utf8'), new RegExp(`load_slot = ${loadSlot}\\r?\\n`));
+    }
+    for (const allowCheats of [false, true]) {
+      await writeGameConfig({ ...defaults, gameDir: dir, allowCheats }, { mode: 'host' });
+      for (const file of ['coop/launcher.ini', 'coop/server.ini'])
+        assert.match(await fs.readFile(path.join(dir, file), 'utf8'), new RegExp(`allow_cheats = ${Number(allowCheats)}\\r?\\n`));
     }
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });

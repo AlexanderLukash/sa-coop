@@ -15,6 +15,39 @@
 using namespace coop;
 
 int main() {
+    for (bool allowed : {false, true}) {
+        proto::Welcome original;
+        original.allowCheats = allowed;
+        Writer packet;
+        original.Write(packet);
+        proto::Welcome received;
+        Reader input(packet.Data(), packet.Size());
+        assert(received.Read(input) && input.Remaining() == 0 && received.allowCheats == allowed);
+        Reader truncated(packet.Data(), packet.Size() - 1);
+        assert(!received.Read(truncated));
+    }
+    for (int32_t amount : {0, 123456, proto::BalanceChange::kMaximum, -1, 1000000000}) {
+        proto::BalanceChange original{7, amount}, received;
+        Writer packet;
+        original.Write(packet);
+        Reader input(packet.Data(), packet.Size());
+        assert(received.Read(input) == (amount >= 0 && amount <= proto::BalanceChange::kMaximum));
+        for (size_t length = 0; length < packet.Size(); ++length) {
+            Reader truncated(packet.Data(), length);
+            assert(!received.Read(truncated));
+        }
+    }
+    {
+        Writer packet;
+        proto::BalanceChange{8, 100}.Write(packet);
+        Reader invalidTarget(packet.Data(), packet.Size());
+        proto::BalanceChange received;
+        assert(!received.Read(invalidTarget));
+        packet.Buffer()[0] = 0;
+        packet.U8(0);
+        Reader trailing(packet.Data(), packet.Size());
+        assert(!received.Read(trailing));
+    }
     // A pre-update fork profile preserves its home owners and has no moves byte.
     Writer legacyProfile;
     legacyProfile.U32(0x80000008u);
@@ -79,6 +112,12 @@ int main() {
     assert(sync::RequiredMissionVehicles(2, 1) == 1);  // two seats total
     assert(sync::RequiredMissionVehicles(5, 3) == 2);
     assert(sync::RequiredMissionVehicles(8, 0) == 8);  // driver-only vehicles
+    assert(sync::RequiredMissionVehicles(2, 3, 3) == 2);  // Drive-Thru: gang leaves one player seat
+    assert(sync::RequiredMissionVehicles(2, 3, 2) == 1);  // both players fit
+    assert(sync::RequiredMissionVehicles(3, 3, 2) == 2);  // one player needs transport
+    assert(sync::RequiredMissionVehicles(8, 3, 3) == 3);  // seven players share two empty cars
+    assert(sync::RequiredMissionVehicles(2, 1, 1) == 2);  // NPC driver, host passenger
+    assert(sync::RequiredMissionVehicles(0, 3, 3) == 0);
     assert(sync::MissionParticipantReady(true, true, 100, true, true));
     assert(!sync::MissionParticipantReady(true, false, 100, true, true));
     assert(!sync::MissionParticipantReady(true, true, 3001, true, true));

@@ -4,7 +4,7 @@
 // Every ENet packet starts with a one-byte message id.
 //  * ids < 64  — service messages, handled by the server itself;
 //  * ids >= 64 — game messages: the client sends [id][payload], the server relays them to the other
-//    players as [id][u8 senderId][payload]. The server never parses game payloads.
+//    players as [id][u8 senderId][payload]. Administrative messages are validated by the server.
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -209,6 +209,8 @@ enum MsgId : uint8_t {
     G_RADIO = 149,            // fork: shared car radio
 
     G_VOICE = 200,            // unreliable: voice frame
+    G_PLAYER_BALANCE = 178,   // reliable, host -> player: u8 target, i32 exact balance
+    G_BALANCE_RESULT = 179,   // reliable, player -> host: i32 applied balance
     G_LAST = 255,
 };
 
@@ -256,6 +258,18 @@ struct PlayerEntry {
     bool isHost = false;
 };
 
+struct BalanceChange {
+    static constexpr int32_t kMaximum = 999999999;
+    uint8_t target = 255;
+    int32_t amount = 0;
+    void Write(Writer& w) const { w.U8(target); w.I32(amount); }
+    bool Read(Reader& r) {
+        target = r.U8();
+        amount = r.I32();
+        return r.Ok() && r.Remaining() == 0 && target < kMaxPlayers && amount >= 0 && amount <= kMaximum;
+    }
+};
+
 struct Welcome {
     uint8_t yourId = 0;
     uint8_t hostId = 0;
@@ -263,6 +277,7 @@ struct Welcome {
     std::string motd, motdEn;
     bool worldAvailable = false;
     bool friendlyFire = false;  // the players can hurt each other (the host chose it creating the game)
+    bool allowCheats = true;
     std::vector<PlayerEntry> players;  // already connected players (excluding you)
 
     void Write(Writer& w) const {
@@ -279,6 +294,7 @@ struct Welcome {
         }
         w.Str(motdEn, 512);
         w.Bool(friendlyFire);
+        w.Bool(allowCheats);
     }
     bool Read(Reader& r) {
         yourId = r.U8();
@@ -297,6 +313,7 @@ struct Welcome {
         }
         motdEn = r.Str(512);
         friendlyFire = r.Bool();
+        allowCheats = r.Bool();
         return r.Ok();
     }
 };

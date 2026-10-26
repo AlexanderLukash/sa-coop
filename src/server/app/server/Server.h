@@ -19,6 +19,7 @@ struct Config {
     std::string password;
     std::string motd = "Добро пожаловать! Чтобы увидеть список команд, напишите /help.";
     bool friendlyFire = false;  // the players can hurt each other
+    bool allowCheats = true;
     uint16_t port = 7788;
     int maxPlayers = proto::kMaxPlayers;
     std::wstring dataDir;    // profiles/, world/

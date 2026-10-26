@@ -93,9 +93,11 @@ void ReadState(Reader& r, PedSyncState& s) {
     s.weapon = r.U8();
     if (s.weapon > 46) s.weapon = 0;  // eWeaponType ends with the parachute: the weapon info past it is garbage
     s.flags = r.U8();
+    // Mission passengers commonly have F_NO_DRAG. Rejecting it drops their
+    // create and sync packets, leaving their seats empty on other clients.
     if (s.flags & ~uint8_t(PedSyncState::F_DEAD | PedSyncState::F_DUCKING | PedSyncState::F_IN_VEHICLE |
                           PedSyncState::F_AIMING | PedSyncState::F_FIRING | PedSyncState::F_ENTERING |
-                          PedSyncState::F_LEAVING))
+                          PedSyncState::F_LEAVING | PedSyncState::F_NO_DRAG))
         r.Fail();
     s.vehNetId = r.U16();
     s.seat = r.I8();

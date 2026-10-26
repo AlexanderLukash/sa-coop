@@ -224,8 +224,15 @@ void Vehicles::ProvisionMissionFleet(NetVehicle& root) {
         !ScriptHolds(root.veh) || !HasPlayerInside(root.veh))
         return;
     const std::size_t activePlayers = sync::ActivePlayersFromPeers(Net().Peers().size());
-    const std::size_t passengerSeats = root.veh->DoorLock() == 2 ? 0 : root.veh->MaxPassengers();
-    const std::size_t required = sync::RequiredMissionVehicles(activePlayers, passengerSeats);
+    const std::size_t passengerSeats = std::min<std::size_t>(root.veh->MaxPassengers(), 8);
+    auto npcSeat = [](CPed* ped) {
+        return ped && !ped->IsPlayer() && !Players::Instance().FindByPed(ped);
+    };
+    std::size_t npcSeats = npcSeat(root.veh->Driver()) ? 1 : 0;
+    for (std::size_t seat = 0; seat < passengerSeats && seat < 8; ++seat)
+        if (root.veh->DoorLock() == 2 || npcSeat(root.veh->Passengers()[seat]) ||
+            Peds::Instance().SeatClaimed(root.veh, (int)seat)) ++npcSeats;
+    const std::size_t required = sync::RequiredMissionVehicles(activePlayers, passengerSeats, npcSeats);
     const std::size_t wantedCopies = required > 0 ? required - 1 : 0;
     std::vector<uint16_t> copies;
     for (const auto& [id, nv] : m_byId)
@@ -294,7 +301,7 @@ void Vehicles::UpdateMissionFleets() {
     }
     std::vector<uint16_t> roots;
     for (const auto& [id, nv] : m_byId)
-        if (nv.script && !nv.missionFleetRoot && nv.owner == Net().MyId() && VehicleAlive(nv)) roots.push_back(id);
+        if (nv.script && !nv.missionFleetRoot && VehicleAlive(nv)) roots.push_back(id);
     for (uint16_t id : roots) {
         NetVehicle* root = Find(id);
         if (!root || !IsVehicleValid(root->veh)) continue;

@@ -312,6 +312,7 @@ void WriteDefaultConfig(const std::wstring& path) {
         "load_slot = 0\r\n"
         "; Для хоста: поставьте 1, чтобы игроки могли ранить и убивать друг друга. Это галочка в окне F9.\r\n"
         "friendly_fire = 0\r\n"
+        "allow_cheats = 1\r\n"
         "\r\n"
         "[game]\r\n"
         "; Поставьте 1, чтобы играть в окне.\r\n"

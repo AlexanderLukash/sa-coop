@@ -53,7 +53,7 @@ async function save(input) {
   return snapshot();
 }
 function roomSettings(s) {
-  return { name: s.serverName, maxPlayers: s.maxPlayers, gamePort: s.port, friendlyFire: s.friendlyFire, loadSlot: s.loadSlot };
+  return { name: s.serverName, maxPlayers: s.maxPlayers, gamePort: s.port, friendlyFire: s.friendlyFire, allowCheats: s.allowCheats, loadSlot: s.loadSlot };
 }
 async function leave() {
   lobbyClient?.removeAllListeners(); lobbyClient?.close(); lobbyClient = null;
@@ -102,7 +102,7 @@ async function launch(mode, connection = {}) {
   if (mode === 'host' && room) {
     const r = serverSettings(room.settings);
     active = { ...active, serverName: r.name, maxPlayers: r.maxPlayers, port: r.gamePort,
-      friendlyFire: r.friendlyFire, loadSlot: r.loadSlot };
+      friendlyFire: r.friendlyFire, allowCheats: r.allowCheats, loadSlot: r.loadSlot };
   }
   const session = randomUUID(), ownerClient = lobbyClient;
   const configFile = await writeGameConfig(active, { mode, password: mode === 'host' ? settings.password : '', ...connection, session });
@@ -117,38 +117,42 @@ async function launch(mode, connection = {}) {
     throw error;
   }
   gameProcess = child; notify('game', { playing: true });
-  let monitor;
+  let monitor, reportedEnd = false;
+  const reportGameEnd = () => {
+    if (reportedEnd) return;
+    reportedEnd = true;
+    if (ownerClient === lobbyClient && ownerClient?.ws?.readyState === 1)
+      ownerClient.send({ type: mode === 'host' ? 'game-ended' : 'game-left' });
+  };
   child.on('error', error => notify('notice', { message: error.message }));
   child.once('exit', () => {
     clearInterval(monitor);
     if (gameProcess === child) gameProcess = null;
     if (process.platform === 'linux' && window && !window.isDestroyed()) { window.restore(); window.focus(); }
     notify('game', { playing: false });
-    if (ownerClient === lobbyClient && ownerClient?.ws?.readyState === 1) {
-      if (mode === 'host') ownerClient.send({ type: 'game-ended' });
-      else if (mode === 'join') ownerClient.send({ type: 'game-left' });
-    }
+    reportGameEnd();
   });
   if (mode !== 'solo') {
     await waitForStatus(statusFile, session, { isAlive: () => gameProcess === child && child.exitCode === null });
     if (ownerClient !== lobbyClient || ownerClient?.ws?.readyState !== 1) throw new Error('Підключення до лобі втрачено.');
     ownerClient.send({ type: mode === 'host' ? 'game-started' : 'game-entered' });
-    let checking = false;
+    let checking = false, disconnected = false;
     monitor = setInterval(async () => {
       if (checking || gameProcess !== child) return;
       checking = true;
       try {
         const status = await readStatus(statusFile, session);
-        if (status && ['failed', 'offline'].includes(status.state)) {
-          clearInterval(monitor);
+        if (!disconnected && status && ['failed', 'offline'].includes(status.state)) {
+          disconnected = true;
           notify('notice', { message: status.message || 'Мод від’єднався. Закрийте GTA, щоб підключитися повторно.' });
-          if (ownerClient === lobbyClient && ownerClient.ws?.readyState === 1)
-            ownerClient.send({ type: mode === 'host' ? 'game-ended' : 'game-left' });
+          reportGameEnd();
         }
       } catch (error) { notify('notice', { message: error.message }); }
       finally { checking = false; }
     }, 1000);
-    monitor.unref();
+    // Keep the game monitor referenced until the child exits. Packaged Electron
+    // must keep pumping Node events even while its renderer is in the background;
+    // an offline status may arrive just before the process actually terminates.
   }
   return snapshot();
   } finally { launching = false; }

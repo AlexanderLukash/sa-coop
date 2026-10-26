@@ -10,7 +10,7 @@ const defaults = {
   wineCommand: 'wine', winePrefix: '', windowed: true, width: 1280, height: 720,
   voiceEnabled: true, voiceVolume: 80, micGain: 100,
   serverName: 'Grove Street crew', maxPlayers: 8, port: 7788, lobbyPort: 7790,
-  friendlyFire: false, password: '', loadSlot: -1, skin: 0, networkAddress: '',
+  friendlyFire: false, allowCheats: true, password: '', loadSlot: -1, skin: 0, networkAddress: '',
 };
 
 function cleanString(value, max = 128) {
@@ -46,7 +46,7 @@ function validate(input) {
   integer(s.loadSlot, -1, 8, 'Збереження');
   integer(s.width, 640, 7680, 'Ширина'); integer(s.height, 480, 4320, 'Висота');
   integer(s.voiceVolume, 0, 100, 'Гучність'); integer(s.micGain, 0, 200, 'Мікрофон');
-  for (const k of ['windowed', 'voiceEnabled', 'friendlyFire'])
+  for (const k of ['windowed', 'voiceEnabled', 'friendlyFire', 'allowCheats'])
     if (typeof s[k] !== 'boolean') throw new Error('Некоректний перемикач.');
   return s;
 }
@@ -104,7 +104,7 @@ async function writeGameConfig(settings, { mode = 'solo', address = '127.0.0.1',
     player: { name: s.nickname, language: 'en', skin: s.skin },
     connect: { auto_connect: Number(mode !== 'solo'), mode: mode === 'host' ? 'host' : 'join',
       host: address, port: port ?? s.port, password, server_name: s.serverName, load_slot: loadSlot ?? s.loadSlot,
-      friendly_fire: Number(s.friendlyFire) },
+      friendly_fire: Number(s.friendlyFire), allow_cheats: Number(s.allowCheats) },
     game: { windowed: Number(s.windowed), width: s.width, height: s.height,
       run_in_background: 1, no_pause_menu: 1, skip_intro: 1 },
     voice: { enabled: Number(s.voiceEnabled), volume: s.voiceVolume / 100, mic_gain: s.micGain / 100 },
@@ -115,7 +115,7 @@ async function writeGameConfig(settings, { mode = 'solo', address = '127.0.0.1',
     const serverFile = path.join(coop, 'server.ini');
     await atomicWrite(serverFile, updateIni(await readText(serverFile), {
       server: { name: s.serverName, max_players: s.maxPlayers, port: s.port,
-        password: s.password, friendly_fire: Number(s.friendlyFire), internet: 0, host: s.nickname },
+        password: s.password, friendly_fire: Number(s.friendlyFire), allow_cheats: Number(s.allowCheats), internet: 0, host: s.nickname },
     }));
   }
   return file;

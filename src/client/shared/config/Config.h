@@ -19,6 +19,7 @@ struct ClientConfig {
     bool wantsHost = false;   // started from "Create server" in the launcher
     int loadSlot = 0;         // host: save slot (1..8) to load automatically, -1 a new game, 0 = choose in the menu
     bool friendlyFire = false;  // host: the players can hurt each other
+    bool allowCheats = true;
 
     // [game]
     bool windowed = false;

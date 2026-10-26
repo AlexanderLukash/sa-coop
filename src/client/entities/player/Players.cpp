@@ -1651,6 +1651,9 @@ void Players::FollowHost() {
     // full of the gang, Smoke's bike with the host behind him. The partner gets one of its own to follow. A seat that a
     // copy of the host's people walks to is taken too: ours took Ryder's.
     CVehicle* hv = hp->InVehicle() ? hp->Vehicle() : nullptr;
+    // The host provisions shared support vehicles for script-held mission cars.
+    // Running the local fallback too would give each stranded partner another car.
+    if (NetVehicle* nv = hv ? Vehicles::Instance().Find(hv) : nullptr; nv && nv->script) return;
     int model = hv ? hv->ModelIndex() : 0, type = hv ? hv->VehicleSubClass() : -1;
     bool land = type == VEHICLE_TYPE_AUTOMOBILE || type == VEHICLE_TYPE_MTRUCK || type == VEHICLE_TYPE_QUAD || (hv && hv->IsBike());
     bool full = hv && hv->Driver();

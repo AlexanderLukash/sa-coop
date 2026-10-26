@@ -20,7 +20,7 @@ function serverSettings(input) {
   if (!name) throw new Error('Вкажіть назву лоббі.');
   return { name, maxPlayers: integer(input.maxPlayers, 1, 8, 'Кількість гравців'),
     gamePort: integer(input.gamePort, 1024, 65535, 'Ігровий порт'),
-    friendlyFire: !!input.friendlyFire, loadSlot: integer(input.loadSlot, -1, 8, 'Збереження') };
+    friendlyFire: !!input.friendlyFire, allowCheats: input.allowCheats !== false, loadSlot: integer(input.loadSlot, -1, 8, 'Збереження') };
 }
 function parseLobbyAddress(input) {
   let text = cleanString(input, 256);

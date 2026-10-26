@@ -60,9 +60,18 @@ int Matched(const char* s) {
 // cutscene flag's address out of them and crashed on a hook there.
 using IncrementStatFn = void(__cdecl*)(uint16_t, float);
 IncrementStatFn g_origIncrementStat = nullptr;
+using DoCheatsFn = void(__cdecl*)();
+DoCheatsFn g_origDoCheats = nullptr;
+void __cdecl HookDoCheats() {
+    if (!Net().CheatsAllowed()) {
+        Ref<char>(kCheatString) = '\0';
+        return;
+    }
+    g_origDoCheats();
+}
 void __cdecl HookCheatCounted(uint16_t stat, float value) {
     g_origIncrementStat(stat, value);
-    if (!flow::InSharedWorld()) return;
+    if (!flow::InSharedWorld() || !Net().CheatsAllowed()) return;
     int id = Matched((const char*)kCheatString);
     if (id < 0 || !WorldCheat(id)) return;
     Writer w(proto::G_CHEAT);
@@ -77,11 +86,13 @@ public:
     const char* Name() const override { return "Cheats"; }
 
     void OnInstallHooks() override {
+        // Keep AddToCheatString's prologue intact for GInput compatibility.
+        mem::HookFn(0x439AF0, &HookDoCheats, &g_origDoCheats, "CCheat::DoCheats");
         mem::RedirectCallFn(0x438565, &HookCheatCounted, &g_origIncrementStat);  // in CCheat::AddToCheatString
         Net().SetHandler(proto::G_CHEAT, [](uint8_t from, Reader& r) {
             int id = r.U8();
             bool on = r.U8() != 0;
-            if (!r.Ok() || !WorldCheat(id) || !core::IsPlayerReady() || !flow::InSharedWorld()) return;
+            if (!r.Ok() || !Net().CheatsAllowed() || !WorldCheat(id) || !core::IsPlayerReady() || !flow::InSharedWorld()) return;
             CPlayerPed* me = FindPlayerPed(0);
             CPedClothesDesc look = *me->ClothesDesc();
             int melee = me->Weapons()[1].type, current = me->ActiveWeapon().type;  // the hand weapon's slot
