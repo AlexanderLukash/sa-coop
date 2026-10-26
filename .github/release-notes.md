@@ -11,7 +11,7 @@
 ### Завантаження
 
 - **SA-COOP.zip** — мод і сервер. Розпакуйте в теку GTA San Andreas 1.0 US або встановіть лаунчером.
-- **SA-COOP-Launcher-0.3.0-win-x64.zip**, **SA.COOP.Launcher.0.3.0.exe** і **SA.COOP.Launcher.Setup.0.3.0.exe** — портативний ZIP, портативний EXE та інсталятор Windows.
+- **SA.COOP.Launcher.0.3.0.exe** — портативний Windows-лаунчер; **SA.COOP.Launcher.Setup.0.3.0.exe** — інсталятор Windows.
 - **SA.COOP.Launcher-0.3.0.AppImage**, **.deb**, **.tar.gz** — Linux x64. Для GTA під Linux налаштуйте Wine.
 - **SHA256SUMS.txt** — контрольні суми файлів релізу.
 
