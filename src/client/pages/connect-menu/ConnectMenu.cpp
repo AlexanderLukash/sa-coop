@@ -4,12 +4,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <set>
+#include <map>
 
 #include "common/api/nat-traversal/NatTraversal.h"
 #include "common/config/version/Version.h"
 #include "common/lib/util/Util.h"
 #include "entities/session/Flow.h"
 #include "features/balance/Balance.h"
+#include "features/street-racing/StreetRacing.h"
+#include "entities/economy/Economy.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
@@ -38,7 +42,12 @@ uint64_t g_slotsTime = 0;
 uint64_t g_copiedMs = 0;
 bool g_skinBrowser = false;
 bool g_balanceEditor = false;
+bool g_streetBrowser=false,g_privateEditor=false;
+int g_eventIndex=0,g_routeIndex=0,g_creditIndex=0,g_raceCapacity=2;
+std::wstring g_raceStake=L"100";
+std::map<uint8_t,std::string> g_raceInvites;
 uint8_t g_balanceTarget = 255;
+std::string g_balanceIdentity;
 std::wstring g_balanceAmount;
 std::string g_balanceStatus;
 std::wstring g_skinSearch;
@@ -105,6 +114,17 @@ uint16_t PortValue() {
     if (p <= 0 || p > 65535) p = 7788;
     return (uint16_t)p;
 }
+const char* StreetPhase(street::Phase phase){
+    switch(phase){
+    case street::Phase::Scheduled:return TR("Событие готовится","Scheduled");
+    case street::Phase::Registration:return TR("Регистрация","Registration");
+    case street::Phase::Countdown:return TR("Обратный отсчёт","Countdown");
+    case street::Phase::Racing:return TR("Гонка идёт","Racing");
+    case street::Phase::Finished:return TR("Определяем результаты","Finalizing results");
+    case street::Phase::Settled:return TR("Расчёт завершён","Settled");
+    default:return TR("Событие закрыто","Closed");
+    }
+}
 }  // namespace
 
 void SetConnectMenuVisible(bool visible) {
@@ -112,6 +132,7 @@ void SetConnectMenuVisible(bool visible) {
     g_visible = visible;
     if (visible) {
         g_balanceEditor = false;
+        g_streetBrowser=g_privateEditor=false;
         LoadFields();
         if (TheChat().IsOpen()) TheChat().Close();
         In().SetKeyboardCapture(true);
@@ -198,11 +219,15 @@ void RenderConnectMenu() {
             g_balanceTarget = net.MyId(); selected = targets.begin();
             g_balanceAmount.clear(); g_balanceStatus.clear();
         }
+        if(g_balanceIdentity!=net.PeerName(g_balanceTarget)){
+            g_balanceIdentity=net.PeerName(g_balanceTarget);g_balanceAmount.clear();g_balanceStatus.clear();
+        }
         int index = (int)(selected - targets.begin());
         int step = w::Selector("balance-player", cx, cy, cw, rowH, net.PeerName(g_balanceTarget));
         if (step) {
             index = (index + step + (int)targets.size()) % (int)targets.size();
             g_balanceTarget = targets[index];
+            g_balanceIdentity=net.PeerName(g_balanceTarget);
             g_balanceAmount.clear();
             g_balanceStatus.clear();
         }
@@ -220,6 +245,90 @@ void RenderConnectMenu() {
         }
         cy += rowH + 18 * s;
         para(g_balanceStatus, kSaMuted);
+        if(const auto* state=EconomySnapshot();state&&!state->credits.empty()){
+            cy+=18*s;caption(cx,TR("Подтверждение дохода", "Income approvals"));cy+=ch+6*s;
+            g_creditIndex=std::clamp(g_creditIndex,0,(int)state->credits.size()-1);
+            const auto& credit=state->credits[g_creditIndex];
+            int step=w::Selector("credit",cx,cy,cw,rowH,Format("%s · $%d",credit.account.c_str(),credit.amount));
+            if(step)g_creditIndex=(g_creditIndex+step+(int)state->credits.size())%(int)state->credits.size();
+            cy+=rowH+10*s;
+            if(w::Button("credit-approve",cx,cy,cw*0.48f,rowH,TR("Подтвердить", "Approve")))DecideCashIncome(credit.id,true);
+            if(w::Button("credit-reject",cx+cw*0.52f,cy,cw*0.48f,rowH,TR("Отклонить", "Reject")))DecideCashIncome(credit.id,false);
+        }
+    } else if(g_streetBrowser&&online){
+        using namespace street;
+        const auto* state=EconomySnapshot();
+        g.Text(FONT_BIG,cx,cy,TR("Уличные гонки","Street racing"),kText,0);cy+=bh+16*s;
+        if(!state)para(TR("Получаем состояние сервера…","Waiting for the server…"),kSaMuted);
+        else {
+            para(Format(TR("Баланс: $%d · победы %u/%u · репутация %u","Cash: $%d · wins %u/%u · reputation %u"),
+                state->cash,state->statistics.wins,state->statistics.races,state->statistics.reputation),kSaBlue);
+            cy+=12*s;
+            if(!state->unlocked)para(TR("Выиграйте первую гонку Сезара — High Stakes, Low-Rider.","Win Cesar's first race: High Stakes, Low-Rider."),kSaMuted);
+            else if(!state->available)para(TR("Гонки временно недоступны во время сюжетной миссии.","Races are temporarily unavailable during a story mission."),kSaMuted);
+            else if(g_privateEditor){
+                std::vector<const Route*> routes;
+                for(const auto& route:Routes())if(Available(route,state->unlocked,state->city))routes.push_back(&route);
+                if(!routes.empty()){
+                    g_routeIndex=std::clamp(g_routeIndex,0,(int)routes.size()-1);const Route& route=*routes[g_routeIndex];
+                    int step=w::Selector("private-route",cx,cy,cw,rowH,route.name);
+                    if(step)g_routeIndex=(g_routeIndex+step+(int)routes.size())%(int)routes.size();cy+=rowH+12*s;
+                    para(Format(TR("%.1f км · сложность %u/3 · ставка до $%u","%.1f km · difficulty %u/3 · stake up to $%u"),route.Length()/1000,route.difficulty,route.maximumStake),kSaMuted);
+                    para(Format(TR("Классы: %s","Classes: %s"),AllowedClasses(route).c_str()),kSaMuted);
+                    cy+=10*s;caption(cx,TR("Ставка каждого участника", "Stake per participant"));cy+=ch+6*s;
+                    w::TextBox("race-stake",cx,cy,cw,rowH,g_raceStake,7,false,true);cy+=rowH+10*s;
+                    int capacity=w::Selector("race-capacity",cx,cy,cw,rowH,Format(TR("Мест: %d","Places: %d"),g_raceCapacity));
+                    g_raceCapacity=std::clamp(g_raceCapacity+capacity,2,8);cy+=rowH+14*s;
+                    caption(cx,TR("Пригласить игроков", "Invite players"));cy+=ch+8*s;
+                    for(const auto& [id,peer]:net.Peers()){
+                        if(g_raceInvites.count(id)&&g_raceInvites.at(id)!=peer.name)g_raceInvites.erase(id);
+                        bool invited=g_raceInvites.count(id)!=0;std::string control="race-invite-"+std::to_string(id);
+                        if(w::Checkbox(control.c_str(),cx,cy,peer.name,invited)){if(invited)g_raceInvites[id]=peer.name;else g_raceInvites.erase(id);}cy+=lh+12*s;
+                    }
+                    bool valid=!g_raceStake.empty()&&g_raceStake.size()<=7&&std::all_of(g_raceStake.begin(),g_raceStake.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';})&&
+                        (uint32_t)_wtoi(g_raceStake.c_str())<=route.maximumStake&&!g_raceInvites.empty();
+                    if(w::Button("race-create",cx,cy,cw,rowH,TR("Создать частную гонку","Create private race"),valid)){
+                        std::vector<uint8_t> invites;for(const auto& [id,name]:g_raceInvites)if(net.Peer(id)&&net.Peer(id)->name==name)invites.push_back(id);
+                        CreateStreetRace(route.id,(uint32_t)_wtoi(g_raceStake.c_str()),(uint8_t)g_raceCapacity,invites);g_privateEditor=false;g_eventIndex=31;
+                    }
+                }
+            }else{
+                if(state->events.empty())para(TR("Организаторы ищут место. Новая гонка появится неожиданно.","Organizers are finding a location. A new race will appear without a fixed schedule."),kSaMuted);
+                else {
+                    g_eventIndex=std::clamp(g_eventIndex,0,(int)state->events.size()-1);const auto& event=state->events[g_eventIndex];const Route& route=*FindRoute(event.route);
+                    int step=w::Selector("race-event",cx,cy,cw,rowH,Format("%s #%llu",route.name,(unsigned long long)event.id));
+                    if(step)g_eventIndex=(g_eventIndex+step+(int)state->events.size())%(int)state->events.size();cy+=rowH+12*s;
+                    para(StreetPhase(event.phase),kSaGreen);
+                    uint64_t age=NowMs()-EconomyReceivedMs();unsigned seconds=(unsigned)((event.remaining>age?event.remaining-age:0)+999)/1000;
+                    para(Format(TR("Взнос $%u · банк $%u · %u/%u игроков · %u с","Entry $%u · pool $%u · %u/%u players · %u s"),
+                        event.fee,event.fee*(unsigned)event.participants.size(),(unsigned)event.participants.size(),event.capacity,seconds),kSaBlue);
+                    para(Format(TR("%.1f км · сложность %u/3 · разрешены классы маршрута","%.1f km · difficulty %u/3 · route vehicle classes apply"),route.Length()/1000,route.difficulty),kSaMuted);
+                    para(Format(TR("Классы: %s","Classes: %s"),AllowedClasses(route).c_str()),kSaMuted);
+                    bool joined=std::any_of(event.participants.begin(),event.participants.end(),[&](const auto& p){return p.account==state->account;});
+                    bool registration=event.phase==Phase::Registration&&seconds>0;
+                    cy+=12*s;
+                    if(w::Button("race-preview",cx,cy,cw*0.48f,rowH,TR("Маршрут на карте","Show route on map")))PreviewStreetRoute(event.id);
+                    if(w::Button("race-join",cx+cw*0.52f,cy,cw*0.48f,rowH,joined?TR("Покинуть гонку","Leave race"):TR("Участвовать","Register"),
+                        joined?event.phase<=Phase::Racing:registration)){
+                        if(joined)LeaveStreetRace(event.id);else JoinStreetRace(event.id);
+                    }
+                    cy+=rowH+14*s;
+                    for(const auto& p:event.participants){
+                        const char* status=p.outcome==Outcome::Finished?TR("финиш","finished"):p.outcome==Outcome::Forfeit?TR("сход","DNF"):
+                            p.outcome==Outcome::Refunded?TR("возврат","refunded"):event.phase==Phase::Racing?TR("в гонке","racing"):TR("зарегистрирован","registered");
+                        para(Format("%s · %s · #%u · %.1f s",p.account.c_str(),status,p.place,p.finish/1000.0),kText);
+                    }
+                    if(event.privateRace&&event.organizer==state->account&&event.phase<=Phase::Registration){
+                        cy+=10*s;if(w::Button("race-cancel",cx,cy,cw,rowH,TR("Отменить гонку и вернуть ставки","Cancel race and refund stakes")))CancelStreetRace(event.id);cy+=rowH;
+                    }
+                }
+                cy+=18*s;if(w::Button("private-editor",cx,cy,cw,rowH,TR("Организовать частную гонку","Organize a private race")))g_privateEditor=true;
+                cy+=rowH+8*s;
+                if(net.IsHost()&&w::Button("race-test",cx,cy,cw,rowH,TR("Тестовая гонка без ставок","Test race, no bets"),!net.Peers().empty())){
+                    if(!CreateStreetTestRace())ui::TheChat().AddSystem(TR("Не удалось создать тестовую гонку.","Could not create the test race."));
+                }
+            }
+        }
     } else if (g_skinBrowser) {
         g.Text(FONT_BIG, cx, cy, TR("Выбор персонажа", "Your character"), kText, 0);
         cy += bh + 18 * s;
@@ -296,11 +405,13 @@ void RenderConnectMenu() {
         for (auto& [id, p] : net.Peers()) row(p.name, p.isHost, p.ping, false);
         if (host && net.Peers().empty()) para(TR("Ждём друга...", "Waiting for your friend..."), kSaMuted);
         cy += 12 * s;
-        if (w::Button("skins-online", cx, cy, cw, rowH, TR("Изменить персонажа", "Change character"))) g_skinBrowser = true;
+        if (w::Button("skins-online", cx, cy, cw*0.48f, rowH, TR("Изменить персонажа", "Change character"))) g_skinBrowser = true;
+        if(w::Button("street-races",cx+cw*0.52f,cy,cw*0.48f,rowH,TR("Уличные гонки","Street racing")))g_streetBrowser=true;
         cy += rowH + 8 * s;
         if (host && w::Button("balances", cx, cy, cw, rowH, TR("Баланс игроков", "Player balances"))) {
             g_balanceEditor = true;
             g_balanceTarget = net.MyId();
+            g_balanceIdentity=net.PeerName(g_balanceTarget);
             g_balanceAmount.clear();
             g_balanceStatus.clear();
         }
@@ -418,7 +529,9 @@ void RenderConnectMenu() {
 
     // ---- footer: like "Back" on the game's pages
     g.Rect(cx, bodyBottom, cw, std::max(1.0f, s), kSaLine);
-    if (g_balanceEditor) {
+    if(g_streetBrowser){
+        if(item("back-street",cx,by,TR("Назад","Back"))){if(g_privateEditor)g_privateEditor=false;else g_streetBrowser=false;}
+    } else if (g_balanceEditor) {
         if (item("back-balances", cx, by, TR("Назад", "Back"))) g_balanceEditor = false;
     } else if (g_skinBrowser) {
         if (item("back-skins", cx, by, TR("Готово", "Done"))) g_skinBrowser = false;

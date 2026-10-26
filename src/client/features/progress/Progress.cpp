@@ -22,6 +22,7 @@
 #include "common/lib/sync/ProfileExtension.h"
 #include "common/lib/util/Util.h"
 #include "entities/mission/Mission.h"
+#include "entities/economy/Economy.h"
 #include "entities/ped/Peds.h"
 #include "entities/player/Players.h"
 #include "entities/profile/Profile.h"
@@ -607,7 +608,8 @@ bool ApplyProfile(const std::vector<uint8_t>& blob, bool& lookOwn) {
     CPlayerPed* me = FindPlayerPed(0);
     CPlayerInfo& info = PlayerInfos()[0];
     int h = GetPedRef(me);
-    info.money = info.displayMoney = money;
+    if(!CashAuthorityOnline())info.money = info.displayMoney = money;
+    else RefreshAuthoritativeCash();
     int32_t world[kStatsSize / 4];
     memcpy(world, (void*)kStatsBlock, kStatsSize);
     memcpy((void*)kStatsBlock, stats.data(), kStatsSize);

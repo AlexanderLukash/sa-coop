@@ -24,6 +24,7 @@ def main():
     subprocess.run([str(compiler), "-std=c++20", "-static", "-I" + str(ROOT / "src"),
                     "-I" + str(ROOT / "third_party/enet/include"),
                     str(ROOT / "tools/server_capacity_test.cpp"),
+                    str(ROOT / "src/common/racing/Routes.cpp"),
                     *map(str, objects), "-lws2_32", "-lwinmm", "-o", str(test)], check=True)
     # Also cover existing smaller configurations and CLI clamping.
     for configured, maximum, capacity, protocol in [

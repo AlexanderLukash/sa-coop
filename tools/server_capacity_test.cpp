@@ -9,6 +9,7 @@
 #include <thread>
 #include "common/api/protocol/Protocol.h"
 #include "common/config/version/Version.h"
+#include "common/racing/RaceProtocol.h"
 
 using namespace coop;
 using namespace coop::proto;
@@ -22,6 +23,7 @@ struct Clients {
     std::array<ENetPeer*, 9> peers{};
     std::array<int, 9> ids{}, rosters{}, relays{};
     std::array<int, 9> balances{}, cheats{};
+    std::array<street::Snapshot,9> cashStates{};
     std::array<bool, 9> cheatsAllowed{};
     std::array<std::array<int, 256>, 9> featureRelays{};
     std::array<bool, 9> welcomed{}, rejected{};
@@ -76,6 +78,9 @@ struct Clients {
                         r.Str();
                         reasons[i] = r.Str();
                         rejected[i] = true;
+                    } else if(msg==S_STREET_RACING){
+                        auto operation=(street::ServerOp)r.U8();
+                        if(operation==street::ServerOp::Snapshot)Check(cashStates[i].Read(r),"bad authoritative cash/race snapshot");
                     } else if (msg == G_PLAYER_BALANCE) {
                         Check(r.U8() == 0, "non-host balance update relayed");
                         BalanceChange change;
@@ -164,7 +169,11 @@ int main(int argc, char** argv) {
                 pump();
                 Check(clients.balances[0] == 0 && clients.balances[1] == 0, "unauthorized/invalid balance relayed");
                 send(0, balance);
-                clients.Until([&] { return clients.balances[1] == 1; });
+                pump();Check(clients.balances[1]==0,"legacy absolute balance RPC bypassed ledger");
+                Writer authoritative(C_STREET_RACING);authoritative.U8((uint8_t)street::ClientOp::SetCash);
+                authoritative.U64(clients.cashStates[0].sequence+1);authoritative.U8(1);authoritative.Str("capacity1");authoritative.I32(12345);
+                send(1,authoritative);pump();Check(clients.cashStates[1].cash==0,"partner administered cash");
+                send(0,authoritative);clients.Until([&]{return clients.cashStates[1].cash==12345;});
                 Writer cheat(G_CHEAT); cheat.U8(6); cheat.U8(1);
                 send(0, cheat);
                 send(1, cheat);

@@ -279,7 +279,8 @@ void Session::HandleService(uint8_t id, Reader& r) {
             if (onWorldWanted) onWorldWanted();
             break;
         default:
-            LOGW("Unknown service message %u", id);
+            if(m_handlers[id])m_handlers[id](proto::kServerId,r);
+            else LOGW("Unknown service message %u", id);
             break;
     }
 }

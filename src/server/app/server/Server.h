@@ -11,6 +11,7 @@
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/buffer/Buffer.h"
 #include "features/internet/Internet.h"
+#include "features/street-racing/StreetRacing.h"
 
 namespace coop::server {
 
@@ -20,6 +21,7 @@ struct Config {
     std::string motd = "Добро пожаловать! Чтобы увидеть список команд, напишите /help.";
     bool friendlyFire = false;  // the players can hurt each other
     bool allowCheats = true;
+    street::Settings streetRaces;
     uint16_t port = 7788;
     int maxPlayers = proto::kMaxPlayers;
     std::wstring dataDir;    // profiles/, world/
@@ -94,6 +96,8 @@ private:
     Player* FindById(int id);
     Player* FindByName(const std::string& name);
     int JoinedCount() const;
+    std::vector<StreetPeer> StreetPeers() const;
+    StreetPeer StreetPlayer(const Player& p) const;
 
     std::wstring ProfilePath(const std::string& name) const;
     std::wstring WorldPath() const { return m_cfg.dataDir + L"world\\world.b"; }
@@ -104,6 +108,7 @@ private:
     Config m_cfg;
     ENetHost* m_host = nullptr;
     Internet m_internet;
+    StreetRacing m_streetRacing;
     std::array<Player, proto::kMaxPlayers> m_players{};
     volatile bool m_running = false;
     std::vector<uint8_t> m_world;  // current world save

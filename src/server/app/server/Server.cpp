@@ -14,6 +14,15 @@ namespace coop::server {
 
 using namespace proto;
 
+StreetPeer Server::StreetPlayer(const Player& p) const {
+    return {p.id,ToLower(p.name),p.isHost,p.status==STATUS_INGAME||p.status==STATUS_PAUSED};
+}
+std::vector<StreetPeer> Server::StreetPeers() const {
+    std::vector<StreetPeer> peers;
+    for(const auto& p:m_players)if(p.joined)peers.push_back(StreetPlayer(p));
+    return peers;
+}
+
 static constexpr uint32_t kColorServer = 0xFFC864FF;  // RGBA, orange-ish
 static constexpr uint32_t kColorInfo = 0xA0C8FFFF;
 static constexpr uint32_t kColorError = 0xFF6464FF;
@@ -28,6 +37,12 @@ bool Server::Start(const Config& cfg) {
     }
     EnsureDirectory(m_cfg.dataDir + L"profiles");
     EnsureDirectory(m_cfg.dataDir + L"world");
+    if(!m_streetRacing.Open(m_cfg.dataDir,(uint8_t)m_cfg.maxPlayers,m_cfg.streetRaces,[this](uint8_t id,const Writer& packet){
+        if(Player* p=FindById(id);p&&p->joined)net::Send(p->peer,CH_RELIABLE,packet);
+    })){
+        LOGE("Cannot open authoritative economy/racing data; refusing to replace it with empty balances");
+        return false;
+    }
 
     if (!net::Init()) {
         LOGE("enet_initialize failed");
@@ -76,6 +91,7 @@ bool Server::LoadWorld(const std::wstring& path, const std::string& label) {
 void Server::Run() {
     while (m_running) {
         Service();
+        m_streetRacing.Tick(StreetPeers(),NowMs());
         m_internet.Service();
         if (std::string code; m_internet.TakeNewCode(code)) {
             SendInvite(nullptr);
@@ -100,6 +116,8 @@ void Server::Run() {
                     Kick(p, "клиент не прислал приветствие", "the client sent no greeting");
         }
     }
+    m_streetRacing.WorldReset(NowMs());
+    m_streetRacing.Tick(StreetPeers(),NowMs()+100);
     for (auto& p : m_players)
         if (p.used && p.peer) enet_peer_disconnect(p.peer, 0);
     enet_host_flush(m_host);
@@ -178,6 +196,7 @@ void Server::OnDisconnect(ENetPeer* peer, bool timeout) {
 void Server::Leave(Player& p, LeaveReason why, const std::string& reason) {
     if (p.peer) p.peer->data = nullptr;
     bool wasJoined = p.joined, wasHost = p.isHost;
+    if(wasJoined)m_streetRacing.Disconnect(StreetPlayer(p),NowMs());
     std::string name = p.name;
     uint8_t id = p.id;
     p = Player{};
@@ -218,6 +237,10 @@ void Server::OnPacket(ENetPeer* peer, uint8_t channel, const uint8_t* data, size
         return;
     }
     switch (id) {
+        case C_STREET_RACING:
+            if(channel==CH_RELIABLE&&(flags&ENET_PACKET_FLAG_RELIABLE))
+                m_streetRacing.Handle(StreetPlayer(*p),r,StreetPeers(),NowMs());
+            break;
         case C_CHAT: {
             std::string text = r.Str(kMaxChatLen * 4);
             if (r.Ok()) HandleChat(*p, text);
@@ -318,7 +341,7 @@ void Server::HandleHello(Player& p, Reader& r) {
     if (!hostExists) {
         bool preferred = !m_cfg.hostName.empty() && ToLower(m_cfg.hostName) == ToLower(name);
         // the first player becomes host unless the server reserves the role for a specific nickname
-        if (m_cfg.hostName.empty() || preferred || h.wantsHost) p.isHost = true;
+        if (m_cfg.hostName.empty() || preferred) p.isHost = true;
     }
 
     Welcome wel;
@@ -347,6 +370,15 @@ void Server::HandleHello(Player& p, Reader& r) {
     Broadcast(CH_RELIABLE, j, p.id);
 
     SendProfile(p);
+    {
+        std::vector<uint8_t> profile;ReadFileBytes(ProfilePath(p.name),profile);
+        Reader legacy(profile.data(),profile.size());
+        bool known=profile.size()>=10&&legacy.U32()==0x46504353;
+        if(known)legacy.U16();int32_t cash=known?legacy.I32():0;
+        if(!m_streetRacing.Connect(StreetPlayer(p),cash,known&&legacy.Ok())) {
+            Kick(p,"ошибка хранилища баланса","cash storage is unavailable");return;
+        }
+    }
     SendInvite(&p);
     LOGI("%s вошёл как игрок %d%s (версия %s)", p.name.c_str(), p.id, p.isHost ? " [ХОСТ]" : "", h.version.c_str());
     SendChat(nullptr, kServerId, kColorInfo, Format("%s зашёл в игру%s.", p.name.c_str(), p.isHost ? " (хост)" : ""),
@@ -498,6 +530,7 @@ void Server::HandleWorldEnd(Player& p) {
 // older game. Partners wait until the prologue lets CJ get on the bike, those playing the old world too, and start the
 // new game with nothing from the old one.
 void Server::HostStartedNewGame() {
+    m_streetRacing.WorldReset(NowMs());
     if (!m_world.empty()) {
         m_world.clear();
         m_worldLabel.clear();
@@ -702,24 +735,15 @@ void Server::WaitProfileWrites() {
 
 void Server::Relay(Player& from, uint8_t channel, const uint8_t* data, size_t size, uint32_t flags) {
     if (channel >= CH_COUNT) return;
+    // The legacy direct balance RPC bypassed the cash ledger. Updated clients
+    // use the server service protocol; never relay an absolute cash overwrite.
+    if(data[0]==G_PLAYER_BALANCE||data[0]==G_BALANCE_RESULT)return;
+    if(data[0]==G_MISSION_REWARD){
+        Reader reward(data+1,size-1);uint64_t sequence=reward.U64();int32_t amount=reward.I32();
+        if(channel!=CH_RELIABLE||!reward.Ok()||reward.Remaining()||
+           !m_streetRacing.MissionReward(StreetPlayer(from),sequence,amount,StreetPeers()))return;
+    }
     if (data[0] == G_CHEAT && !m_cfg.allowCheats) return;
-    if (data[0] == G_PLAYER_BALANCE) {
-        Reader r(data + 1, size - 1);
-        BalanceChange change;
-        if (!from.isHost || channel != CH_RELIABLE || !(flags & ENET_PACKET_FLAG_RELIABLE) ||
-            !change.Read(r)) return;
-        Player* player = FindById(change.target);
-        if (!player || !player->joined || (player->status != STATUS_INGAME && player->status != STATUS_PAUSED)) {
-            SendChat(&from, kServerId, kColorError, "Игрок ещё не в игре. Повторите после загрузки.",
-                     "The player is not in game yet. Try again after loading.");
-            return;
-        }
-    }
-    if (data[0] == G_BALANCE_RESULT) {
-        Reader r(data + 1, size - 1);
-        int32_t amount = r.I32();
-        if (channel != CH_RELIABLE || !r.Ok() || r.Remaining() || amount < 0 || amount > 999999999) return;
-    }
     // [id][sender][payload]
     ENetPacket* pkt = enet_packet_create(nullptr, size + 1, flags & (ENET_PACKET_FLAG_RELIABLE | ENET_PACKET_FLAG_UNSEQUENCED));
     pkt->data[0] = data[0];

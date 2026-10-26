@@ -46,6 +46,7 @@ enum MsgId : uint8_t {
     C_WORLD_KEEP = 9,        // host: a fresh snapshot is impossible now (mission), send the stored world
     C_WORLD_NEWGAME = 10,    // host: it plays a new game's prologue (no save of it can exist yet)
     C_WORLD_FOLLOW = 11,     // host: the prologue is over but cannot be saved yet: partners follow in a new game
+    C_STREET_RACING = 12,    // authoritative cash/race requests; common/racing/RaceProtocol.h
 
     // ---- server -> client ----
     S_WELCOME = 20,          // see Welcome
@@ -65,6 +66,7 @@ enum MsgId : uint8_t {
     S_INVITE = 34,           // str invite code for internet play (when the server learned its public address)
     S_WORLD_NEWGAME = 35,    // to a partner: start a new game and join the host where the prologue left it
     S_WORLD_WAIT = 36,       // to a partner: the host plays a new game's prologue, keep waiting
+    S_STREET_RACING = 37,    // server cash, event snapshots and transaction errors
 
     // ---- relayed game messages (client <-> client) ----
     G_FIRST = 64,

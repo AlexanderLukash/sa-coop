@@ -32,6 +32,7 @@
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
 #include "entities/mission/Mission.h"
+#include "entities/economy/Economy.h"
 #include "entities/ped/Peds.h"
 #include "entities/player/Players.h"
 #include "entities/session/Flow.h"
@@ -238,7 +239,7 @@ std::vector<uint8_t> g_lastAreasMsg, g_lastOnscreen;
 uint64_t g_lastTick = 0, g_lastFadeMs = 0;
 bool g_hostCutscene = false;
 std::string g_missionName;
-int32_t g_moneyAtStart = 0;  // the partner gets what the host earned during the mission
+int64_t g_moneyAtStart = 0;  // native mission cash flow; server refunds/admin edits are not rewards
 char g_cutsceneName[32] = {};  // last loaded cutscene, for partners joining during it
 
 // mission markers: the host's mission starts once the partner stands in the marker too
@@ -301,7 +302,7 @@ struct Side {
     std::string name;         // our own activity that may be shared, while it runs
     uint64_t offerUntil = 0;  // its call can be made until then (0: made, or too late)
     bool offered = false;     // made, no answer yet
-    int32_t moneyAtStart = 0;
+    int64_t moneyAtStart = 0;
     uint8_t with = 0xFF;      // who joined ours
     uint8_t owner = 0xFF;     // whose we joined
     std::string joined;       // and its name
@@ -3113,9 +3114,11 @@ void HandleMissionEnd(uint8_t from, Reader&) {
 }
 
 void HandleReward(uint8_t from, Reader& r) {
+    r.U64();  // authoritative host transaction sequence, validated by the server
     int32_t money = r.I32();
     if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || !flow::InHostWorld() || money <= 0 || money > 10000000) return;
-    PlayerInfos()[0].money += money;
+    // Cash comes from the server ledger, not a second local reward application.
+    if(!CashAuthorityOnline())PlayerInfos()[0].money += money;
     ui::TheChat().AddSystem(Format(TR("Награда за миссию: $%d.", "Mission reward: $%d."), money));
 }
 
@@ -3218,7 +3221,7 @@ void SideUpdate() {
         g_side.name = name;
         g_side.offerUntil = NowMs() + 20000;
         g_side.offered = false;
-        g_side.moneyAtStart = PlayerInfos()[0].money;
+        g_side.moneyAtStart = NativeCashFlow();
         g_baseline.clear();
         for (int i = 0; i < kNumTraces; ++i)
             if (Ref<uint8_t>(Trace(i) + 0x25) & 2) g_baseline.insert(((uint32_t)Ref<uint16_t>(Trace(i) + 0x14) << 8) | (uint32_t)i);
@@ -3226,7 +3229,7 @@ void SideUpdate() {
         LOGI("Own side activity started (%s): the other player may be called in", name.c_str());
     } else if (!shareable && !g_side.name.empty()) {  // ours is over
         if (SideOwning()) {
-            int32_t earned = std::max(0, PlayerInfos()[0].money - g_side.moneyAtStart);
+            int32_t earned = (int32_t)std::clamp<int64_t>(NativeCashFlow() - g_side.moneyAtStart,0,10000000);
             Writer w(proto::G_BLIP);
             w.U8(BLIP_CLEAR);
             Net().Send(proto::CH_RELIABLE, w);
@@ -3563,7 +3566,7 @@ private:
                 if (Ref<uint8_t>(Trace(i) + 0x25) & 2) g_baseline.insert(((uint32_t)Ref<uint16_t>(Trace(i) + 0x14) << 8) | (uint32_t)i);
             g_sentBlips.clear();
             g_missionName.clear();
-            g_moneyAtStart = PlayerInfos()[0].money;
+            g_moneyAtStart = NativeCashFlow();
             LOGI("Mission started (%s)", name.c_str());
         }
         if (active && name != g_missionName && !name.empty()) {
@@ -3582,8 +3585,9 @@ private:
             w.U8(BLIP_CLEAR);
             Net().Send(proto::CH_RELIABLE, w);
             Net().Send(proto::CH_RELIABLE, Writer(proto::G_MISSION_END));
-            if (int32_t earned = PlayerInfos()[0].money - g_moneyAtStart; earned > 0) {
+            if (int32_t earned = (int32_t)std::clamp<int64_t>(NativeCashFlow() - g_moneyAtStart,0,10000000); earned > 0) {
                 Writer rw(proto::G_MISSION_REWARD);
+                rw.U64(NextCashSequence());
                 rw.I32(earned);
                 Net().Send(proto::CH_RELIABLE, rw);
             }

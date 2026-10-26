@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -50,7 +51,12 @@ static void WriteDefaultConfig(const std::wstring& path) {
         "; Ретранслятор на случай, если друг не может подключиться по коду.\r\n"
         "; С бесплатным аккаунтом metered.ca:   turn = metered:<имя приложения>:<API-ключ>\r\n"
         "; С любым TURN-сервером:               turn = turn:<адрес>:<порт>:<логин>:<пароль>\r\n"
-        "turn =\r\n";
+        "turn =\r\n"
+        "\r\n[street_racing]\r\n"
+        "minimum_interval_ms = 90000\r\nmaximum_interval_ms = 240000\r\n"
+        "registration_ms = 90000\r\ncountdown_ms = 8000\r\n"
+        "maximum_race_ms = 600000\r\nafter_first_finish_ms = 60000\r\n"
+        "maximum_public_events = 2\r\nmaximum_events = 8\r\n";
     WriteFileBytes(path, text, strlen(text));
 }
 
@@ -117,6 +123,15 @@ int wmain(int argc, wchar_t** argv) {
     cfg.motd = ini.Get("server", "motd", cfg.motd);
     cfg.friendlyFire = ini.GetBool("server", "friendly_fire", false);
     cfg.allowCheats = ini.GetBool("server", "allow_cheats", true);
+    auto bounded=[&](const char* key,int fallback,int low,int high){return (uint32_t)std::clamp(ini.GetInt("street_racing",key,fallback),low,high);};
+    cfg.streetRaces.minimumInterval=bounded("minimum_interval_ms",90000,1000,3600000);
+    cfg.streetRaces.maximumInterval=std::max(cfg.streetRaces.minimumInterval,bounded("maximum_interval_ms",240000,1000,3600000));
+    cfg.streetRaces.registrationMs=bounded("registration_ms",90000,500,300000);
+    cfg.streetRaces.countdownMs=bounded("countdown_ms",8000,1000,15000);
+    cfg.streetRaces.maximumRaceMs=bounded("maximum_race_ms",600000,10000,900000);
+    cfg.streetRaces.afterFirstFinishMs=bounded("after_first_finish_ms",60000,1000,180000);
+    cfg.streetRaces.maximumPublicEvents=(uint8_t)bounded("maximum_public_events",2,0,8);
+    cfg.streetRaces.maximumEvents=(uint8_t)bounded("maximum_events",8,1,8);
     cfg.internet = ini.GetBool("server", "internet", true);
     cfg.turn = Trim(ini.Get("server", "turn", ""));
     cfg.dataDir = dataDir;

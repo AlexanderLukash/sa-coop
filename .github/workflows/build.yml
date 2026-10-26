@@ -22,6 +22,8 @@ jobs:
           python-version: "3.12"
       - name: Test network sync primitives
         run: python tools/test_sync_primitives.py
+      - name: Test street racing and authoritative cash
+        run: python tools/test_street_racing.py
 
   build:
     runs-on: windows-latest
@@ -58,6 +60,10 @@ jobs:
 
       - name: Test server capacity and feature relay
         run: python tools/test_server_capacity.py
+      - name: Test street racing cash, multiplayer and crash recovery
+        run: python tools/test_street_racing_network.py
+        env:
+          PYTHONUTF8: '1'
 
       - uses: actions/upload-artifact@v4
         with:
