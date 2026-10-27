@@ -4,6 +4,7 @@
 #include <set>
 #include "common/racing/RaceProtocol.h"
 #include "common/economy/CashProjection.h"
+#include "common/racing/LegacyBlips.h"
 using namespace coop;
 using namespace coop::street;
 
@@ -54,10 +55,38 @@ int main(){
         p.Capture(1,-50);assert(p.Project(1000)==950&&p.flow==-50);
         assert(p.Project(1500)==1450&&p.flow==-50); // server/admin income while a native debit is in flight
         p.Acknowledge(1);assert(p.Project(1450)==1450&&p.flow==-50); // no double spending on acknowledgement
-        p.Capture(2,200);assert(p.Project(1450)==1450&&p.flow==150); // proposed credit is not spendable
+        p.Capture(2,200);assert(p.Project(1450)==1650&&p.flow==150); // earned cash is immediately spendable
         p.Acknowledge(2);assert(p.Project(1650)==1650&&p.flow==150);
         assert(p.Project(1750)==1750&&p.flow==150); // a server escrow refund is not shared as native mission income
         p.Capture(3,-2000);assert(p.Project(1750)==0);p.Acknowledge(3);assert(p.Project(1750)==1750); // rejected debit restores cash
+    }
+    {
+        for(const auto& route:Routes())for(const auto& p:route.checkpoints){
+            for(uint32_t colour:{0u,1u,3u})assert(LegacyRaceBlip(true,4,0,colour,p));
+            assert(!LegacyRaceBlip(false,4,0,3,p));
+            assert(!LegacyRaceBlip(true,5,0,3,p)); // mission contacts
+            assert(!LegacyRaceBlip(true,4,41,3,p)); // player waypoint
+            assert(!LegacyRaceBlip(true,4,35,3,p)); // save icon
+            assert(!LegacyRaceBlip(true,4,0,2,p)); // other colour
+            assert(!LegacyRaceBlip(true,4,0,3,{p.x+1,p.y,p.z}));
+        }
+        assert(!LegacyRaceBlip(true,4,0,3,{0,0,0}));
+    }
+    {
+        Fixture f;f.JoinBoth();assert(f.e.cash.ProposeIncome("guest",250)==economy::CashError::None);
+        auto migrated=Restore(f.e);migrated.Recover(100);
+        assert(migrated.cash.CreditPendingIncome()==economy::CashError::None);
+        assert(migrated.cash.credits.empty()&&Money(migrated,"guest")==10250&&Total(migrated)==40250);
+        auto restarted=Restore(migrated);restarted.Recover(200);
+        assert(restarted.cash.CreditPendingIncome()==economy::CashError::None);
+        assert(Money(restarted,"guest")==10250&&Total(restarted)==40250);
+    }
+    {
+        economy::CashProjection p;assert(p.Project(100)==100);
+        p.Capture(1,500);assert(p.Project(100)==600); // pickup can be spent before server ACK
+        p.Capture(2,-200);assert(p.Project(100)==400);
+        p.Acknowledge(1);assert(p.Project(600)==400); // credit ACK keeps the pending purchase
+        p.Acknowledge(2);assert(p.Project(400)==400&&p.flow==300);
     }
     // Catalog gates are finite, unique, ordered and stay inside their declared region.
     std::set<uint16_t> ids;

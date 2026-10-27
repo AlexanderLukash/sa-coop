@@ -128,16 +128,15 @@ F9 window, and each player picks their own: the host can play in Russian while t
 
 ### Everything else
 
-Version 0.3.1 removes automatic and private street races, their map blips and the F9 racing page. GTA cash balances are preserved.
+Version 0.3.2 removes street racing and cooperative 8-Track, cleans saved route blips on world load, and credits picked-up or earned cash automatically without host approval.
 
 Side jobs (taxi, paramedic, firefighter, vigilante, pimp), races, schools, the shooting range, trucking and the
-quarry are played by each player in their own game. A side job or a race can be played together: within 20 seconds
+quarry are played by each player in their own game. A side job can be played together: within 20 seconds
 of its start press Y, and the other player gets an invitation (Y: yes, N: no). Whoever accepts sees its markers,
 checkpoints, timers and hints, can ride along and help, for example put out burning cars or shoot the criminals, and
 gets the same money at its end. The job's levels stay with the player who started it, and the reward for
 completing the job goes to both.
 
-The 8-Track race at the Los Santos stadium has 8 laps and a separate shared start: stand at its marker within 15 seconds to participate.
 There is text chat and voice chat, and the farther away the partner is, the quieter they sound. A waypoint one player sets on the map shows up on the other player's radar,
 and a house one player buys appears for both. Above the partner's head you see their health, armour, weapon and
 wanted stars. Turf wars near the host are the host's, and both players' kills of rival gang members provoke

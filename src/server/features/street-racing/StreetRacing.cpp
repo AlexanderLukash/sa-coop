@@ -29,7 +29,10 @@ bool StreetRacing::Open(const std::wstring& directory,uint8_t maximumPlayers,con
         Reader checksum(data.data()+data.size()-4,4);
         if(Crc32(data.data(),data.size()-4)!=checksum.U32())return false;
         Reader reader(data.data(),data.size()-4);if(!m_engine.Read(reader))return false;
-        auto recovered=m_engine;recovered.Recover(NowMs());if(!Commit(std::move(recovered),true))return false;
+        auto recovered=m_engine;recovered.Recover(NowMs());
+        // Income queued by older versions belongs to its player; apply it once on migration.
+        if(recovered.cash.CreditPendingIncome()!=economy::CashError::None)return false;
+        if(!Commit(std::move(recovered),true))return false;
     }
     return true;
 }
@@ -122,11 +125,10 @@ void StreetRacing::Handle(const StreetPeer& peer,Reader& r,const std::vector<Str
             case ClientOp::Create:result=Error::Locked;break;
             case ClientOp::CashChange:
                 if(!amount||amount < -10000000||amount>10000000)result=Error::Limit;
-                else if(amount<0||peer.host)result=CashResult(candidate.cash.Change(peer.account,amount,amount<0?economy::TransactionKind::Spending:economy::TransactionKind::Income));
-                else result=CashResult(candidate.cash.ProposeIncome(peer.account,amount));
+                else result=CashResult(candidate.cash.Change(peer.account,amount,amount<0?economy::TransactionKind::Spending:economy::TransactionKind::Income));
                 break;
             case ClientOp::Initialize:{auto* a=candidate.cash.Find(peer.account);
-                if(!peer.host||!a||a->initialized||amount<0||amount>economy::kMaximumCash)result=Error::NotOpen;
+                if(!a||a->initialized||amount<0||amount>economy::kMaximumCash)result=Error::NotOpen;
                 else result=CashResult(candidate.cash.Change(peer.account,amount,economy::TransactionKind::Initialize));break;}
             case ClientOp::SetCash:{auto it=std::find_if(peers.begin(),peers.end(),[&](const auto& p){return p.id==target;});
                 if(it==peers.end()||it->account!=expectedTarget)result=Error::Missing;

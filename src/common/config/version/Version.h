@@ -1,7 +1,7 @@
 #pragma once
 
 #define COOP_NAME "SA:COOP"
-#define COOP_VERSION_STR "0.3.1"
+#define COOP_VERSION_STR "0.3.2"
 
 #ifndef RC_INVOKED  // the resource compiler reads only the macros above (VersionInfo.rc)
 #include <cstdint>

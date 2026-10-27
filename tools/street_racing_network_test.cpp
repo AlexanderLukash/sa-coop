@@ -85,12 +85,13 @@ int main(int argc,char** argv){
                 std::puts("Disabled racing: cash survives restart: OK");
             }else{
                 c.World(2);c.Pump();Check(!c.states[0].unlocked,"non-host unlocked races");
-                Writer fake=c.Request(1,ClientOp::Initialize);fake.I32(999999999);c.Ack(1,fake);Check(c.states[1].cash==0,"guest seeded arbitrary cash");
                 Writer initialize=c.Request(0,ClientOp::Initialize);initialize.I32(10000);c.Ack(0,initialize);Check(c.states[0].cash==10000,"host seed failed");
-                Writer income=c.Request(1,ClientOp::CashChange);income.I32(500);c.Ack(1,income);
-                c.Until([&]{return c.states[0].credits.size()==1;},"income approval request");Check(c.states[1].cash==0,"unverified income was credited");
-                auto credit=c.states[0].credits.front().id;Writer approval=c.Request(0,ClientOp::DecideCredit);approval.U64(credit);approval.Bool(true);c.Ack(0,approval);
-                c.Until([&]{return c.states[1].cash==500;},"approved GTA cash");c.Send(0,approval);c.Pump();Check(c.states[1].cash==500,"duplicate income approval minted cash");
+                Writer guestSeed=c.Request(1,ClientOp::Initialize);guestSeed.I32(50);c.Ack(1,guestSeed);Check(c.states[1].cash==50,"guest initial cash requires approval");
+                Writer secondSeed=c.Request(1,ClientOp::Initialize);secondSeed.I32(10000);c.Ack(1,secondSeed);Check(c.states[1].cash==50,"guest initialized twice");
+                Writer income=c.Request(1,ClientOp::CashChange);income.I32(450);c.Ack(1,income);
+                Check(c.states[1].cash==500,"earned GTA cash was not credited automatically");
+                Check(c.states[0].credits.empty(),"income still needs host approval");
+                c.Send(1,income);c.Pump();Check(c.states[1].cash==500,"replayed pickup minted cash");
                 Writer spending=c.Request(1,ClientOp::CashChange);spending.I32(-200);c.Ack(1,spending);Check(c.states[1].cash==300,"native spending not reconciled");
                 Writer overdraft=c.Request(1,ClientOp::CashChange);overdraft.I32(-301);c.Ack(1,overdraft);Check(c.states[1].cash==300,"overdraft applied");
                 Writer fakeIncome(G_MISSION_REWARD);fakeIncome.U64(123);fakeIncome.I32(100000);c.Send(1,fakeIncome);c.Pump();
@@ -106,7 +107,7 @@ int main(int argc,char** argv){
                 c.Pump(1500);
                 Check(c.states[0].events.empty()&&c.states[1].events.empty(),"disabled racing created events");
                 Check(c.states[0].cash==10000&&c.states[1].cash==10000,"disabled race changed balances");
-                std::puts("Disabled racing: no events, rejected creation, income approvals and cash: OK");
+                std::puts("Disabled racing: no events, rejected creation, automatic earned cash and replay protection: OK");
             }
         }
         enet_deinitialize();return 0;

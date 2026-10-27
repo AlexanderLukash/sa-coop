@@ -6,7 +6,6 @@
 #include "common/lib/util/Util.h"
 #include "entities/player/Players.h"
 #include "entities/session/Flow.h"
-#include "features/race/Race.h"
 #include "features/story/missions/Missions.h"
 #include "features/voice/Voice.h"
 #include "shared/api/net-session/Session.h"
@@ -48,7 +47,7 @@ void RenderOverlay() {
     if (phase == flow::Phase::WaitingWorld || phase == flow::Phase::StartingServer || phase == flow::Phase::Connecting)
         st = flow::StatusText();
     else if (!frontend && (st = CutsceneSkipText(hint)).empty() && (st = SideCallText(hint)).empty())
-        if ((st = MissionWaitText(hint)).empty()) st = RaceStatusText();
+        st = MissionWaitText(hint);
     if (!core::ConnectMenuVisible() && !st.empty()) {
         float w = std::max(g.TextWidth(FONT_MENU, st), hint.empty() ? 0.0f : g.TextWidth(FONT_SMALL, hint)) + 48 * s;
         float h = g.LineHeight(FONT_MENU) + 24 * s + (hint.empty() ? 0.0f : g.LineHeight(FONT_SMALL) + 6 * s);

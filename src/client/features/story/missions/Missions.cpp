@@ -117,7 +117,7 @@ bool SideMission(void* script) {
 
 // a property purchase (BUYPRO1) is no mission for the partner: it only shows the house, Property.cpp shares the purchase
 bool HostOnMission() {
-    if (void* s = FindMissionScript()) return strncmp(Field<char[8]>(s, 0x08), "buypro1", 8) && !SideMission(s) && !SideThread(g_launcher) && !OwnRaceTogether();
+    if (void* s = FindMissionScript()) return strncmp(Field<char[8]>(s, 0x08), "buypro1", 8) && !SideMission(s) && !SideThread(g_launcher);
     return core::IsOnMission() && !SideFlag();
 }
 
@@ -274,7 +274,7 @@ bool Replicating() { return Net().Online() && Net().IsHost() && !Net().Peers().e
 // played it. Either player may own one, the host or the partner.
 enum : uint8_t { SIDE_OFFER = 1, SIDE_ACCEPT = 2, SIDE_DECLINE = 3, SIDE_END = 4, SIDE_LEAVE = 5 };
 bool SideJob(const std::string& name) {
-    static const char* const kJobs[] = {"taxiodd", "ambulan", "firetru", "copcar", "pimp", "freight", "bcour", "mtbiker", "stunt", "cprace"};
+    static const char* const kJobs[] = {"taxiodd", "ambulan", "firetru", "copcar", "pimp", "freight", "bcour", "mtbiker", "stunt"};
     for (const char* j : kJobs)
         if (!_stricmp(name.c_str(), j)) return true;
     return false;
@@ -1571,7 +1571,7 @@ bool __fastcall HookCanPlayerStartMission(CPlayerPed* player, void* edx) {
     bool ok = g_origCanStart(player, edx);
     if (!ok || !Net().Online() || !g_currentScript) return ok;
     if (SideThread(Field<char[8]>(g_currentScript, 0x08)))
-        return (Net().IsHost() || !HostMissionRecent(0)) && SideStartAllowed(Field<char[8]>(g_currentScript, 0x08));
+        return (Net().IsHost() || !HostMissionRecent(0));
     auto* ip = Field<uint8_t*>(g_currentScript, 0x14);
     // main.scm threads ask it in mission triggers (not only inside markers, so no hint here)
     if (ip < (uint8_t*)addr::ScriptSpace || ip >= (uint8_t*)addr::ScriptSpace + Ref<int32_t>(kMainScriptSize)) return ok;

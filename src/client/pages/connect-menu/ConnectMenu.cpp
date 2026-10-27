@@ -41,7 +41,6 @@ uint64_t g_slotsTime = 0;
 uint64_t g_copiedMs = 0;
 bool g_skinBrowser = false;
 bool g_balanceEditor = false;
-int g_creditIndex=0;
 uint8_t g_balanceTarget = 255;
 std::string g_balanceIdentity;
 std::wstring g_balanceAmount;
@@ -229,16 +228,6 @@ void RenderConnectMenu() {
         }
         cy += rowH + 18 * s;
         para(g_balanceStatus, kSaMuted);
-        if(const auto* state=EconomySnapshot();state&&!state->credits.empty()){
-            cy+=18*s;caption(cx,TR("Подтверждение дохода", "Income approvals"));cy+=ch+6*s;
-            g_creditIndex=std::clamp(g_creditIndex,0,(int)state->credits.size()-1);
-            const auto& credit=state->credits[g_creditIndex];
-            int step=w::Selector("credit",cx,cy,cw,rowH,Format("%s · $%d",credit.account.c_str(),credit.amount));
-            if(step)g_creditIndex=(g_creditIndex+step+(int)state->credits.size())%(int)state->credits.size();
-            cy+=rowH+10*s;
-            if(w::Button("credit-approve",cx,cy,cw*0.48f,rowH,TR("Подтвердить", "Approve")))DecideCashIncome(credit.id,true);
-            if(w::Button("credit-reject",cx+cw*0.52f,cy,cw*0.48f,rowH,TR("Отклонить", "Reject")))DecideCashIncome(credit.id,false);
-        }
     } else if (g_skinBrowser) {
         g.Text(FONT_BIG, cx, cy, TR("Выбор персонажа", "Your character"), kText, 0);
         cy += bh + 18 * s;

@@ -79,6 +79,13 @@ public:
         if(result==CashError::None){credits.erase(it);++revision;}
         return result;
     }
+    CashError CreditPendingIncome() {
+        while(!credits.empty()) {
+            CashError result=Decide(credits.front().id,true);
+            if(result!=CashError::None)return result;
+        }
+        return CashError::None;
+    }
     void Write(Writer& w) const {
         w.U64(nextTransaction);w.U64(nextCredit);w.U32((uint32_t)accounts.size());
         for(const auto& [key,a]:accounts){w.Str(key,64);w.U64((uint64_t)a.cash);w.U64(a.sequence);w.U64(a.lastTransaction);w.Bool(a.initialized);}
