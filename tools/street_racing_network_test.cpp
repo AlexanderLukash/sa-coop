@@ -80,11 +80,9 @@ int main(int argc,char** argv){
             c.Connect(0);c.Until([&]{return c.welcomed[0]&&c.have[0];},"host handshake");c.Status(0);
             c.Connect(1);c.Until([&]{return c.welcomed[1]&&c.have[1];},"guest handshake");c.Status(1);c.Status(2);c.Pump();
             if(recover){
-                Check(c.states[0].cash==9900&&c.states[1].cash==10100,"restart lost or duplicated escrow refund/payout");
-                bool refunded=false;for(const auto& event:c.states[0].events)if(event.reason==Reason::Restart&&event.phase==Phase::Settled)refunded=true;
-                Check(refunded,"unfinished race was not cancelled on restart");
-                Check(c.states[0].statistics.races==1&&c.states[1].statistics.wins==1,"race statistics not persisted exactly once");
-                std::puts("Street network: restart refunds active escrow once and preserves cash/statistics: OK");
+                Check(c.states[0].cash==10000&&c.states[1].cash==10000,"restart lost cash");
+                Check(c.states[0].events.empty(),"restart restored races");
+                std::puts("Disabled racing: cash survives restart: OK");
             }else{
                 c.World(2);c.Pump();Check(!c.states[0].unlocked,"non-host unlocked races");
                 Writer fake=c.Request(1,ClientOp::Initialize);fake.I32(999999999);c.Ack(1,fake);Check(c.states[1].cash==0,"guest seeded arbitrary cash");
@@ -101,41 +99,14 @@ int main(int argc,char** argv){
                 Writer award(G_MISSION_REWARD);award.U64(c.states[0].sequence+1);award.I32(100);c.Send(0,award);
                 c.Until([&]{return c.states[1].cash==400;},"authoritative shared mission cash");c.Send(0,award);c.Pump();
                 Check(c.states[1].cash==400&&c.states[2].cash==0,"mission award repeated or credited a loading spectator");c.Status(2);
-                c.Cash(1,10000);c.World(0);c.Until([&]{return c.states[0].unlocked;},"host world progression");
-                Writer locked=c.Request(0,ClientOp::Create);locked.U16(5);locked.U32(100);locked.U8(2);locked.U8(0);c.Ack(0,locked);
-                Check(c.states[0].events.empty(),"locked region selected");
-                c.positions[0]=c.positions[1]=FindRoute(1)->checkpoints.front();c.witness=true;c.Pump();
-                uint64_t event=c.Create(1);Check(c.states[2].events.empty(),"private race leaked to outsider");
-                c.Join(0,event);c.Join(1,event);Check(c.states[0].cash==9900&&c.states[1].cash==9900,"stakes not escrowed");
-                Writer duplicate=c.Request(1,ClientOp::Join);duplicate.U64(event);c.Ack(1,duplicate);Check(c.states[1].cash==9900,"duplicate registration charged twice");
-                c.Join(2,event);Check(c.states[2].cash==0,"outsider wagered in a private event");
-                c.Until([&]{return c.Event(0,event)&&c.Event(0,event)->phase==Phase::Countdown;},"countdown",12000);
-                for(unsigned i=0;i<2;++i){const auto* view=c.Event(i,event);for(const auto& p:view->participants)if(p.account=="racer"+std::to_string(i))c.positions[i]=GridSpot(*FindRoute(1),p.grid);}
-                c.Until([&]{return c.Event(0,event)&&c.Event(0,event)->phase==Phase::Racing;},"race start",6000);
-                Writer fakeFinish(C_STREET_RACING);fakeFinish.U8((uint8_t)ClientOp::Observe);fakeFinish.U32(999999);fakeFinish.U8(1);
-                fakeFinish.U8(c.ids[0]);fakeFinish.Vec(FindRoute(1)->checkpoints.back());fakeFinish.U16(0x1001);fakeFinish.U16(401);
-                fakeFinish.Bool(true);fakeFinish.Bool(true);fakeFinish.Bool(true);fakeFinish.U8(0);c.Send(2,fakeFinish);c.Pump(150);
-                Check(c.Event(0,event)->participants.front().next==1,"non-host forged checkpoint progress");
-                uint64_t start=Ms();bool guestLeft=false;
-                c.Until([&]{
-                    float seconds=(Ms()-start)/1000.0f;c.positions[0]=Along(*FindRoute(1),seconds*55);c.positions[1]=Along(*FindRoute(1),seconds*70);
-                    const auto* view=c.Event(0,event);
-                    if(view&&!guestLeft)for(const auto& p:view->participants)if(p.account=="racer1"&&p.outcome==Outcome::Finished){
-                        enet_peer_disconnect(c.peers[1],1);enet_host_flush(c.hosts[1]);guestLeft=true;}
-                    return view&&view->phase==Phase::Settled;
-                },"authoritative finish and settlement",35000);
-                Check(guestLeft&&c.states[0].cash==9900,"offline winner settlement failed");
-                c.Connect(1);c.Until([&]{return c.welcomed[1]&&c.have[1];},"winner reconnect");c.Status(1);
-                Check(c.states[1].cash==10100&&c.states[1].statistics.wins==1,"offline winner did not receive unique payout");
-                // Client-controlled profile money must never overwrite an existing cash account.
-                Writer profile;profile.U32(0x46504353);profile.U16(6);profile.I32(999999999);std::vector<uint8_t> padding(4096);profile.Raw(padding.data(),padding.size());
-                Writer save(C_PROFILE_SAVE);save.Bytes(profile.Data(),profile.Size());c.Send(1,save);c.Pump();
-                Writer sync(C_STREET_RACING);sync.U8((uint8_t)ClientOp::Sync);c.Send(1,sync);c.Pump();Check(c.states[1].cash==10100,"profile balance overwrote ledger");
-                // Leave durable reservations in an active event for the crash/restart test.
-                c.positions[0]=c.positions[1]=FindRoute(2)->checkpoints.front();c.Pump(150);
-                uint64_t reserved=c.Create(2);c.Join(0,reserved);c.Join(1,reserved);
-                Check(c.states[0].cash==9800&&c.states[1].cash==10000,"recovery reservations missing");
-                std::puts("Street network: host identity, income approvals, spending, private visibility, escrow, offline payout and profile isolation: OK");
+                c.Cash(1,10000);c.World(0);c.Pump();
+                Check(!c.states[0].unlocked,"disabled racing unlocked");
+                Writer create=c.Request(0,ClientOp::Create);create.U16(1);create.U32(100);create.U8(2);create.U8(0);c.Ack(0,create);
+                Check(!c.errors[0].empty()&&c.errors[0].back()==Error::Locked,"race creation not rejected");
+                c.Pump(1500);
+                Check(c.states[0].events.empty()&&c.states[1].events.empty(),"disabled racing created events");
+                Check(c.states[0].cash==10000&&c.states[1].cash==10000,"disabled race changed balances");
+                std::puts("Disabled racing: no events, rejected creation, income approvals and cash: OK");
             }
         }
         enet_deinitialize();return 0;

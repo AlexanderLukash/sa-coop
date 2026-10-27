@@ -128,6 +128,8 @@ F9 window, and each player picks their own: the host can play in Russian while t
 
 ### Everything else
 
+Version 0.3.1 removes automatic and private street races, their map blips and the F9 racing page. GTA cash balances are preserved.
+
 Side jobs (taxi, paramedic, firefighter, vigilante, pimp), races, schools, the shooting range, trucking and the
 quarry are played by each player in their own game. A side job or a race can be played together: within 20 seconds
 of its start press Y, and the other player gets an invitation (Y: yes, N: no). Whoever accepts sees its markers,

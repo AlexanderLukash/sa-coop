@@ -18,6 +18,8 @@ Error CashResult(economy::CashError e) {
 StreetRacing::~StreetRacing(){if(m_writerLock)CloseHandle((HANDLE)m_writerLock);}
 bool StreetRacing::Open(const std::wstring& directory,uint8_t maximumPlayers,const Settings& settings,Send send) {
     m_path=directory+L"street-racing.bin";m_send=std::move(send);m_engine.settings=settings;m_engine.settings.maximumPlayers=maximumPlayers;
+    // Keep the cash ledger and refund old escrow, but never schedule new races.
+    m_engine.settings.maximumPublicEvents=0;
     HANDLE lock=CreateFileW((m_path+L".lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(lock==INVALID_HANDLE_VALUE)return false;
     m_writerLock=lock;
@@ -76,7 +78,8 @@ void StreetRacing::Handle(const StreetPeer& peer,Reader& r,const std::vector<Str
     if(op==ClientOp::World){
         bool passed=r.Bool();uint8_t city=r.U8();bool available=r.Bool();
         if(!peer.host||!r.Ok()||r.Remaining()||city>4)return;
-        candidate.World(passed,city,available,now);m_lastWorld=now;
+        candidate.World(false,city,false,now);
+        (void)passed;(void)available;m_lastWorld=now;
     }else if(op==ClientOp::Observe){
         uint32_t frame=r.U32();unsigned count=r.U8();
         if(!peer.host||count>proto::kMaxPlayers||!sync::IsNewer(frame,m_observationSequence))return;
@@ -108,14 +111,15 @@ void StreetRacing::Handle(const StreetPeer& peer,Reader& r,const std::vector<Str
         default:return;
         }
         if(!r.Ok()||r.Remaining())return;
+        (void)route;(void)fee;(void)capacity;
         result=CashResult(candidate.cash.Sequence(peer.account,sequence));
         if(result==Error::None){
             if(staleTarget)result=Error::Missing;
             else switch(op){
-            case ClientOp::Join:result=candidate.Join(peer.account,event,now);break;
+            case ClientOp::Join:result=Error::Locked;break;
             case ClientOp::Leave:result=candidate.Leave(peer.account,event,now);break;
             case ClientOp::Cancel:result=candidate.Cancel(peer.account,event,now);break;
-            case ClientOp::Create:{uint64_t id=0;result=candidate.Create(peer.account,route,fee,capacity,invites,now,id);break;}
+            case ClientOp::Create:result=Error::Locked;break;
             case ClientOp::CashChange:
                 if(!amount||amount < -10000000||amount>10000000)result=Error::Limit;
                 else if(amount<0||peer.host)result=CashResult(candidate.cash.Change(peer.account,amount,amount<0?economy::TransactionKind::Spending:economy::TransactionKind::Income));

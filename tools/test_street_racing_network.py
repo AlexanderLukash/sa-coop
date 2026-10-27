@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix='sacoop-street-network-') as directory:
     base = Path(directory)
     config = base/'server.ini'
     config.write_text('[server]\ninternet=0\nhost=Racer0\n[street_racing]\n'
-        'registration_ms=5000\ncountdown_ms=3000\nmaximum_public_events=0\nafter_first_finish_ms=10000\n')
+        'registration_ms=5000\ncountdown_ms=3000\nmaximum_public_events=2\nminimum_interval_ms=1000\nmaximum_interval_ms=1000\nafter_first_finish_ms=10000\n')
     for mode in ('race', 'recover'):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.bind(('127.0.0.1', 0));port = sock.getsockname()[1]
@@ -61,4 +61,4 @@ with tempfile.TemporaryDirectory(prefix='sacoop-street-network-') as directory:
     if result.returncode == 0:
         raise RuntimeError('Server accepted a corrupted authoritative economy file')
     assert ledger.read_bytes() == data
-print('Real server racing/economy and crash-recovery integration passed.')
+print('Disabled racing and authoritative economy integration passed.')

@@ -1,3 +1,5 @@
+> Починаючи з 0.3.1, вуличні гонки вилучено з клієнта й меню та вимкнено на сервері. Нижче — історична документація 0.3.0. Баланси й повернення старих ставок збережено.
+
 # Dynamic street racing — core MVP
 
 This implementation covers milestone 1 and the persistence foundation for later
