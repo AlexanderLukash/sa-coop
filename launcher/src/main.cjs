@@ -5,6 +5,7 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
+const { trustedRenderer } = require('./core/ipc-source.cjs');
 const { readStatus, waitForStatus } = require('./core/session-status.cjs');
 const { defaults, validate, atomicWrite, readText, writeGameConfig, launchSpec, lanAddresses } = require('./core/config.cjs');
 const { inspectGame, installedBuild, latestRelease, download, installArchive, checkInstallAccess } = require('./core/install.cjs');
@@ -178,7 +179,7 @@ async function install() {
 }
 function handle(name, fn) {
   ipcMain.handle(name, async (event, ...args) => {
-    if (event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== rendererURL)
+    if (!trustedRenderer(event, window, rendererURL))
       throw new Error('Невідоме джерело запиту.');
     return fn(...args);
   });

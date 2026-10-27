@@ -8,7 +8,17 @@ async function main() {
   const output = path.resolve(process.env.SACOOP_SCREENSHOTS || path.resolve(__dirname, '../test-results'));
   await fs.mkdir(output, { recursive: true });
   const data = await fs.mkdtemp(path.join(output, 'profile-'));
-  const args = process.env.SACOOP_PACKAGED_EXE ? [] : [path.resolve(__dirname, '..')];
+  // Exercise the installed-path spelling seen on real Windows machines too.
+  const source = path.resolve(__dirname, '..');
+  const launchRoot = path.join(data, 'SA COOP Тест #1');
+  if (!process.env.SACOOP_PACKAGED_EXE) {
+    await fs.mkdir(launchRoot);
+    for (const entry of ['src', 'assets', 'package.json'])
+      await fs.cp(path.join(source, entry), path.join(launchRoot, entry), { recursive: true });
+    await fs.symlink(path.join(source, 'node_modules'), path.join(launchRoot, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+  }
+  const launchPath = process.platform === 'win32' ? launchRoot.replace(/^[A-Z]:/, drive => drive.toLowerCase()) : launchRoot;
+  const args = process.env.SACOOP_PACKAGED_EXE ? [] : [launchPath];
   if (process.platform === 'linux' && process.env.CI) args.unshift('--no-sandbox');
   const application = await electron.launch({ args, executablePath: process.env.SACOOP_PACKAGED_EXE,
     env: { ...process.env, SACOOP_LAUNCHER_DATA: data }, timeout: 30000 });
@@ -35,6 +45,21 @@ async function main() {
     await page.click('[data-page="files"]');
     assert.equal(await page.isDisabled('#install-mod'), true);
     await page.screenshot({ path: path.join(output, 'files.png') });
+    // The native picker must be reached through the real preload/IPC path.
+    const chosenFolder = path.join(data, 'GTA San Andreas Тест');
+    await fs.mkdir(chosenFolder);
+    await fs.writeFile(path.join(chosenFolder, 'gta_sa.exe'), 'unsupported-test-exe');
+    await application.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async (_window, options) => {
+        if (!options.properties.includes('openDirectory')) throw new Error('Expected a directory picker');
+        return { canceled: false, filePaths: [selected] };
+      };
+    }, chosenFolder);
+    await page.click('#choose-game');
+    await page.waitForFunction(folder => document.querySelector('#files-path').textContent === folder, chosenFolder);
+    assert.equal(JSON.parse(await fs.readFile(path.join(data, 'settings.json'), 'utf8')).gameDir, chosenFolder);
+    assert.equal((await page.evaluate(() => window.launcher.state())).game.found, true);
+
     await page.click('[data-page="lobby"]');
     await page.waitForSelector('#refresh-lobbies:not([disabled])');
     await page.screenshot({ path: path.join(output, 'lobby.png') });
