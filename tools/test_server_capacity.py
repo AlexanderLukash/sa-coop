@@ -28,7 +28,7 @@ def main():
                     *map(str, objects), "-lws2_32", "-lwinmm", "-o", str(test)], check=True)
     # Also cover existing smaller configurations and CLI clamping.
     for configured, maximum, capacity, protocol in [
-        (None, None, 8, "current"), (4, None, 4, "current"),
+        (None, None, 8, "current"), (3, None, 3, "current"), (4, None, 4, "current"),
         (2, 8, 8, "current"), (None, 99, 8, "current"),
         (None, None, 8, "old"),
         (None, None, 8, "rules-on"), (None, None, 8, "rules-off"),

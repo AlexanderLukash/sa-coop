@@ -128,6 +128,8 @@ F9 window, and each player picks their own: the host can play in Russian while t
 
 ### Everything else
 
+Version 0.3.3 adds a guard against independent story scripts on clients, including the third player in Los Sepulcros.
+
 Version 0.3.2 removes street racing and cooperative 8-Track, cleans saved route blips on world load, and credits picked-up or earned cash automatically without host approval.
 
 Side jobs (taxi, paramedic, firefighter, vigilante, pimp), races, schools, the shooting range, trucking and the

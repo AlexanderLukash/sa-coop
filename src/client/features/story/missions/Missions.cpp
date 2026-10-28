@@ -25,6 +25,7 @@
 
 #include "features/story/missions/Missions.h"
 #include "common/lib/sync/MissionCapacity.h"
+#include "common/lib/sync/MissionAuthority.h"
 #include "common/lib/sync/StateTiming.h"
 #include "shared/game/Appearance.h"
 #include "shared/game/SkinCatalog.h"
@@ -993,6 +994,23 @@ int8_t ScriptCommand(void* script, void* handler, int command) {
     uint8_t cond = Field<uint8_t>(script, 0xC5);     // CRunningScript::m_bCondResult
     uint16_t andOr = Field<uint16_t>(script, 0xD0);  // m_nLogicalOp
     int8_t r = ((CommandHandlerFn)handler)(script, command);
+    // CanPlayerStartMission is only a trigger check. A mission can also be launched
+    // directly, or already be queued when a peer joins. Stop each partner's local
+    // story at SCRIPT_NAME, before its setup creates actors, cars or a cutscene.
+    // Use the engine's TERMINATE_THIS_SCRIPT path so its mission bookkeeping is
+    // cleared too; simply skipping Process would leave the mission flag stuck.
+    if (op == 0x03A4 && sync::BlockLocalStoryMission(
+            Net().Online(), Net().IsHost(), Field<uint8_t>(script, 0xDC) != 0,
+            SideMission(script), SideThread(g_launcher), !flow::InHostWorld() && !flow::IsFollower(),
+            std::string_view(Field<char[8]>(script, 0x08), 8))) {
+        static uint8_t terminate[] = {0x4E, 0x00};
+        Field<uint8_t*>(script, 0x14) = terminate;
+        // The launcher's $ONMISSION is separate from the engine's running-mission
+        // flag cleared by 004E. It must not keep local mission triggers locked.
+        Ref<int32_t>(addr::ScriptSpace + (uintptr_t)Ref<int32_t>(0xA476AC)) = 0;
+        LOGW("Blocked partner's local story mission %.8s (player %u, host %u)",
+             Field<char[8]>(script, 0x08), Net().MyId(), Net().HostId());
+    }
     if (op == 0x004F && Net().Online() && Net().IsHost() && MissionThread(script)) NoteMissionThread();  // START_NEW_SCRIPT
     if ((op == 0x0737 || op == 0x0475 || op == 0x00FF || op == 0x00E1) && Net().Online() && Net().IsHost() && Replicating() &&
         StoryMission(script))

@@ -9,12 +9,33 @@
 #include "common/lib/sync/StateTiming.h"
 #include "common/lib/sync/RemovalHistory.h"
 #include "common/lib/sync/MissionCapacity.h"
+#include "common/lib/sync/MissionAuthority.h"
 #include "common/lib/sync/GarageRestore.h"
 #include "common/lib/sync/ProfileExtension.h"
 
 using namespace coop;
 
 int main() {
+    // Los Sepulcros is SWEET7. In a three-player session only the host
+    // may execute its local mission, even if another launch bypassed the marker.
+    for (int host = 0; host < 3; ++host)
+        for (int player = 0; player < 3; ++player) {
+            const bool blocked = sync::BlockLocalStoryMission(true, player == host, true,
+                                                              false, false, false, "sweet7");
+            assert(blocked == (player != host));
+        }
+    assert(sync::BlockLocalStoryMission(true, false, true, false, false, false, "SWEET7"));
+    assert(!sync::BlockLocalStoryMission(false, false, true, false, false, false, "sweet7"));
+    assert(!sync::BlockLocalStoryMission(true, false, false, false, false, false, "sweet7"));
+    for (const char* name : {"INITIAL", "initial", "INITIL2", "initil2", "BUYPRO1", "buypro1"})
+        assert(!sync::BlockLocalStoryMission(true, false, true, false, false, false, name));
+    assert(!sync::BlockLocalStoryMission(true, false, true, true, false, false, "taxiodd"));
+    assert(!sync::BlockLocalStoryMission(true, false, true, false, true, false, "cprace"));
+    assert(!sync::BlockLocalStoryMission(true, false, true, false, false, true, "intro"));
+    assert(sync::BlockLocalStoryMission(true, false, true, false, false, false, "intro"));
+    assert(!sync::MissionNameEquals("sweet7", "sweet"));
+    assert(sync::MissionNameEquals(std::string_view("initial\0", 8), "initial"));
+
     for (bool allowed : {false, true}) {
         proto::Welcome original;
         original.allowCheats = allowed;

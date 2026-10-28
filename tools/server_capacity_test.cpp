@@ -25,7 +25,7 @@ struct Clients {
     std::array<int, 9> balances{}, cheats{};
     std::array<street::Snapshot,9> cashStates{};
     std::array<bool, 9> cheatsAllowed{};
-    std::array<std::array<int, 256>, 9> featureRelays{};
+    std::array<std::array<int, 256>, 9> featureRelays{}, missionRelays{};
     std::array<bool, 9> welcomed{}, rejected{};
     std::array<std::string, 9> reasons{};
     ENetAddress address{};
@@ -88,6 +88,11 @@ struct Clients {
                         ++balances[i];
                     } else if (msg == G_CHEAT) {
                         ++cheats[i];
+                    } else if (msg == G_MISSION_START || msg == G_CUTSCENE || msg == G_FADE || msg == G_MISSION_END) {
+                        Check(r.U8() == 0 && r.U32() == 0x53574537 && r.Ok() && !r.Remaining(),
+                              "bad host mission relay sender/payload");
+                        Check(ev.channelID == CH_RELIABLE, "mission event lost reliable channel");
+                        ++missionRelays[i][msg];
                     } else if (msg >= G_MISSION_AUDIO && msg <= G_INTERIOR_POP) {
                         Check(r.U8() == 7 && r.U32() == 0x12345678 && r.Ok(), "bad feature relay sender/payload");
                         ++featureRelays[i][msg];
@@ -186,6 +191,21 @@ int main(int argc, char** argv) {
                     clients.Until([&] { return clients.welcomed[i]; });
                     Check(clients.ids[i] == i && clients.rosters[i] == i, "wrong slot/roster");
                 }
+                // The host's mission/cutscene events must reach every partner,
+                // including the third player, without echoing to the host.
+                for (auto msg : {G_MISSION_START, G_CUTSCENE, G_FADE, G_MISSION_END}) {
+                    Writer mission(msg);
+                    mission.U32(0x53574537);
+                    enet_peer_send(clients.peers[0], CH_RELIABLE,
+                        enet_packet_create(mission.Data(), mission.Size(), ENET_PACKET_FLAG_RELIABLE));
+                }
+                clients.Until([&] {
+                    for (int i = 1; i < capacity; ++i)
+                        for (auto msg : {G_MISSION_START, G_CUTSCENE, G_FADE, G_MISSION_END})
+                            if (clients.missionRelays[i][msg] != 1) return false;
+                    return true;
+                });
+                for (int count : clients.missionRelays[0]) Check(count == 0, "mission event echoed to host");
                 if (capacity == 8) {
                     Writer w(G_PLAYER_ONFOOT);
                     w.U32(0x87654321);
