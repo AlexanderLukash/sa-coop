@@ -2,6 +2,9 @@
 
 #include <windows.h>
 #undef GetObject  // windows.h renames it GetObjectA: game::GetObject is the script handle lookup
+#include <algorithm>
+#include <cstring>
+
 #include "common/lib/log/Log.h"
 
 namespace game {
@@ -55,10 +58,25 @@ bool HasRoom(CPoolHeader* pool, int keep, const char* what) {
 
 void RequestModel(int model, int flags) { Call<0x4087E0>(model, flags); }
 void LoadAllRequestedModels(bool onlyPriority) { Call<0x40EA10>(onlyPriority); }
-bool IsModelLoaded(int model) {
-    // CStreaming::ms_aInfoForModel: models, then txds, cols, ipls, dats, ifps, rrrs and scms (26316 in all)
-    return model >= 0 && model < 26316 && Ref<uint8_t>(addr::StreamingInfo + (uintptr_t)model * 0x14 + 0x10) == 1;
+// CStreaming::ms_aInfoForModel's load states where the game itself reads them: the game's HAS_MODEL_LOADED does it at
+// 0x47EFFF (cmp byte [edx*4 + 0x8E4CD0], 1). A limit adjuster (fastman92's) moves the table and corrects the game's
+// places: its old place read "not loaded" for good, and no copy of the other game's people, cars or props was ever made
+// (#82, in both games).
+static uintptr_t LoadStates() {
+    static const uint8_t kCmp[] = {0x80, 0x3C, 0x95};  // cmp byte [edx*4 + disp32], imm8
+    uintptr_t at = memcmp((const void*)0x47EFFF, kCmp, sizeof kCmp) ? addr::StreamingInfo + 0x10 : Ref<uint32_t>(0x47F002);
+    static bool told = false;
+    if (!told) {
+        told = true;
+        if (at != addr::StreamingInfo + 0x10) LOGI("The streaming table is at %08X, not at 008E4CC0: a limit adjuster moved it", at - 0x10);
+    }
+    return at;
 }
+bool IsModelLoaded(int model) {
+    // models, then txds, cols, ipls, dats, ifps, rrrs and scms (26316 in all)
+    return model >= 0 && model < 26316 && Ref<uint8_t>(LoadStates() + (uintptr_t)model * 0x14) == 1;
+}
+int ModelLoadState(int model) { return model >= 0 && model < 26316 ? Ref<uint8_t>(LoadStates() + (uintptr_t)model * 0x14) : -1; }
 bool LoadModelNow(int model) {
     if (!IsValidModel(model)) return false;
     if (IsModelLoaded(model)) return true;
@@ -66,6 +84,24 @@ bool LoadModelNow(int model) {
     LoadAllRequestedModels(false);
     return IsModelLoaded(model);
 }
+// A copy's model. A plain request does not last here: each frame CStreaming::StreamVehiclesAndPeds lets go of the police, FBI
+// and army models no wanted level of ours calls for, and that removes a model still only asked for (SetModelIsDeletable), a
+// request's PRIORITY flag does not save it. In the other game they stand on a mission's request. The soldiers of "Robbing
+// Uncle Sam" never came, their Patriots drove empty (found 04.11). KEEP_IN_MEMORY is what the game streams its own
+// cars and people with: it survives that and PurgeRequestList, and once loaded the model is an ordinary one, nothing to let go.
+void RequestCopyModel(int model, bool mission) { RequestModel(model, mission ? 0x8 | 0x10 /* first */ : 0x8); }
+
+// A player going through a door: for the ~2 s of the fade the game parks up to 32 things around the door in area 13
+// (CEntryExitManager::SetAreaCodeForVisibleObjects) and puts them back after it. Area 13 is a real interior too, so read
+// plainly an empty car by the door stood where no player is: it left the network, the other game took its copy over, and
+// after the fade both games had two (a car at Binco, found 04.11).
+int8_t TrueArea(CEntity* e) {
+    auto* list = (CEntity**)0x96A738;  // ms_visibleEntityList
+    for (int i = 0, n = std::min(Ref<int32_t>(0x96A7DC) /* ms_numVisibleEntities */, 32); i < n; ++i)
+        if (list[i] == e) return (int8_t)Ref<int32_t>(0x96A734);  // ms_oldAreaCode
+    return e->AreaCode();
+}
+
 void MarkModelNotNeeded(int model) {
     // CStreaming::SetModelIsDeletable
     if (IsValidModel(model)) Call<0x409C10>(model);

@@ -131,7 +131,7 @@ void StreetRacing::Handle(const StreetPeer& peer,Reader& r,const std::vector<Str
                 if(!a||a->initialized||amount<0||amount>economy::kMaximumCash)result=Error::NotOpen;
                 else result=CashResult(candidate.cash.Change(peer.account,amount,economy::TransactionKind::Initialize));break;}
             case ClientOp::SetCash:{auto it=std::find_if(peers.begin(),peers.end(),[&](const auto& p){return p.id==target;});
-                if(it==peers.end()||it->account!=expectedTarget)result=Error::Missing;
+                if(it==peers.end()||(it->name.empty()?it->account:it->name)!=expectedTarget)result=Error::Missing;
                 else if(amount<0||amount>economy::kMaximumCash)result=Error::Limit;
                 else if(auto* a=candidate.cash.Find(it->account)){
                     result=CashResult(candidate.cash.Change(it->account,(int64_t)amount-a->cash,economy::TransactionKind::Administrative));

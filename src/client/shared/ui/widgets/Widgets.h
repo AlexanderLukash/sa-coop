@@ -29,8 +29,6 @@ bool TextBox(const char* id, float x, float y, float w, float h, std::wstring& v
 // "< text >" selector. Returns -1/+1 when an arrow was clicked, 0 otherwise.
 int Selector(const char* id, float x, float y, float w, float h, const std::string& text);
 bool Checkbox(const char* id, float x, float y, const std::string& label, bool& value);
-// The game's menu pointer (a star with a long lower blade), centred on (cx, cy).
-void Pointer(float cx, float cy, float size, uint32_t argb);
 
 void SetFocus(const char* id);
 bool AnyTextFocused();

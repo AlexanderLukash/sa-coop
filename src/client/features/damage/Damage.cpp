@@ -9,7 +9,9 @@
 //  * the other player's blasts go off here as well (Fire.cpp) and hurt the peds this game owns: its copies of them are
 //    proof against blasts in the shooter's game. Cars take a blast there and the hit is forwarded, as a bullet's;
 //  * an NPC's punch or blade on the remote player is sent to that player's game: the remote ped here has every proof,
-//    and the NPC's mirror there only plays the animation (its gunfire needs nothing: the mirror there shoots for real);
+//    and the NPC's mirror there only plays the animation (its gunfire needs nothing: the mirror there shoots for real).
+//    A mirror's own blow on a player counts nowhere: its owner tells the blows. A blow goes with the hitter's move in its
+//    game, and the victim's game reacts to that move (FightAs), from the side its player really turns to the hitter;
 //  * a ped killed by the other player drops its money and weapon in the killer's game, where the killer is;
 //  * a crime is charged by the game of whoever committed it: the owner keeps its own player's wanted level when it
 //    applies the other player's hit, the crimes the game reads off events never charge this player for the other one,
@@ -119,7 +121,7 @@ CPed* DriverOf(CEntity* e) { return e && e->IsVehicle() ? ((CVehicle*)e)->Driver
 
 bool IsLocalPlayerEntity(CEntity* e) {
     CPlayerPed* me = FindPlayerPed(0);
-    return e && me && (e == me || DriverOf(e) == me);
+    return e && me && (e == me || DriverOf(e) == me || e == (CEntity*)PlayerInfos()[0].remoteVehicle);  // its toy too
 }
 
 bool IsRemotePlayerEntity(CEntity* e) {
@@ -141,7 +143,7 @@ bool FromOtherSide(CEntity* e) {
 }
 
 void SendDamage(uint8_t kind, uint8_t owner, uint16_t netId, int weapon, float damage, int piece, int dir, const CVector& pos,
-                uint16_t attacker = 0) {
+                uint16_t attacker = 0, CEntity* hitter = nullptr) {
     Writer w(proto::G_DAMAGE);
     w.U8(kind);
     w.U8(owner);
@@ -152,7 +154,48 @@ void SendDamage(uint8_t kind, uint8_t owner, uint16_t netId, int weapon, float d
     w.U8((uint8_t)dir);
     w.Vec({pos.x, pos.y, pos.z});
     if (kind == TARGET_PED_BY_PED || kind == TARGET_PED_BY_CAR) w.U16(attacker);
+    if (weapon <= WEAPON_LAST_MELEE) {  // the blow's move here (FightAs there): two bytes an older build leaves unread
+        void* intel = hitter && hitter->IsPed() ? ((CPed*)hitter)->Intelligence() : nullptr;
+        void* fight = intel ? CallMethod<0x600F30, void*>(intel) : nullptr;  // CPedIntelligence::GetTaskFighting
+        w.U8(fight ? Field<uint8_t>(fight, 0x24) : 0xFF);  // CTaskSimpleFight::m_nComboSet
+        w.U8(fight ? Field<uint8_t>(fight, 0x25) : 0xFF);  // m_nCurrentMove
+    }
     Net().Send(proto::CH_RELIABLE, w);
+}
+
+// The reaction to a blow (CEventDamage::ComputeDamageAnim: the style's HitA_1..3, a combo's knock-down) and a katana's
+// kill (ComputeWillForceDeath) come from the hitter's fight (GetTaskFighting: its secondary attack task). A mirror has
+// none, so the victim flinched the same way whatever hit it, and a copy's replayed fight may be a move off (29.10: the
+// partner's reactions did not fit the blows). For the damage call the slot shows a fight in the move the hitter's game
+// had; only those two bytes of it are read, and the slot gets its own task back right after.
+struct FightAs {
+    void** slot = nullptr;
+    void* saved = nullptr;
+    alignas(4) uint8_t task[0x28] = {};  // sizeof(CTaskSimpleFight)
+    FightAs(CEntity* hitter, uint8_t set, uint8_t move) {
+        if (!hitter || !hitter->IsPed() || set < 4 || set > 16 || move > 4) return;  // m_aComboData's 13 sets, HIT_1..FIGHTIDLE
+        auto* intel = (uint8_t*)((CPed*)hitter)->Intelligence();
+        if (!intel) return;
+        slot = (void**)(intel + 4 + 0x14);  // CTaskManager::m_aSecondaryTasks[TASK_SECONDARY_ATTACK]
+        saved = *slot;
+        *(uintptr_t*)task = 0x86D684;  // CTaskSimpleFight's vtable (its GetTaskType says 1016)
+        task[0x24] = set, task[0x25] = move;
+        *slot = task;
+    }
+    ~FightAs() {
+        if (slot) *slot = saved;
+    }
+    FightAs(const FightAs&) = delete;
+    FightAs& operator=(const FightAs&) = delete;
+};
+
+// A blow on our player is judged from where the hitter stands to our player as it turns here (ComputePedShotSide, as
+// FightHitPed does): the other game judged it against its copy of our player, whose heading lags a little behind
+int SideHere(CEntity* hitter, int weapon, int dir) {
+    CPlayerPed* me = FindPlayerPed(0);
+    if (weapon > WEAPON_LAST_MELEE || !hitter || !me) return dir;
+    CVector at = hitter->GetPosition();
+    return (at - me->GetPosition()).Length() > 3.0f ? dir : Call<0x5F13F0, int>((CPed*)me, &at);  // CPedGeometryAnalyser::ComputePedShotSide
 }
 
 using GenerateDamageFn = bool(__cdecl*)(CPed*, CEntity*, int, int, int, int);
@@ -170,6 +213,11 @@ bool __cdecl HookGenerateDamageEvent(CPed* victim, CEntity* creator, int weapon,
         bool fromRemote = IsRemotePlayerEntity(creator);
         if (fromRemote && victim == FindPlayerPed(0))  // see the top of the file
             return Net().FriendlyFire() && !IsDirect(weapon) ? g_origGenerateDamage(victim, creator, weapon, damage, piece, dir) : true;
+        // A mirrored ped's blow is its owner's to tell (TARGET_PLAYER from there). A mirror fighting here too (29.10: 29FE,
+        // 1C47, 1F13) hit our player a second time out of step, and its blows on the copy went there as this game's
+        if (weapon <= WEAPON_LAST_MELEE && !fromRemote && creator && creator->IsPed() &&
+            (victim == FindPlayerPed(0) || Players::Instance().FindByPed(victim)))
+            if (NetPed* np = Peds::Instance().Find((CPed*)creator); np && np->owner != Net().MyId()) return true;
         if (fromRemote && weapon == WEAPON_EXPLOSION) {  // see the top of the file
             NetPed* np = Peds::Instance().Find(victim);
             if ((np && np->owner != Net().MyId()) || Players::Instance().FindByPed(victim)) return true;
@@ -181,19 +229,19 @@ bool __cdecl HookGenerateDamageEvent(CPed* victim, CEntity* creator, int weapon,
             if (weapon <= WEAPON_LAST_MELEE && creator && creator->IsPed() && !IsLocalPlayerEntity(creator)) {
                 NetPed* attacker = Peds::Instance().Find((CPed*)creator);
                 SendDamage(TARGET_PLAYER, rp->id, attacker ? attacker->netId : 0, weapon, (float)damage, piece, dir,
-                           victim->GetPosition());
+                           victim->GetPosition(), 0, creator);
                 LOGD("NPC %04X hit player %d: weapon %d, damage %d", attacker ? attacker->netId : 0, rp->id, weapon, damage);
                 return true;
             }
             if (Net().FriendlyFire() && IsDirect(weapon) && IsLocalPlayerEntity(creator)) {
-                SendDamage(TARGET_PLAYER_BY_PLAYER, rp->id, 0, weapon, (float)damage, piece, dir, victim->GetPosition());
+                SendDamage(TARGET_PLAYER_BY_PLAYER, rp->id, 0, weapon, (float)damage, piece, dir, victim->GetPosition(), 0, creator);
                 LOGI("Hit player %d: weapon %d, damage %d", rp->id, weapon, damage);
                 return true;
             }
         }
         if (NetPed* np = Peds::Instance().Find(victim); np && np->owner != Net().MyId()) {
             if (!IsCollision(weapon) && IsLocalPlayerEntity(creator) && !np->deadApplied) {
-                SendDamage(TARGET_PED, np->owner, np->netId, weapon, (float)damage, piece, dir, victim->GetPosition());
+                SendDamage(TARGET_PED, np->owner, np->netId, weapon, (float)damage, piece, dir, victim->GetPosition(), 0, creator);
                 np->lastHitMs = NowMs();
                 np->hitWeapon = (uint8_t)weapon, np->hitPiece = (uint8_t)piece, np->hitDir = (uint8_t)dir;
                 ChargeCrime(victim, np->pedType, weapon);
@@ -204,7 +252,7 @@ bool __cdecl HookGenerateDamageEvent(CPed* victim, CEntity* creator, int weapon,
                 NetPed* by = Peds::Instance().Find((CPed*)creator);
                 if (!by || by->owner == Net().MyId()) {
                     SendDamage(TARGET_PED_BY_PED, np->owner, np->netId, weapon, (float)damage, piece, dir, victim->GetPosition(),
-                               by ? by->netId : 0);
+                               by ? by->netId : 0, creator);
                     LOGD("Our ped %04X hit ped %04X of player %d: weapon %d, damage %d", by ? by->netId : 0, np->netId, np->owner,
                          weapon, damage);
                 }
@@ -251,6 +299,20 @@ void __fastcall HookKillPedWithCar(CPed* ped, void* edx, CVehicle* car, float im
                     SendDamage(TARGET_PED_BY_CAR, np->owner, np->netId, WEAPON_RAMMEDBYCAR, hit, 0, 0, ped->GetPosition(), nv->netId);
                 }
                 LOGI("Rammed ped %04X of player %d (impulse %.0f, %s)", np->netId, np->owner, impulse, byUs ? "our player" : "our car");
+                // ...and it falls here at once, as its owner's does there: it stood like a stone in the car's way, the car
+                // stopped against it, and it fell only when its owner's state came (27.10). The hit is the
+                // game's own (its collision proof off for it), its harm stays the owner's: health high for the hit,
+                // then back, no crime of it here (KeepWanted)
+                int h = GetPedRef(ped);
+                float health = ped->Health();
+                Cmd(0x02AB).I(h).I(1).I(1).I(1).I(0).I(1).Run();  // SET_CHAR_PROOFS: collision off
+                ped->Health() = 1000.0f;
+                {
+                    KeepWanted keep;
+                    g_origKillWithCar(ped, edx, car, impulse, flag);
+                }
+                ped->Health() = health;
+                Cmd(0x02AB).I(h).I(1).I(1).I(1).I(1).I(1).Run();  // SET_CHAR_PROOFS: all again
             }
             return;
         }
@@ -271,13 +333,28 @@ bool __fastcall HookTestForStealthKill(void* intel, void* edx, CPed* target, boo
 using InflictDamageFn = void(__fastcall*)(CVehicle*, void*, CEntity*, int, float, CVector);
 InflictDamageFn g_origInflictDamage = nullptr;
 
+bool CarriesOtherPlayer(CVehicle* v) {
+    if (v->Driver() && Players::Instance().FindByPed(v->Driver())) return true;
+    for (int i = 0; i < v->MaxPassengers() && i < 8; ++i)
+        if (CPed* p = v->Passengers()[i]; p && Players::Instance().FindByPed(p)) return true;
+    if (NetVehicle* nv = Vehicles::Instance().Find(v))  // or it is the toy the other player drives (RcToys)
+        for (auto& [id, rp] : Players::Instance().All())
+            if (rp.toyNetId && rp.toyNetId == nv->netId) return true;
+    return false;
+}
+
 // CVehicle::InflictDamage(damager, weapon, damage, position): bullets, explosions and fire on vehicles
 void __fastcall HookInflictDamage(CVehicle* v, void* edx, CEntity* damager, int weapon, float damage, CVector pos) {
     if (Net().Online() && v && core::IsPlayerReady()) {
         if (!IsCollision(weapon) && IsRemotePlayerEntity(damager)) return;
         if (cam::WideScreenOn() && FromOtherSide(damager)) return;
         if (NetVehicle* nv = Vehicles::Instance().Find(v); nv && Vehicles::Instance().IsMirror(*nv)) {
-            if (!IsCollision(weapon) && IsLocalPlayerEntity(damager))
+            // Without friendly fire our shots spare a vehicle the other player sits in: in "Just Business" the partner's
+            // misses at the Russians hit Smoke's bike with the host on it, and its bar ran out about twice as fast (30.10)
+            // A toy's gun (the RC Baron's, the RC Goblin's: CWeapon::FireOneInstantHitRound) hits with no damager and the
+            // micro SMG's id: with our toy out, that is ours (RcToys, Zero's missions for two)
+            bool toyRound = !damager && weapon == 28 && PlayerInfos()[0].remoteVehicle;
+            if (!IsCollision(weapon) && (IsLocalPlayerEntity(damager) || toyRound) && (Net().FriendlyFire() || !CarriesOtherPlayer(v)))
                 SendDamage(TARGET_VEHICLE, nv->owner, nv->netId, weapon, damage, 0, 0, pos);
             return;
         }
@@ -434,6 +511,8 @@ void HandleDamage(uint8_t from, Reader& r) {
     int piece = r.U8(), dir = r.U8();
     Vec3 p = r.Vec();
     uint16_t by = kind == TARGET_PED_BY_PED || kind == TARGET_PED_BY_CAR ? r.U16() : 0;
+    uint8_t fightSet = 0xFF, fightMove = 0xFF;  // the blow's move in the hitter's game (none from an older build)
+    if (weapon <= WEAPON_LAST_MELEE && r.Remaining() >= 2) fightSet = r.U8(), fightMove = r.U8();
     if (!r.Ok() || owner != Net().MyId() || !core::IsPlayerReady() || damage <= 0.0f || damage > 10000.0f) return;
     // the weapon info (80 entries), the ped pieces (to the head, 9) and the four hit directions are read at these unchecked
     if (weapon > 58 /* WEAPON_FLARE */ || piece > 9 || dir > 3) return;
@@ -446,8 +525,17 @@ void HandleDamage(uint8_t from, Reader& r) {
                 KeepWanted keep;
                 AsPlayersHit player(ped);
                 CVehicle* car = rp && rp->ped && rp->ped->InVehicle() ? rp->ped->Vehicle() : nullptr;
+                // A member of our player's group (Sweet, Ryder, the Grove members called in) takes the other player's
+                // stray bullet as from its leader: from the copy, no player to the game's rules for a player's own
+                // group, Sweet fired back and chased the partner ("Sweet's Girl", #11). Enemies answer it as before.
+                CEntity* by = attacker;
+                if (CPlayerPed* me = FindPlayerPed(0); me && attacker) {
+                    void* group = Call<0x5F7E80, void*>(ped);  // CPedGroups::GetPedsGroup
+                    if (group && group == Call<0x5F7E80, void*>(me)) by = me;
+                }
+                FightAs fight(by, fightSet, fightMove);
                 if (weapon == WEAPON_RAMMEDBYCAR && car) g_origKillWithCar(ped, nullptr, car, damage, 0);
-                else if (weapon != WEAPON_RAMMEDBYCAR) g_origGenerateDamage(ped, attacker, weapon, (int)damage, piece, dir);
+                else if (weapon != WEAPON_RAMMEDBYCAR) g_origGenerateDamage(ped, by, weapon, (int)damage, piece, dir);
             }
             LOGI("Player %d hit our ped %04X: weapon %d, damage %.0f, health now %.0f", from, netId, weapon, damage, ped->Health());
             if (ped->Health() <= 0.0f) {  // the loot falls in the killer's game
@@ -465,24 +553,34 @@ void HandleDamage(uint8_t from, Reader& r) {
     } else if (kind == TARGET_PED_BY_PED) {
         if (CPed* ped = Peds::Instance().FindOwned(netId)) {
             int h = by ? Peds::Instance().HandleOf(by) : -1;  // our copy of its ped: the attacker it fights back
+            CPed* hitter = h >= 0 ? GetPed(h) : nullptr;
             KeepWanted keep;
-            g_origGenerateDamage(ped, h >= 0 ? GetPed(h) : nullptr, weapon, (int)damage, piece, dir);
+            FightAs fight(hitter, fightSet, fightMove);
+            g_origGenerateDamage(ped, hitter, weapon, (int)damage, piece, dir);
             LOGD("Ped %04X of player %d hit our ped %04X: weapon %d, damage %.0f", by, from, netId, weapon, damage);
         }
     } else if (kind == TARGET_PLAYER_BY_PLAYER) {
         if (!Net().FriendlyFire()) return;
         {
             KeepWanted keep;
-            g_origGenerateDamage(FindPlayerPed(0), attacker, weapon, (int)damage, piece, dir);
+            FightAs fight(attacker, fightSet, fightMove);
+            g_origGenerateDamage(FindPlayerPed(0), attacker, weapon, (int)damage, piece, SideHere(attacker, weapon, dir));
         }
         LOGI("Player %d hit us: weapon %d, damage %.0f, health now %.0f", from, weapon, damage, FindPlayerPed(0)->Health());
     } else if (kind == TARGET_PLAYER) {
         int h = Peds::Instance().HandleOf(netId);
-        g_origGenerateDamage(FindPlayerPed(0), h >= 0 ? GetPed(h) : nullptr, weapon, (int)damage, piece, dir);
-        LOGI("An NPC %04X of player %d hit us: weapon %d, damage %.0f", netId, from, weapon, damage);
+        CPed* npc = h >= 0 ? GetPed(h) : nullptr;
+        {
+            FightAs fight(npc, fightSet, fightMove);
+            g_origGenerateDamage(FindPlayerPed(0), npc, weapon, (int)damage, piece, SideHere(npc, weapon, dir));
+        }
+        LOGI("An NPC %04X of player %d hit us: weapon %d, damage %.0f (fight set %d, move %d)", netId, from, weapon, damage,
+             fightSet == 0xFF ? -1 : fightSet, fightMove == 0xFF ? -1 : fightMove);
     } else if (kind == TARGET_VEHICLE) {
         NetVehicle* nv = Vehicles::Instance().Find(netId);
         if (nv && !Vehicles::Instance().IsMirror(*nv) && IsVehicleValid(nv->veh)) {
+            LOGD("Our vehicle %04X hit by player %d (weapon %d, %.0f damage, health %.0f)", nv->netId, from, weapon, damage,
+                 nv->veh->Health());
             KeepWanted keep;
             AsPlayersHit player(nv->veh);
             g_origInflictDamage(nv->veh, nullptr, attacker, weapon, damage, CVector{p.x, p.y, p.z});
@@ -510,10 +608,67 @@ void HandleDamage(uint8_t from, Reader& r) {
 // when my partner runs people over"). Its own game charges it; here those reports go nowhere.
 bool ByCopy(CEntity* e) { return Net().Online() && IsRemotePlayerEntity(e); }
 
+bool OtherPlayerIn(CVehicle* v) {
+    if (v->Driver() && Players::Instance().FindByPed(v->Driver())) return true;
+    for (int i = 0; i < 8; ++i)
+        if (v->Passengers()[i] && Players::Instance().FindByPed(v->Passengers()[i])) return true;
+    return false;
+}
+
 using ReportCrimeFn = void(__cdecl*)(int, CEntity*, CPed*);
 ReportCrimeFn g_origReportCrime = nullptr;
 void __cdecl HookReportCrime(int type, CEntity* victim, CPed* by) {  // CCrime::ReportCrime
-    if (!ByCopy(by)) g_origReportCrime(type, victim, by);
+    if (ByCopy(by)) return;
+    // A car's theft is reported on FindPlayerPed(-1) whoever got in (CTaskSimpleCarSetPedInAsDriver and AsPassenger, 0x64BBBA,
+    // 0x64B697, m_pVehicle set before it): the partner's copy taking a car under a cop's nose gave the host the star, its
+    // own game charges it (#92). And getting in with the other player is no theft.
+    if (type == 6 /* CRIME_CAR_STEAL */ && Net().Online() && victim) {
+        CPlayerPed* me = FindPlayerPed(0);
+        if (!me || me->Vehicle() != victim || OtherPlayerIn((CVehicle*)victim)) return;
+    }
+    // Our own crime before the other game's police: their copies here are civilians (no police tasks run on them), and
+    // CWanted::WorkOutPolicePresence saw no police: a car stolen under a cop's nose gave our player no star (#92, 30.10).
+    // For the report they are cops.
+    std::vector<std::pair<CPed*, int32_t>> cops;  // and the type each copy had
+    if (CPoolHeader* pool = Net().Online() && by && by == FindPlayerPed(0) ? PedPool() : nullptr)
+        for (int i = 0; i < pool->size; ++i) {
+            auto* p = (CPed*)(pool->objects + (size_t)i * kPedPoolElemSize);
+            if (pool->byteMap[i] < 0 || p->PedType() == PED_TYPE_COP) continue;
+            if (NetPed* np = Peds::Instance().Find(p); np && np->owner != Net().MyId() && np->pedType == PED_TYPE_COP)
+                cops.push_back({p, p->PedType()}), p->PedType() = PED_TYPE_COP;
+        }
+    g_origReportCrime(type, victim, by);
+    for (auto& [p, was] : cops) p->PedType() = was;
+}
+
+// Ramming a police car or bike gives a star in CBike and CAutomobile::VehicleDamage (0x6B9011, 0x6A79C7), past their test
+// for collision proof: the other game's police are copies here, they have it, and the biker our car knocked off cost nothing
+// (found 04.11). The same test, for a copy with its police driver. A mission that gives no stars gives none here.
+void RammedPoliceCopy(CVehicle* v) {
+    if (Field<float>(v, 0xD8) <= 25.0f) return;  // m_fDamageIntensity
+    NetVehicle* nv = Vehicles::Instance().Find(v);
+    CPlayerPed* me = FindPlayerPed(0);
+    if (!nv || !Vehicles::Instance().IsMirror(*nv) || !me || !me->InVehicle() || v->Status() == 5 /* STATUS_WRECKED */) return;
+    CVehicle* mine = me->Vehicle();
+    NetPed* driver = v->Driver() ? Peds::Instance().Find(v->Driver()) : nullptr;
+    if (!mine || mine->Driver() != me || !driver || driver->pedType != PED_TYPE_COP || Field<CEntity*>(v, 0xDC) != mine) return;  // m_pDamageEntity
+    float speed = mine->MoveSpeed().Length();
+    void* wanted = Call<0x56E230, void*>(-1);  // FindPlayerWanted
+    if (speed < v->MoveSpeed().Length() || speed <= 0.1f || !wanted || Field<float>(wanted, 0x14) <= 0.0f) return;  // m_Multiplier
+    if (!CallMethod<0x6D2370, bool>(v)) return;  // CVehicle::IsLawEnforcementVehicle: a copy has no bIsLawEnforcer of its own
+    CallMethod<0x609F30>(me, 1);  // CPlayerPed::SetWantedLevelNoDrop
+    LOGI("Rammed the other game's police vehicle (model %d): a star", (int)v->ModelIndex());
+}
+
+using VehicleDamageFn = void(__fastcall*)(CVehicle*, void*, float, int, CEntity*, CVector*, CVector*, int);
+VehicleDamageFn g_origBikeDamage = nullptr, g_origCarDamage = nullptr;
+void __fastcall HookBikeDamage(CVehicle* v, void* edx, float force, int part, CEntity* by, CVector* at, CVector* dir, int weapon) {
+    if (force == 0.0f && Net().Online()) RammedPoliceCopy(v);  // 0: the collision's own values
+    g_origBikeDamage(v, edx, force, part, by, at, dir, weapon);
+}
+void __fastcall HookCarDamage(CVehicle* v, void* edx, float force, int part, CEntity* by, CVector* at, CVector* dir, int weapon) {
+    if (force == 0.0f && Net().Online()) RammedPoliceCopy(v);
+    g_origCarDamage(v, edx, force, part, by, at, dir, weapon);
 }
 
 using ReportEventFn = void(__fastcall*)(void*, void*, CPed*);
@@ -550,6 +705,8 @@ public:
         mem::HookFn(0x601E00, &HookTestForStealthKill, &g_origStealthTest, "CPedIntelligence::TestForStealthKill");
         mem::HookFn(0x4B9340, &HookRegisterKill, &g_origRegisterKill, "CEventHandler::RegisterKill");
         mem::HookFn(0x532010, &HookReportCrime, &g_origReportCrime, "CCrime::ReportCrime");
+        mem::HookFn(0x6B8EC0, &HookBikeDamage, &g_origBikeDamage, "CBike::VehicleDamage");
+        mem::HookFn(0x6A7650, &HookCarDamage, &g_origCarDamage, "CAutomobile::VehicleDamage");
         mem::HookFn(0x4B27D0, &HookHitAndRunReport, &g_origHitAndRunReport, "CEventVehicleHitAndRun::ReportCriminalEvent");
         mem::HookFn(0x4B3440, &HookDamageReport, &g_origDamageReport, "CEventDamage::ReportCriminalEvent");
         mem::HookFn(0x4B50B0, &HookVehDamageReport, &g_origVehDamageReport, "CEventVehicleDamage::ReportCriminalEvent");

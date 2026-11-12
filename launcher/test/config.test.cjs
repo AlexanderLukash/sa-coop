@@ -47,6 +47,10 @@ test('game integration writes LAN server and client configs without changing coo
     assert.match(server, /max_players = 8/); assert.match(server, /internet = 0/); assert.match(server, /turn = retained/);
     assert.match(client, /mode = host/); assert.match(client, /auto_connect = 1/); assert.match(client, /load_slot = -1/);
     assert.match(client, /server_data = launcher-server-data/);
+    assert.match(client, /max_players = 8/);
+    await writeGameConfig({ ...defaults, gameDir: dir, maxPlayers: 3 }, { mode: 'host' });
+    for (const file of ['coop/launcher.ini', 'coop/server.ini'])
+      assert.match(await fs.readFile(path.join(dir, file), 'utf8'), /max_players = 3/);
     assert.equal(await fs.readFile(path.join(dir, 'coop/coop.ini'), 'utf8'), 'original-config');
     await writeGameConfig({ ...defaults, gameDir: dir, skin: 271 }, { mode: 'join', address: '192.168.1.8', password: 'secret', port: 7799 });
     const joined = await fs.readFile(path.join(dir, 'coop/launcher.ini'), 'utf8');

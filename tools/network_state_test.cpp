@@ -51,6 +51,16 @@ int main() {
         if (extras & VehicleState::X_TOW) assert(copy.tower == 0x8001);
         if (extras & VehicleState::X_BIKE) assert(std::fabs(copy.leanFwd + 0.6f) < 0.001f);
     }
+    VehicleSpawn spawn;
+    spawn.netId = 0x8001;
+    spawn.owner = 7;
+    spawn.model = 411;
+    spawn.pos = {100, 200, 30};
+    spawn.owned = spawn.script = true;
+    spawn.extras[0] = 1; spawn.extras[1] = -1;
+    auto spawned = RoundTrip(spawn);
+    assert(spawned.owner == 7 && spawned.netId == 0x8001 && spawned.owned && spawned.script);
+    assert(spawned.extras[0] == 1 && spawned.extras[1] == -1);
     player.pos.x = std::numeric_limits<float>::quiet_NaN();
     Writer invalid;
     player.Write(invalid);

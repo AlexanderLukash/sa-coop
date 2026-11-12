@@ -5,7 +5,7 @@
 #include "common/racing/RaceProtocol.h"
 
 namespace coop::server {
-struct StreetPeer { uint8_t id=0;std::string account;bool host=false,playing=false; };
+struct StreetPeer { uint8_t id=0;std::string account;bool host=false,playing=false;std::string name; };
 class StreetRacing {
 public:
     using Send=std::function<void(uint8_t,const Writer&)>;

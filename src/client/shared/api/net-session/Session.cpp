@@ -111,6 +111,19 @@ void Session::Update() {
                                   "Could not connect: ntfy.sh, through which the invite code opens the way to the host, cannot "
                                   "be reached. It may be blocked in your network. Try a VPN, or ask the host to open the port "
                                   "on the router (UPnP or port forwarding).");
+            if (m_failReason.empty() && m_net.ViaCode()) {
+                // the code was read and the host told: the way it opens through the routers did not (a provider's NAT,
+                // mobile internet), which no firewall setting fixes (#13: Radmin VPN on, the firewall off)
+                LOGW("Код приглашения: хост оповещён, но ни прямой путь, ни ретранслятор не ответили");
+                m_failReason = TR("Сервер не отвечает. Код приглашения сработал, но путь к хосту не открылся: обычно мешает роутер "
+                                  "или мобильный интернет у одного из игроков. Помогут Radmin VPN или ZeroTier у обоих (тогда "
+                                  "входите по их адресу) или проброс порта на роутере хоста (UDP, по умолчанию 7788). Брандмауэр и "
+                                  "антивирус хоста тоже стоит проверить.",
+                                  "The server does not answer. The invite code worked, but the way to the host did not open: "
+                                  "usually a router or mobile internet on one side is in the way. Radmin VPN or ZeroTier on both "
+                                  "sides (then join by their address) or a port forwarded on the host's router (UDP, 7788 by "
+                                  "default) will help. The host's firewall and antivirus are worth a check too.");
+            }
             if (m_failReason.empty())
                 // the host's own game is in through 127.0.0.1: what keeps a friend out is mostly its firewall or antivirus
                 m_failReason = TR("Сервер не отвечает. Чаще всего к нему не пускает брандмауэр или антивирус хоста: пусть хост "
@@ -139,6 +152,8 @@ void Session::HandleService(uint8_t id, Reader& r) {
             m_serverName = w.serverName;
             m_friendlyFire = w.friendlyFire;
             m_allowCheats = w.allowCheats;
+            m_partnerTeleport = w.partnerTeleport;
+            m_sharedLife = w.sharedLife;
             m_peers.clear();
             for (auto& p : w.players) m_peers[p.id] = PeerInfo{p.id, p.name, p.isHost, 0};
             m_state = State::Online;
@@ -151,6 +166,11 @@ void Session::HandleService(uint8_t id, Reader& r) {
             if (m_friendlyFire)
                 chat.AddSystem(TR("Урон по напарнику включён: вы можете ранить и убить друг друга.",
                                   "Friendly fire is on: you can hurt and kill each other."));
+            if (!m_partnerTeleport && !IsHost())
+                chat.AddSystem(TR("Хост запретил напарникам команды /tp и /tphere.", "The host turned /tp and /tphere off for partners."));
+            if (m_sharedLife)
+                chat.AddSystem(TR("Общая жизнь включена: если напарник погибнет, миссия хоста провалится.",
+                                  "Shared life is on: if a partner dies, the host's mission fails."));
             if (onOnline) onOnline();
             break;
         }
@@ -216,7 +236,8 @@ void Session::HandleService(uint8_t id, Reader& r) {
         }
         case S_PROFILE: {
             auto blob = r.Bytes(64 * 1024);
-            if (r.Ok() && onProfile) onProfile(blob);
+            uint32_t game = r.U32();
+            if (r.Ok() && onProfile) onProfile(blob, game);
             break;
         }
         case S_WORLD_BEGIN: {

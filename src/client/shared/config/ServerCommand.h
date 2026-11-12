@@ -27,6 +27,9 @@ inline std::wstring BuildServerCommand(const ClientConfig& cfg, uint16_t port,
     if (!world.empty()) command += L" --world " + QuoteProcessArgument(world);
     if (newGame) command += L" --new-game";
     return command + (cfg.friendlyFire ? L" --friendly-fire 1" : L" --friendly-fire 0") +
-        (cfg.allowCheats ? L" --allow-cheats 1" : L" --allow-cheats 0");
+        (cfg.allowCheats ? L" --allow-cheats 1" : L" --allow-cheats 0") +
+        (cfg.partnerTeleport ? L" --partner-teleport 1" : L" --partner-teleport 0") +
+        (cfg.sharedLife ? L" --shared-life 1" : L" --shared-life 0") +
+        L" --max " + std::to_wstring(cfg.maxPlayers);
 }
 } // namespace coop

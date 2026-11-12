@@ -1,6 +1,7 @@
 // Headless ENet integration client. Run via test_server_capacity.py.
 #include <enet/enet.h>
 #include <array>
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +15,16 @@
 using namespace coop;
 using namespace coop::proto;
 
+std::string FormatGame(uint32_t game) { char text[16]; std::snprintf(text, sizeof text, "%08X:", game); return text; }
+
+constexpr uint8_t kFeatureMessages[] = {G_RACE, G_RADIO, G_PROPERTY_OWNERS, G_MISSION_AUDIO, G_GARAGE_DOOR,
+                                     G_PROP, G_PED_SPEECH, G_MISSION_POLICY, G_VEH_SCRIPT, G_INTERIOR_POP,
+                                     G_MAP_EDIT, G_PHOTO, G_IPL, G_HELI_SHOT, G_CONTACTS, G_GANG_WAR, G_SIDE,
+                                     G_SCENE_CAM, G_TURF_WAR, G_STAT_SYNC, G_SIDE_DONE, G_BEAT, G_BEAT_SCORE,
+                                     G_MISSION_IFP, G_MISSION_FACE, G_CAR_DOOR, G_NOISE, G_MISSION_HINT,
+                                     G_MISSION_LOOK_AT, G_PED_NO_COLLIDE, G_PED_ATTACH, G_MISSION_LOOK, G_OBJ_HOLD, G_MARK_COLOUR, G_CONTEST, G_POOL, G_TP_ASK, G_MONEY,
+    G_WEAPON_GIFT, G_EMOTE, G_RC, G_HOST_LOADED, G_MISSION_ENV, G_MISSION_FX, G_EXPORT};
+
 void Check(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);
 }
@@ -25,6 +36,8 @@ struct Clients {
     std::array<int, 9> balances{}, cheats{};
     std::array<street::Snapshot,9> cashStates{};
     std::array<bool, 9> cheatsAllowed{};
+    std::array<uint32_t, 9> profileGames{};
+    std::array<int, 9> profileCounts{};
     std::array<std::array<int, 256>, 9> featureRelays{}, missionRelays{};
     std::array<bool, 9> welcomed{}, rejected{};
     std::array<std::string, 9> reasons{};
@@ -78,6 +91,11 @@ struct Clients {
                         r.Str();
                         reasons[i] = r.Str();
                         rejected[i] = true;
+                    } else if (msg == S_PROFILE) {
+                        r.Bytes(65536);
+                        profileGames[i] = r.U32();
+                        Check(r.Ok(), "malformed profile game ID");
+                        ++profileCounts[i];
                     } else if(msg==S_STREET_RACING){
                         auto operation=(street::ServerOp)r.U8();
                         if(operation==street::ServerOp::Snapshot)Check(cashStates[i].Read(r),"bad authoritative cash/race snapshot");
@@ -93,7 +111,7 @@ struct Clients {
                               "bad host mission relay sender/payload");
                         Check(ev.channelID == CH_RELIABLE, "mission event lost reliable channel");
                         ++missionRelays[i][msg];
-                    } else if (msg >= G_MISSION_AUDIO && msg <= G_INTERIOR_POP) {
+                    } else if (std::find(std::begin(kFeatureMessages), std::end(kFeatureMessages), msg) != std::end(kFeatureMessages)) {
                         Check(r.U8() == 7 && r.U32() == 0x12345678 && r.Ok(), "bad feature relay sender/payload");
                         ++featureRelays[i][msg];
                     } else if (msg == G_PLAYER_ONFOOT) {
@@ -130,12 +148,44 @@ int main(int argc, char** argv) {
         {
             Clients clients(std::atoi(argv[1]));
             int capacity = std::atoi(argv[2]);
-            if (std::string(argv[3]) == "old") {
-                clients.protocol = kProtocolVersion - 1;
+            if (std::string(argv[3]) == "old" || std::string(argv[3]) == "fork-old") {
+                clients.protocol = std::string(argv[3]) == "fork-old" ? 24 : kProtocolVersion - 1;
                 clients.Connect(0);
                 clients.Until([&] { return clients.rejected[0]; });
                 Check(!clients.welcomed[0] && clients.reasons[0].find("version") != std::string::npos,
                       "old protocol was not rejected");
+            } else if (std::string(argv[3]) == "games") {
+                for (int i = 0; i < 2; ++i) {
+                    clients.Connect(i);
+                    clients.Until([&] { return clients.welcomed[i] && !clients.cashStates[i].account.empty(); });
+                }
+                auto send = [&](int who, const Writer& packet) {
+                    enet_peer_send(clients.peers[who], CH_RELIABLE,
+                        enet_packet_create(packet.Data(), packet.Size(), ENET_PACKET_FLAG_RELIABLE));
+                    enet_host_flush(clients.hosts[who]);
+                };
+                auto setCash = [&](int32_t amount) {
+                    Writer w(C_STREET_RACING); w.U8((uint8_t)street::ClientOp::SetCash);
+                    w.U64(clients.cashStates[0].sequence + 1); w.U8(1); w.Str("capacity1"); w.I32(amount);
+                    send(0, w);
+                    clients.Until([&] { return clients.cashStates[1].cash == amount; });
+                };
+                auto switchGame = [&](uint32_t game, int32_t expected) {
+                    int count = clients.profileCounts[1];
+                    Writer w(C_GAME_ID); w.U32(game); send(0, w);
+                    clients.Until([&] {
+                        return clients.profileCounts[1] > count && clients.profileGames[1] == game &&
+                            clients.cashStates[1].cash == expected &&
+                            clients.cashStates[1].account == (game ? FormatGame(game) : "") + "capacity1";
+                    });
+                    Check(clients.profileGames[0] == game, "host did not receive game switch");
+                };
+                setCash(12345);
+                switchGame(0x77, 0);
+                setCash(45678);
+                switchGame(0, 12345);
+                switchGame(0x77, 45678);
+                switchGame(0x88, 0);
             } else if (std::string(argv[3]).find("rules-") == 0) {
                 const bool allowed = std::string(argv[3]) == "rules-on";
                 for (int i = 0; i < 2; ++i) {
@@ -217,26 +267,21 @@ int main(int argc, char** argv) {
                     });
                     Check(clients.relays[7] == 0, "relay echoed to sender");
                     // Both new message IDs must survive the real server's relay unchanged.
-                    for (auto msg : {G_RACE, G_RADIO, G_PROPERTY_OWNERS, G_MISSION_AUDIO, G_GARAGE_DOOR,
-                                     G_PROP, G_PED_SPEECH, G_MISSION_POLICY, G_VEH_SCRIPT, G_INTERIOR_POP,
-                                     G_MAP_EDIT, G_PHOTO, G_IPL, G_HELI_SHOT, G_CONTACTS, G_GANG_WAR, G_SIDE,
-                                     G_SCENE_CAM, G_TURF_WAR, G_STAT_SYNC, G_SIDE_DONE, G_BEAT, G_BEAT_SCORE,
-                                     G_MISSION_IFP, G_MISSION_FACE, G_CAR_DOOR, G_NOISE, G_MISSION_HINT,
-                                     G_MISSION_LOOK_AT, G_PED_NO_COLLIDE, G_PED_ATTACH, G_MISSION_LOOK, G_OBJ_HOLD}) {
+                    for (auto msg : kFeatureMessages) {
                         Writer feature(msg);
                         feature.U32(0x12345678);
                         enet_peer_send(clients.peers[7], CH_RELIABLE,
                             enet_packet_create(feature.Data(), feature.Size(), ENET_PACKET_FLAG_RELIABLE));
                     }
                     clients.Until([&] {
-                        // 33 distinct IDs: every client must receive each exactly once.
+                        // Distinct feature IDs: every client must receive each exactly once.
                         for (int i = 0; i < 7; ++i) {
                             int total = 0;
                             for (int count : clients.featureRelays[i]) {
                                 Check(count <= 1, "feature message IDs collided");
                                 total += count;
                             }
-                            if (total != 33) return false;
+                            if (total != (int)std::size(kFeatureMessages)) return false;
                         }
                         return true;
                     });

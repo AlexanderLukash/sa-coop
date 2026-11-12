@@ -15,7 +15,9 @@ namespace coop::server {
 using namespace proto;
 
 StreetPeer Server::StreetPlayer(const Player& p) const {
-    return {p.id,ToLower(p.name),p.isHost,p.status==STATUS_INGAME||p.status==STATUS_PAUSED};
+    std::string name = ToLower(p.name);
+    std::string account = m_gameId ? Format("%08X:", m_gameId) + name : name;
+    return {p.id,account,p.isHost,p.status==STATUS_INGAME||p.status==STATUS_PAUSED,name};
 }
 std::vector<StreetPeer> Server::StreetPeers() const {
     std::vector<StreetPeer> peers;
@@ -30,10 +32,10 @@ static constexpr uint32_t kColorError = 0xFF6464FF;
 bool Server::Start(const Config& cfg) {
     m_cfg = cfg;
     if (m_cfg.maxPlayers < 1) m_cfg.maxPlayers = 1;
-    if (m_cfg.maxPlayers > kGamePlayers) {
-        LOGW("В max_players указано %d, но игра поддерживает только %d игроков. Мест будет %d.", m_cfg.maxPlayers, kGamePlayers,
-             kGamePlayers);
-        m_cfg.maxPlayers = kGamePlayers;
+    if (m_cfg.maxPlayers > kMaxPlayers) {
+        LOGW("В max_players указано %d, но игра поддерживает только %d игроков. Мест будет %d.", m_cfg.maxPlayers, kMaxPlayers,
+             kMaxPlayers);
+        m_cfg.maxPlayers = kMaxPlayers;
     }
     EnsureDirectory(m_cfg.dataDir + L"profiles");
     EnsureDirectory(m_cfg.dataDir + L"world");
@@ -184,7 +186,7 @@ void Server::OnConnect(ENetPeer* peer) {
     slot->peer = peer;
     slot->connectTime = NowMs();
     peer->data = slot;
-    enet_peer_timeout(peer, 0, 10000, 20000);
+    enet_peer_timeout(peer, 0, 15000, 20000);  // as the client's: a lossy line dropped players now and then
     LOGI("Подключение от %s (слот %d)", ip, id);
 }
 
@@ -248,7 +250,10 @@ void Server::OnPacket(ENetPeer* peer, uint8_t channel, const uint8_t* data, size
         }
         case C_PROFILE_SAVE: {
             auto blob = r.Bytes(64 * 1024);
-            if (r.Ok()) SaveProfile(*p, blob);
+            uint32_t game = r.U32();
+            // sent before the host's switch reached that partner: it belongs to the other game
+            if (r.Ok() && game == m_gameId) SaveProfile(*p, blob);
+            else if (r.Ok()) LOGI("Профиль %s от другой игры хоста не записан", p->name.c_str());
             break;
         }
         case C_WORLD_BEGIN:
@@ -269,6 +274,11 @@ void Server::OnPacket(ENetPeer* peer, uint8_t channel, const uint8_t* data, size
         case C_WORLD_NEWGAME:
             if (p->isHost) HostStartedNewGame();
             break;
+        case C_GAME_ID: {
+            uint32_t game = r.U32();
+            if (r.Ok() && p->isHost) SwitchGame(game);
+            break;
+        }
         case C_WORLD_FOLLOW:
             if (p->isHost) FollowersJoin();
             break;
@@ -358,6 +368,8 @@ void Server::HandleHello(Player& p, Reader& r) {
     wel.motdEn = m_cfg.motd == Config{}.motd ? "Welcome! Type /help to see the commands." : "";
     wel.friendlyFire = m_cfg.friendlyFire;
     wel.allowCheats = m_cfg.allowCheats;
+    wel.partnerTeleport = m_cfg.partnerTeleport;
+    wel.sharedLife = m_cfg.sharedLife;
     wel.worldAvailable = !m_world.empty();
     Writer w(S_WELCOME);
     wel.Write(w);
@@ -425,12 +437,13 @@ void Server::HandleCommand(Player* p, const std::string& text) {
         if (admin)
             reply(kColorServer, "Для хоста: /kick <ник или номер> [причина], /say <текст>",
                   "For the host: /kick <nickname or number> [reason], /say <text>");
-        reply(kColorServer, "В игре: /tp [ник или номер] (переместиться к игроку), /tphere [ник или номер] (позвать игрока к себе)",
-              "In the game: /tp [nickname or number] (go to a player), /tphere [nickname or number] (bring a player to you)");
-        reply(kColorServer, "Эмоции: /e — список всех, /dance — танцевать, /wave — помахать, /sit — сесть, /e стоп — "
-                            "остановить. Колесо эмоций: зажмите J и выберите мышью",
-              "Emotes: /e lists them all, /dance to dance, /wave to wave, /sit to sit, /e stop to stop. The emote wheel: "
-              "hold J and pick with the mouse");
+        if ((admin || m_cfg.partnerTeleport) && m_cfg.maxPlayers > 2)
+            reply(kColorServer, "В игре: /tp <номер> (переместиться к игроку), /tphere <номер> (позвать игрока к себе). Номера видны в окне F2. Игрок отвечает Y или N",
+                  "In the game: /tp <number> (go to a player), /tphere <number> (bring a player to you). The F2 window shows the numbers. The player answers Y or N");
+        else if (admin || m_cfg.partnerTeleport)
+            reply(kColorServer, "В игре: /tp (переместиться к напарнику), /tphere (позвать напарника к себе). Напарник отвечает Y или N",
+                  "In the game: /tp (go to your partner), /tphere (bring your partner to you). Your partner answers Y or N");
+        reply(kColorServer, "F2: игроки, у кого сколько денег, перевод денег", "F2: the players, their money, giving money");
     } else if (cmd == "players" || cmd == "status") {
         for (auto& o : m_players) {
             if (!o.joined) continue;
@@ -537,7 +550,6 @@ void Server::HostStartedNewGame() {
         DeleteFileW(WorldPath().c_str());
         LOGI("Хост начал новую игру: сохранённый мир устарел и удалён");
     }
-    ResetProfiles();
     m_prologue = true;
     m_worldWantedTime = 0;
     for (auto& o : m_players)
@@ -548,29 +560,29 @@ void Server::HostStartedNewGame() {
         if (Player* w = FindById(id); w && w->joined) TellToWait(*w);
 }
 
-// The profiles of an older game go aside (profiles\old\<date>\: a new game started by mistake loses nothing), and the
-// partners connected now get an empty one.
-void Server::ResetProfiles() {
-    WaitProfileWrites();  // an older game's profile written after this would come back
-    std::wstring dir = m_cfg.dataDir + L"profiles\\";
-    SYSTEMTIME t;
-    GetLocalTime(&t);
-    wchar_t stamp[32];
-    swprintf(stamp, 32, L"%04d-%02d-%02d_%02d%02d%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-    std::wstring old = dir + L"old\\" + stamp + L"\\";
-    int moved = 0;
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW((dir + L"*.bin").c_str(), &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        EnsureDirectory(old);
-        do {
-            if (MoveFileW((dir + fd.cFileName).c_str(), (old + fd.cFileName).c_str())) ++moved;
-        } while (FindNextFileW(h, &fd));
-        FindClose(h);
-    }
-    if (moved) LOGI("Новая игра: профили напарников (%d) перенесены в profiles\\old\\%s", moved, WideToUtf8(stamp).c_str());
+// Each game of the host keeps the partners' profiles of its own (profiles\<game>\): a new game's moved the older ones
+// aside, and the partner who came back to an old save with the host found nothing of it (01.11). The partners connected
+// now get the profile of the game the host plays.
+void Server::SwitchGame(uint32_t game) {
+    if (game == m_gameId) return;
+    WaitProfileWrites();  // the other game's profile queued now would be read back half written
+    for (const auto& o : m_players)
+        if (o.joined) m_streetRacing.Disconnect(StreetPlayer(o), NowMs());
+    m_gameId = game;
+    LOGI("Хост играет игру %08X: профили напарников из её папки", game);
     for (auto& o : m_players)
-        if (o.joined && !o.isHost) SendProfile(o);
+        if (o.joined) {
+            // Same reliable channel: clients reset their cash projection before the new ledger snapshot.
+            SendProfile(o);
+            std::vector<uint8_t> profile;
+            ReadFileBytes(ProfilePath(o.name), profile);
+            Reader legacy(profile.data(), profile.size());
+            bool known = profile.size() >= 10 && legacy.U32() == 0x46504353;
+            if (known) legacy.U16();
+            int32_t cash = known ? legacy.I32() : 0;
+            if (!m_streetRacing.Connect(StreetPlayer(o), cash, known && legacy.Ok()))
+                Kick(o, "ошибка хранилища баланса", "cash storage is unavailable");
+        }
 }
 
 void Server::TellToWait(Player& p) {
@@ -672,8 +684,11 @@ void Server::SendWorld(Player& p) {
     LOGI("Отправлено сохранение мира игроку %s (%u байт)", p.name.c_str(), (unsigned)m_world.size());
 }
 
+// game 0 (a save from before 0.3.3, or one the host never saved with the mod) keeps the old place: the profiles folder
 std::wstring Server::ProfilePath(const std::string& name) const {
-    return m_cfg.dataDir + L"profiles\\" + Utf8ToWide(ToLower(name)) + L".bin";
+    wchar_t game[16] = L"";
+    if (m_gameId) swprintf(game, 16, L"%08X\\", m_gameId);
+    return m_cfg.dataDir + L"profiles\\" + game + Utf8ToWide(ToLower(name)) + L".bin";
 }
 
 void Server::SendProfile(Player& p) {
@@ -681,6 +696,7 @@ void Server::SendProfile(Player& p) {
     ReadFileBytes(ProfilePath(p.name), data);
     Writer w(S_PROFILE);
     w.Bytes(data.data(), data.size());
+    w.U32(m_gameId);
     net::Send(p.peer, CH_RELIABLE, w);
 }
 
@@ -718,7 +734,7 @@ void Server::WriteProfiles() {
             data = std::move(it->second);
             m_profileWrites.erase(it);
         }
-        EnsureDirectory(m_cfg.dataDir + L"profiles");
+        EnsureDirectory(path.substr(0, path.rfind(L'\\')));
         if (!WriteFileBytes(path, data.data(), data.size())) LOGW("Не удалось записать профиль %s", WideToUtf8(path).c_str());
     }
 }

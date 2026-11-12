@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <set>
 
@@ -26,6 +27,7 @@
 #include "common/lib/util/Util.h"
 #include "entities/player/Players.h"
 #include "features/anims/Emotes.h"
+#include "features/anims/QuickEmotes.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/game/Anim.h"
 #include "shared/game/Game.h"
@@ -42,6 +44,7 @@ using game::script::Cmd;
 constexpr int ANIM_GROUP_PLAYIDLES = 49;
 constexpr uint16_t ANIMATION_IDLE_FLAG = 0x200;  // set by PlayIdleAnimations on its animations
 
+// OP_ACTIVITY: by the names of the animation and its block (anim::BlockKey, NameKey), a player's own files' too (Emotes.cpp)
 enum : uint8_t { OP_PLAY = 1, OP_STOP_IDLE = 2, OP_ACTIVITY = 3, OP_ACTIVITY_END = 4 };
 
 // groups whose animations are replicated as events (they are not produced by the pad replay)
@@ -80,7 +83,8 @@ bool IsActivityBlock(int block) {
 }
 
 struct Activity {
-    int16_t block = -1, idx = -1;
+    int16_t block = -1;  // this game's
+    uint32_t key = 0;    // its name's
     uint16_t flags = 0;
     float time = 0.0f;
     // it holds the player (a task other than the plain on-foot one plays it: a script's animation, a fall, a parachute,
@@ -137,7 +141,7 @@ bool CurrentActivity(CPed* ped, Activity& out) {
         best = a;
         out.roll = roll;
         out.block = (int16_t)block;
-        out.idx = (int16_t)idx;
+        out.key = anim::NameKey(anim::Hierarchy(a));
     }
     if (!best) return false;
     out.flags = anim::Flags(best);
@@ -193,6 +197,35 @@ bool EnsureBlockLoaded(const char* block) {
 
 const char* BlockForGroup(int group) { return group == ANIM_GROUP_PLAYIDLES ? "playidles" : nullptr; }
 
+// A clothes shop's changing room door (props2.ide: CJ_SUBURB_DOOR_2, CJ_GAP_DOOR_, CJ_PRO_DOOR_01, CJ_BINCO_DOOR,
+// CJ_Victim_DOOR, CJ_DS_DOOR): each game's clothes.scm makes its own and swings it (PLAY_OBJECT_ANIM) for its own player
+// only, so the other player's copy walked into the booth through a shut door (28.10). The copy's walk in or out swings
+// the one here, as the script pairs them: CLO_In and CLO_Pose_Out with CLO_Pose_Out_O, CLO_Out and CLO_Pose_In with
+// CLO_Pose_In_O.
+constexpr int kBoothDoors[] = {2873, 2875, 2876, 2877, 2878, 2879};
+
+void SwingBoothDoor(CPed* copy, int block, void* h, float t) {
+    void* b = (void*)anim::Block(block);
+    if (_stricmp((const char*)b, "CLOTHES")) return;
+    auto is = [&](const char* n) { return h == Call<0x4D42F0, void*>(n, b); };  // CAnimManager::GetAnimation
+    const char* name = is("CLO_IN") || is("CLO_POSE_OUT") ? "CLO_POSE_OUT_O" : is("CLO_OUT") || is("CLO_POSE_IN") ? "CLO_POSE_IN_O" : nullptr;
+    void* swing = name ? Call<0x4D42F0, void*>(name, b) : nullptr;
+    CPoolHeader* pool = swing ? ObjectPool() : nullptr;
+    for (int i = 0; pool && i < pool->size; ++i) {
+        if (pool->byteMap[i] < 0) continue;
+        auto* o = (CObject*)(pool->objects + (size_t)i * kObjectPoolElemSize);
+        auto* clump = (uint8_t*)o->RwObject();
+        if (std::find(std::begin(kBoothDoors), std::end(kBoothDoors), o->ModelIndex()) == std::end(kBoothDoors) || !clump ||
+            clump[0] != 2 /* rpCLUMP */ || (o->GetPosition() - copy->GetPosition()).Length() > 4.0f)
+            continue;
+        if (!Call<0x4D6760, bool>(clump)) Call<0x4D6720>(clump);  // RpAnimBlendClumpIsInitialized, RpAnimBlendClumpInit
+        // flags 0 as the script's: once, held shut on its last frame (BlendAnimation restarts a finished one)
+        if (void* a = anim::Blend(clump, swing, 0, 4.0f)) anim::SetCurrentTime(a, std::min(t, anim::TotalTime(swing)));
+        LOGD("The other player's changing room door: %s", name);
+        return;
+    }
+}
+
 // a group's block is in memory and its associations are made (a gun's group comes with the gun in the copy's hand)
 bool GroupReady(int group) {
     uintptr_t g = Ref<uintptr_t>(0xB4EA34) + (uintptr_t)group * 0x14;  // CAnimManager::ms_aAnimAssocGroups
@@ -244,13 +277,16 @@ public:
             Wanted& w = m_remote[from];
             w.a = Activity{};
             if (op == OP_ACTIVITY) {
-                w.a.block = r.I16();
-                w.a.idx = r.I16();
+                uint32_t block = r.U32();
+                w.a.block = (int16_t)anim::BlockByKey(block);
+                w.a.key = r.U32();
                 w.a.flags = r.U16();
                 w.a.time = r.F32();
                 w.a.held = r.U8() != 0;
                 w.a.speed = r.F32();
-                if (!r.Ok() || w.a.block < 0 || w.a.idx < 0 || !(w.a.speed >= 0.0f && w.a.speed <= 10.0f)) w.a = Activity{};
+                // an IFP this game has not (a player's own file): the copy cannot show it and stands as it is
+                if (r.Ok() && w.a.block < 0) LOGD("Remote player %d plays an animation of a file not here (%08X)", from, block);
+                if (!r.Ok() || w.a.block < 0 || !(w.a.speed >= 0.0f && w.a.speed <= 10.0f)) w.a = Activity{};
             }
             w.recvMs = NowMs();
             ++w.seq;
@@ -372,7 +408,7 @@ private:
         Activity now;
         bool on = !me->InVehicle() && CurrentActivity(me, now);
         // the same one again shows up as its time going back (a looped one going back is its next lap)
-        bool same = on && now.block == m_sent.block && now.idx == m_sent.idx && now.held == m_sent.held;
+        bool same = on && now.block == m_sent.block && now.key == m_sent.key && now.held == m_sent.held;
         // a new pace goes out at most four times a second (the gym bike's changes with every tap)
         bool paced = same && std::fabs(now.speed - m_sent.speed) > 0.1f && NowMs() - m_pacedMs > 250;
         if (paced) same = false, m_pacedMs = NowMs();
@@ -382,14 +418,14 @@ private:
         Writer w(proto::G_PLAYER_ANIM);
         if (on) {
             w.U8(OP_ACTIVITY);
-            w.I16(now.block);
-            w.I16(now.idx);
+            w.U32(anim::BlockKey(now.block));
+            w.U32(now.key);
             w.U16(now.flags);
             w.F32(now.time);
             w.U8(now.held);
             w.F32(now.speed);
-            if (paced) LOGD("Activity animation %s/%d at speed %.2f", (const char*)anim::Block(now.block), now.idx, now.speed);
-            else LOGI("Activity animation %s/%d (%s)", (const char*)anim::Block(now.block), now.idx, restarted ? "again" : "started");
+            if (paced) LOGD("Activity animation %s/%08X at speed %.2f", (const char*)anim::Block(now.block), now.key, now.speed);
+            else LOGI("Activity animation %s/%08X (%s)", (const char*)anim::Block(now.block), now.key, restarted ? "again" : "started");
         } else {
             w.U8(OP_ACTIVITY_END);
             LOGI("Activity animation ended");
@@ -425,7 +461,9 @@ private:
     void ApplyActivities() {
         for (auto& [id, w] : m_remote) {
             RemotePlayer* rp = Players::Instance().Get(id);
-            if (!rp || !rp->ped || rp->mode != RemotePlayer::Mode::OnFoot || !rp->ped->RwObject()) continue;
+            // in a script person's place its animations are that one's (Players' FollowAvatar): its owner's wait
+            if (!rp || !rp->ped || rp->mode != RemotePlayer::Mode::OnFoot || !rp->ped->RwObject() || rp->avatar >= 0) continue;
+
             if (w.appliedHandle != rp->pedHandle) {
                 w.applied = nullptr;
                 w.appliedSeq = w.seq - 1;
@@ -433,10 +471,7 @@ private:
             if (w.seq == w.appliedSeq) continue;
             void* clump = rp->ped->RwObject();
             void* h = nullptr;
-            if (w.a.block >= 0 && !(h = anim::Resolve(w.a.block, w.a.idx))) {
-                if (w.a.block < Ref<int32_t>(0xB4EA30) && !anim::BlockLoaded(w.a.block)) m_streamed.insert(w.a.block);
-                continue;
-            }
+            if (w.a.block >= 0 && !(h = anim::Find(w.a.block, w.a.key))) continue;  // its IFP is being loaded
             if (rp->ped->InVehicle()) {
                 // thrown off its bike or out of its car in its game: the fall plays at its place now, not after the wait
                 // for an exit animation (Players warps it out standing 4 s later)
@@ -471,8 +506,9 @@ private:
                     Field<float>(a, 0x24) = w.a.speed;
                     float t = w.a.time + (float)(NowMs() - w.recvMs) / 1000.0f * w.a.speed, total = anim::TotalTime(h);
                     anim::SetCurrentTime(a, (w.a.flags & anim::F_LOOPED) && total > 0 ? std::fmod(t, total) : std::min(t, total));
+                    SwingBoothDoor(rp->ped, w.a.block, h, t);
                 }
-                LOGI("Remote player %d activity animation %s/%d (flags %04X%s)", id, (const char*)anim::Block(w.a.block), w.a.idx,
+                LOGI("Remote player %d activity animation %s/%08X (flags %04X%s)", id, (const char*)anim::Block(w.a.block), w.a.key,
                      w.a.flags, a ? "" : ", not blended");
             } else if (w.applied && !w.overWalk) {
                 // its stance back: the player's task starts its walk set again only when its move state changes, and a

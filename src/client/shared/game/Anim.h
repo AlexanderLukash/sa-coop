@@ -1,9 +1,12 @@
 #pragma once
 // Views over the animation system: CAnimBlendAssociation (playing instance), CAnimBlendHierarchy
 // (animation data, CAnimManager::ms_aAnimations) and CAnimBlock (one IFP file, ms_aAnimBlocks).
-// An animation is identified across games by (IFP block index, index inside the block): both games
-// register the same IFP files in the same order, while hierarchy addresses differ.
+// An animation goes between games by names: its IFP block's (BlockKey) and its own (NameKey). The indices are each
+// game's own: a mod's gta3.img or ped.ifp with more or other animations shifts them, and the copies played other
+// animations than their owners (a gym and a clothes shop, 03.11).
+#include <cctype>
 #include <cstdint>
+#include <unordered_map>
 
 #include "shared/game/Game.h"
 
@@ -46,15 +49,43 @@ inline bool Locate(void* h, int& block, int& idx) {
     return off >= 0 && off % 0x18 == 0 && idx < Ref<int32_t>(Block(block) + 0x18);
 }
 
-// (block, index) -> hierarchy. The IFP is requested (kept in memory) when it is not loaded yet: nullptr then.
-inline void* Resolve(int block, int idx) {
-    if (block < 0 || block >= Ref<int32_t>(0xB4EA30) || idx < 0) return nullptr;
+// CAnimBlendHierarchy::m_hashKey: the key of the animation's name (CKeyGen::GetUppercaseKey), the same in every game
+inline uint32_t NameKey(void* h) { return Field<uint32_t>(h, 0x00); }
+
+// the block's name as a key (any case, as CAnimManager::GetAnimationBlockIndex compares them), never 0
+inline uint32_t BlockKey(int block) {
+    const char* s = (const char*)Block(block);
+    uint32_t k = 2166136261u;
+    for (int i = 0; i < 16 && s[i]; ++i) k = (k ^ (uint8_t)tolower((uint8_t)s[i])) * 16777619u;
+    return k ? k : 1;
+}
+
+// the block of that name here, -1: none (0, or an IFP this game has not)
+inline int BlockByKey(uint32_t key) {
+    static std::unordered_map<uint32_t, int> blocks;
+    static int counted = -1;
+    int n = Ref<int32_t>(0xB4EA30);  // ms_numAnimBlocks: our own files' blocks come after the game's
+    if (n != counted) {
+        blocks.clear();
+        for (int b = 0; b < n; ++b) blocks.emplace(BlockKey(b), b);
+        counted = n;
+    }
+    auto it = blocks.find(key);
+    return key && it != blocks.end() ? it->second : -1;
+}
+
+// (block, name key) -> hierarchy. The IFP is requested (kept in memory) when it is not loaded yet: nullptr then, as for
+// a name this game's file does not have.
+inline void* Find(int block, uint32_t key) {
+    if (block < 0 || block >= Ref<int32_t>(0xB4EA30)) return nullptr;
     if (!BlockLoaded(block)) {
         RequestModel(kIfpBase + block, 2);
         return nullptr;
     }
-    if (idx >= Ref<int32_t>(Block(block) + 0x18)) return nullptr;
-    return (void*)(kHierarchies + (uintptr_t)(Ref<int32_t>(Block(block) + 0x14) + idx) * 0x18);
+    uintptr_t first = kHierarchies + (uintptr_t)Ref<int32_t>(Block(block) + 0x14) * 0x18;
+    for (int i = 0, n = Ref<int32_t>(Block(block) + 0x18); i < n; ++i)
+        if (Ref<uint32_t>(first + (uintptr_t)i * 0x18) == key) return (void*)(first + (uintptr_t)i * 0x18);
+    return nullptr;
 }
 
 // CAnimManager::BlendAnimation(clump, hierarchy, flags, delta). The association references the IFP
@@ -62,6 +93,23 @@ inline void* Resolve(int block, int idx) {
 // copy would never be freed after blending out.
 inline void* Blend(void* clump, void* h, uint16_t flags, float delta) {
     return Call<0x4D4410, void*>(clump, h, (int)(flags & ~(F_BLOCK_REFERENCED | F_INDESTRUCTIBLE)), delta);
+}
+
+// The animation a ped is seen playing: a script's (TASK_PLAY_ANIM blends it by name, with no group, as a partial one laid
+// over the rest) before the strongest full-body one. A face's, an arm's and a flinch are partial too, each of a group or
+// flagged so. With full-body ones only, a copy stood upright at the pool table while its person aimed and struck: POOL's
+// are all partial (28.10).
+inline void* Main(void* clump) {
+    void *named = nullptr, *body = nullptr;
+    for (void* a = First(clump); a; a = Next(a)) {
+        int block, idx;
+        if (BlendDelta(a) < 0.0f || !Locate(Hierarchy(a), block, idx)) continue;
+        bool partial = (Flags(a) & F_PARTIAL) != 0;
+        if (partial && (Group(a) >= 0 || (Flags(a) & (F_SECONDARY | F_INDESTRUCTIBLE)))) continue;
+        void*& best = partial ? named : body;
+        if (!best || BlendAmount(a) > BlendAmount(best)) best = a;
+    }
+    return named ? named : body;
 }
 
 }  // namespace game::anim

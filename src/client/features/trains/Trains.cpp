@@ -4,6 +4,10 @@
 // host's game while the players are together: the partner's game makes its own only while its player is far from the
 // host (CTrain::DisableRandomTrains). Whoever rides a train sits in the cab of its copy (Players). The kind of a train is
 // not kept on it: it is noted when the train is made (CTrain::CreateMissionTrain makes the random ones too).
+// A copy's engine is open while no player drives it and no story mission of the host's runs: the player who gets in drives
+// it in its own game (its pad, CTrain::ProcessControl), and the train's own game follows (TRAIN_DRIVE) with the copy of
+// that player at its wheel (TRAIN_ENTER: its walk to the cab, which with no word there followed its owner up the step and
+// dropped back, "landing"). Every copy was locked, and the partner could not get into a train at all (29.10).
 #include <cmath>
 #include <map>
 
@@ -12,6 +16,7 @@
 #include "common/lib/sync/StateTiming.h"
 #include "common/lib/sync/RemovalHistory.h"
 #include "common/lib/util/Util.h"
+#include "entities/mission/Mission.h"
 #include "entities/player/Players.h"
 #include "shared/api/net-session/Session.h"
 #include "shared/game/Game.h"
@@ -25,7 +30,8 @@ namespace {
 using namespace game;
 using game::script::Cmd;
 
-enum : uint8_t { TRAIN_STATE = 1, TRAIN_GONE = 2 };
+enum : uint8_t { TRAIN_STATE = 1, TRAIN_GONE = 2, TRAIN_DRIVE = 3, TRAIN_ENTER = 4 };
+constexpr uint16_t kMissionTrain = 0x20;  // CTrain::m_nTrainFlags: CTrain::DoTrainGenerationAndRemoval keeps it
 constexpr uintptr_t kDisableRandomTrains = 0xC38010;  // CTrain::bDisableRandomTrains
 constexpr uint16_t kFrontCarriage = 0x8, kClockwise = 0x40;  // CTrain::m_nTrainFlags (+0x5B8)
 constexpr int kTrainModels[] = {449, 537, 538, 569, 570, 590};  // tram, freight, streak and their carriages
@@ -59,6 +65,20 @@ struct Copy {
 std::map<uint32_t, Copy> g_copies;  // by owner << 16 | its id
 sync::RemovalHistory g_removed;  // reliable deletion can overtake a final state packet
 bool g_randomOff = false;           // we switched the random trains off
+
+// ours another game's player drives (its copy there): where that game has it, and whether it was a mission's before
+struct Driven {
+    float rail = 0, speed = 0;
+    uint64_t ms = 0;
+    bool wasMission = false;
+};
+std::map<CVehicle*, Driven> g_driven;
+CVehicle* g_entering = nullptr;  // the copy our player last set off into
+
+bool WeDrive(CVehicle* t) {
+    CPlayerPed* me = FindPlayerPed(0);
+    return me && me->InVehicle() && me->Vehicle() == t && t->Driver() == me;
+}
 
 using CreateTrainFn = void(__cdecl*)(CVector, bool, uint32_t, CVehicle**, CVehicle**, int32_t, int32_t, bool);
 CreateTrainFn g_origCreateTrain = nullptr;
@@ -146,10 +166,76 @@ void RemoveCopies(int owner = -1) {
         else ++it;
 }
 
+CVehicle* OursById(uint16_t id) {
+    for (auto& [t, i] : g_ids)
+        if (i == id && IsEngine(t)) return t;
+    return nullptr;
+}
+
+// the other player at the wheel of its copy of our train: where it drives it, or its walk to the cab
+void HandleDriver(uint8_t from, uint8_t op, uint16_t id, Reader& r) {
+    uint8_t owner = r.U8();
+    CVehicle* t = owner == Net().MyId() ? OursById(id) : nullptr;
+    if (!r.Ok() || !t || t->Driver() == FindPlayerPed(0)) return;  // ours at its wheel here: ours drives
+    if (op == TRAIN_ENTER) {
+        RemotePlayer* rp = Players::Instance().Get(from);
+        if (!rp || !rp->ped || rp->ped->InVehicle()) return;
+        rp->enterTaskMs = NowMs();
+        Cmd(0x05CB).I(rp->pedHandle).I(GetVehicleRef(t)).I(10000).Run();  // TASK_ENTER_CAR_AS_DRIVER
+        LOGI("Player %d gets into our train %d", from, id);
+        return;
+    }
+    float rail = r.F32(), speed = r.F32();
+    if (!r.Ok() || !std::isfinite(rail) || !std::isfinite(speed) || std::fabs(rail) > 1e6f || std::fabs(speed) > 50.0f) return;
+    Driven& d = g_driven[t];
+    if (!d.ms) {
+        d.wasMission = (Flags(t) & kMissionTrain) != 0;
+        LOGI("Player %d drives our train %d", from, id);
+    }
+    d.rail = rail, d.speed = speed, d.ms = NowMs();
+}
+
+// our player sets off into the cab of a copy: the copy of our player there walks in too
+void SendEntering() {
+    void* task = nullptr;
+    CVehicle* target = ActivePrimaryTaskType(FindPlayerPed(0), &task) == 701 ? Field<CVehicle*>(task, 0x0C) : nullptr;  // TASK_COMPLEX_ENTER_CAR_AS_DRIVER
+    if (target == g_entering) return;
+    g_entering = target;
+    for (auto& [key, c] : g_copies)
+        if (target && c.engine == target && target->DoorLock() == 1) {  // open: no player drives it there
+            Writer w(proto::G_TRAIN);
+            w.U8(TRAIN_ENTER);
+            w.U16((uint16_t)key);
+            w.U8((uint8_t)(key >> 16));
+            Net().Send(proto::CH_RELIABLE, w);
+        }
+}
+
+void SendDriven() {
+    for (auto& [key, c] : g_copies)
+        if (IsEngine(c.engine) && WeDrive(c.engine)) {
+            Writer w(proto::G_TRAIN);
+            w.U8(TRAIN_DRIVE);
+            w.U16((uint16_t)key);
+            w.U8((uint8_t)(key >> 16));
+            w.F32(RailDistance(c.engine));
+            w.F32(Speed(c.engine));
+            Net().Send(proto::CH_STATE, w);
+        }
+}
+
+void ForgetDriven() {  // our trains are their own again
+    for (auto& [t, d] : g_driven)
+        if (IsEngine(t) && !d.wasMission) Field<uint16_t>(t, 0x5B8) &= ~kMissionTrain;
+    g_driven.clear();
+    g_entering = nullptr;
+}
+
 void HandleTrain(uint8_t from, Reader& r) {
     uint8_t op = r.U8();
     uint16_t id = r.U16();
     if (!r.Ok() || !core::IsPlayerReady()) return;
+    if (op == TRAIN_DRIVE || op == TRAIN_ENTER) return HandleDriver(from, op, id, r);
     uint32_t key = (uint32_t)from << 16 | id;
     auto it = g_copies.find(key);
     if (op == TRAIN_GONE) {
@@ -175,6 +261,7 @@ void HandleTrain(uint8_t from, Reader& r) {
     }
     if (it == g_copies.end()) {
         CVector at{p.x, p.y, p.z};
+        if (FarFromUs(at, 0, kSendWithin)) return;  // near a third player only
         int node = NearestNode(track, at);
         if (node < 0) return;  // no such track here
         // asked and streamed in the background, the copy comes with a later state: six blocking loads at once (the
@@ -210,16 +297,53 @@ void SwitchRandomTrains() {
     g_randomOff = off;
 }
 
+// The squeal of braking is the train's own driver's: CAEVehicleAudioEntity::ProcessVehicle adds ProcessPlayerTrainBrakes
+// (by pad 0's brake, the train's status the player's) only for this game's player at the wheel, and the partner never
+// heard the host brake (30.10). For the engine the other player's copy drives, the game's own formula runs with
+// that player's buttons. Its sounds sit in the player engine slot 40, ours while we drive: then not.
+using DummyTrainEngineFn = void(__fastcall*)(void*, void*, void*);
+DummyTrainEngineFn g_origDummyTrainEngine = nullptr;
+void __fastcall HookDummyTrainEngine(void* audio, void* edx, void* vp) {
+    g_origDummyTrainEngine(audio, edx, vp);
+    auto* train = Field<CVehicle*>(vp, 0x10);  // cVehicleParams::m_pVehicle
+    CPlayerPed* me = FindPlayerPed(0);
+    if (!Net().Online() || !train || !me || train->Driver() == me) return;  // ours: the game does it right after
+    const RemotePlayer* rp = train->Driver() ? Players::Instance().FindByPed(train->Driver()) : nullptr;
+    bool ownEngine = me->InVehicle() && me->Vehicle() && me->Vehicle()->Driver() == me;
+    if (!rp || ownEngine || !(Flags(train) & kFrontCarriage)) {
+        if (Field<int16_t>(audio, 0x156) == 0)  // m_SurfaceSoundType: its squeal still on, it stops with the copy's brake
+            CallMethod<0x4FA630>(audio, (int16_t)-1, 1.0f, -100.0f);  // PlayTrainBrakeSound
+        return;
+    }
+    int16_t bank = Field<int16_t>(audio, 0xDE);  // m_PlayerEngineBank: GENRL_TRAIN_P
+    void* hardware = (void*)0xB5F8B8;            // AEAudioHardware
+    if (!CallMethod<0x4D88C0, bool>(hardware, (uint16_t)bank, (int16_t)40)) {  // IsSoundBankLoaded
+        CallMethod<0x4D88A0>(hardware, (uint16_t)bank, (int16_t)40);           // LoadSoundBank: heard from the next frames
+        return;
+    }
+    CPad* pad = GetPad(0);
+    CPad keep = *pad;
+    pad->NewState = rp->padNew, pad->OldState = rp->padOld, pad->DisablePlayerControls = 0;
+    uint8_t& status = Field<uint8_t>(train, 0x36);  // CEntity::m_nStatus in the high 5 bits: STATUS_PLAYER is 0
+    uint8_t was = status;
+    status &= 7;
+    CallMethod<0x500AB0>(audio, vp);  // ProcessPlayerTrainBrakes
+    status = was;
+    *pad = keep;
+}
+
 class Trains : public Module {
 public:
     const char* Name() const override { return "Trains"; }
 
     void OnInstallHooks() override {
         mem::HookFn(0x6F7550, &HookCreateMissionTrain, &g_origCreateTrain, "CTrain::CreateMissionTrain");
+        mem::HookFn(0x500710, &HookDummyTrainEngine, &g_origDummyTrainEngine, "CAEVehicleAudioEntity::ProcessDummyTrainEngine");
         Net().SetHandler(proto::G_TRAIN, &HandleTrain);
     }
     void OnSessionEnd() override {
         RemoveCopies();
+        ForgetDriven();
         g_removed.Clear();
         g_ids.clear();
         if (g_randomOff) Ref<uint8_t>(kDisableRandomTrains) = 0, g_randomOff = false;
@@ -233,6 +357,8 @@ public:
         // Clear before loading, not when the world becomes playable: trains
         // created by loading/prologue scripts must retain their recorded kind.
         g_copies.clear();
+        g_driven.clear();
+        g_entering = nullptr;
         g_removed.Clear();
         g_kinds.clear();
         g_ids.clear();
@@ -252,17 +378,43 @@ public:
                 it = g_copies.erase(it);
                 continue;
             }
+            if (WeDrive(c.engine)) {  // our pad moves it (CTrain::ProcessControl), its owner follows
+                c.ms = NowMs();
+                ++it;
+                continue;
+            }
+            // open while no player drives it and no story mission of the host's runs (its trains are its own)
+            CPed* drv = c.engine->Driver();
+            c.engine->DoorLock() = (drv && drv->IsPlayer()) || HostMissionRecent(0) ? 2 : 1;  // CARLOCK_LOCKED, CARLOCK_UNLOCKED
             uint64_t age = sync::AgeMs(NowMs(), c.ms);
             Speed(c.engine) = c.speed * sync::Freshness(age, 500, 1000);
             RailDistance(c.engine) = c.rail + c.speed * sync::ExtrapolationSeconds(age, 300) * 50.0f;
             ++it;
         }
+        // ours the other player drives: where its game has it, kept as a mission's from the clear-out far from our camera
+        // (a mission's clean-up releases all mission trains: set every frame)
+        for (auto it = g_driven.begin(); it != g_driven.end();) {
+            CVehicle* t = it->first;
+            Driven& d = it->second;
+            if (!IsEngine(t) || NowMs() - d.ms > 1000) {
+                if (IsEngine(t) && !d.wasMission) Field<uint16_t>(t, 0x5B8) &= ~kMissionTrain;
+                it = g_driven.erase(it);
+                continue;
+            }
+            Field<uint16_t>(t, 0x5B8) |= kMissionTrain;
+            Speed(t) = d.speed;
+            RailDistance(t) = d.rail + d.speed * (float)(NowMs() - d.ms) / 20.0f;
+            ++it;
+        }
     }
 
     void OnPostProcess() override {
-        if (!Net().Online() || Net().Peers().empty() || !core::IsPlayerReady() || NowMs() - g_sendMs < 100) return;
+        if (!Net().Online() || Net().Peers().empty() || !core::IsPlayerReady()) return;
+        SendEntering();
+        if (NowMs() - g_sendMs < 100) return;
         g_sendMs = NowMs();
         SendOurs();
+        SendDriven();
     }
 
     static Trains& Instance() {

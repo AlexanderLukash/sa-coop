@@ -84,6 +84,9 @@ int main() {
     Reader current(profile.Data(), profile.Size());
     assert(sync::ReadProfileExtension(current, 6, homes, moves));
     assert(homes == 0x80000008u && moves == 7 && current.U32() == 0x12345678);
+    Reader upgraded(profile.Data(), profile.Size());
+    assert(sync::ReadProfileExtension(upgraded, 7, homes, moves));
+    assert(homes == 0x80000008u && moves == 7);
     Reader incompatible(profile.Data(), profile.Size());
     assert(!sync::ReadProfileExtension(incompatible, 5, homes, moves));
     Reader truncated(profile.Data(), 4);

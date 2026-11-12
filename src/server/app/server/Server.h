@@ -22,6 +22,8 @@ struct Config {
     bool friendlyFire = false;  // the players can hurt each other
     bool allowCheats = true;
     street::Settings streetRaces;
+    bool partnerTeleport = true;  // the partners may use /tp and /tphere
+    bool sharedLife = false;      // a partner's death fails the host's story mission
     uint16_t port = 7788;
     int maxPlayers = proto::kMaxPlayers;
     std::wstring dataDir;    // profiles/, world/
@@ -81,7 +83,7 @@ private:
     void SaveProfile(Player& p, const std::vector<uint8_t>& data);
     void WriteProfiles();      // the profile writer's thread
     void WaitProfileWrites();  // returns once what is queued is on the disk
-    void ResetProfiles();
+    void SwitchGame(uint32_t game);  // the host plays another game: its partners' profiles
 
     void Relay(Player& from, uint8_t channel, const uint8_t* data, size_t size, uint32_t flags);
     // to == nullptr: everyone. The server's own texts come in both languages (en empty: the same in English).
@@ -117,6 +119,7 @@ private:
     std::vector<uint8_t> m_worldWaiters;   // player ids waiting for the world save
     uint64_t m_worldWantedTime = 0;        // when the host was asked for a fresh snapshot (0 = not asked)
     bool m_prologue = false;               // the host plays a new game's prologue: partners wait for its end
+    uint32_t m_gameId = 0;                 // the host's game (C_GAME_ID): whose profiles the partners get
 
     std::mutex m_cmdMutex;
     std::vector<std::string> m_cmdQueue;

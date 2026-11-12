@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <map>
+#include <set>
 
 #include "entities/vehicle/VehicleState.h"
 #include "shared/game/Game.h"
@@ -36,12 +37,16 @@ struct NetVehicle {
     uint8_t owner = 0;
     uint16_t model = 0;
     bool createdByUs = false;  // we created it as a mirror (delete it when the owner removes it)
+    bool gaveWay = false;      // owned: the copy of another game's car made here cleared it off its spot (SpawnMirror)
     bool script = false;       // a script's car in the game that announced it
     uint16_t missionFleetRoot = 0;  // support vehicle created to give the mission party enough seats
     uint64_t missionUnheldMs = 0;   // root: mission script released it; retain support cars briefly
     uint8_t origBy = 0;        // what this game had it created by before it became a mirror here (0: spawned as one)
     bool heldHere = false;     // a script of this game held it when it became a mirror here
     bool crashProofHere = false;  // made collision-proof here as a mirror (taken off when it is this game's again)
+    bool apart = false;           // mirror: not here for our player's school (SetApart)
+    bool noCollision = false;     // mirror: its collision is off in its owner's game (F_NO_COLLISION)
+    uint64_t bumpMs = 0;           // mirror: our player's car last touched it then
 
     VehicleSpawn spawn;  // fallback for recreating a locally lost mirror before its first state
     uint64_t mirrorRetryMs = 0;
@@ -54,6 +59,8 @@ struct NetVehicle {
     float sentHealth = -1;      // owned: the health last sent (a car on its roof or on fire loses it standing still)
     VehicleLook look;            // owned: last sent; mirror: wanted
     bool hasLook = false;
+    uint8_t damageShown[20] = {};        // mirror: the owner's damage last rebuilt here,
+    game::CVehicle* damageOn = nullptr;  // on this vehicle (none: rebuild at the next look)
     uint64_t lookCheckMs = 0, lookSentMs = 0;
 };
 
@@ -90,11 +97,20 @@ public:
     void Reannounce();
     // this game would drop the car, the other player is nearer: it goes to that player's game (false: not ours to give)
     bool QueueGiveAway(game::CVehicle* v, uint8_t to);
+    // a car each game makes of its own at one place as its player comes near (the police impound's, IMPND): not announced
+    // while nobody drives it (a copy of the other game's stood on top of it)
+    void KeepLocal(game::CVehicle* v);
+    // a copy that is not here for our player's school: whoever sits in it does not show either
+    bool Apart(game::CVehicle* v) {
+        NetVehicle* nv = Find(v);
+        return nv && nv->apart;
+    }
     // The host's mission cleared an area: the other players' empty cars there go from this game at once (their copies
     // are mission cars here, CLEAR_AREA left them). Returns their ids for the owners (G_VEH_CLEAR).
     std::vector<uint16_t> ClearMirrors(const game::CVector& at, float radius);
 
 private:
+    VehicleSpawn SpawnOf(const NetVehicle& nv) const;
     void Announce(const NetVehicle& nv);
     bool CreateMirror(const VehicleSpawn& sp);
     void ScanTraffic();
@@ -111,6 +127,7 @@ private:
     void Drop(uint16_t netId);  // the owner let it go: a spawned mirror goes, an instance of this game stays
     void Protect(NetVehicle& nv);
     void Release(NetVehicle& nv);
+    void SetApart(NetVehicle& nv, bool on);
     void GiveAway(NetVehicle& nv, uint8_t to);
     void HandleHandover(uint8_t from, Reader& r);
     void TakeOver(NetVehicle& nv, uint8_t from);  // a mirror becomes this game's own car (handed over or kept)
@@ -122,6 +139,7 @@ private:
     NetVehicle* RegisterOwnedVehicle(game::CVehicle* v, bool mission, uint16_t fleetRoot = 0);
     void KeepCarWhileInside(game::CPlayerPed* me);
     void ReleaseKeptCar();
+    void HoldCarsWithoutGround();
     game::CVehicle* SpawnMirror(const VehicleSpawn& sp);
     game::CVehicle* FindAdoptable(uint16_t model, const game::CVector& pos);
 
@@ -129,12 +147,15 @@ private:
     std::map<game::CVehicle*, uint16_t> m_byPtr;
     std::map<uint16_t, VehicleSpawn> m_pending;  // announced mirrors waiting for their model to stream in
     std::map<game::CVehicle*, uint8_t> m_giveAway;  // to hand over after the population code (vehicle -> player)
+    std::set<int> m_local;                           // handles of KeepLocal's cars
     uint16_t m_nextId = 1;
     uint64_t m_lastScan = 0;
     uint64_t m_lastFleetUpdate = 0;
     int m_lastDriven = -1, m_kept = -1;  // handles: the car the local player last drove, and it kept while inside
     uint8_t m_keptBy = 0;               // what it was created by before
     int8_t m_lastArea = 0;
+    std::set<int> m_heldNoGround;       // handles of our cars HoldCarsWithoutGround froze
+    uint64_t m_groundCheckMs = 0;
 };
 
 // Vehicles that are synchronised at all (trains are left to each game). An RC toy is its player's game's car with

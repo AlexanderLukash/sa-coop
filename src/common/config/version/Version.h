@@ -1,14 +1,14 @@
 #pragma once
 
 #define COOP_NAME "SA:COOP"
-#define COOP_VERSION_STR "0.3.3"
+#define COOP_VERSION_STR "0.3.4"  // fork with upstream v0.3.3
 
 #ifndef RC_INVOKED  // the resource compiler reads only the macros above (VersionInfo.rc)
 #include <cstdint>
 
 namespace coop {
 // Bumped on any incompatible change of the network protocol.
-constexpr uint32_t kProtocolVersion = 24;
+constexpr uint32_t kProtocolVersion = 55;
 constexpr uint16_t kDefaultPort = 7788;
 // Size of gta_sa.exe 1.0 US (HOODLUM) — the only supported executable.
 constexpr uint32_t kSupportedExeSize = 14383616;

@@ -131,7 +131,8 @@ VehicleState VehicleState::Capture(game::CVehicle* v) {
     game::CPlayerPed* me = game::FindPlayerPed(0);
     bool horn = me && v->Driver() == me ? game::CallMethod<0x53FEE0, bool>(game::GetPad(0)) : game::Field<uint32_t>(v, 0x514) > 0;
     s.flags = (v->EngineOn() ? F_ENGINE : 0) | (v->LightsOn() ? F_LIGHTS : 0) | (v->SirenOn() ? F_SIREN : 0) |
-              (horn ? F_HORN : 0) | (v->Status() == 5 ? F_WRECKED : 0) | (v->VehicleFlagsLo() & 0x20 ? F_HANDBRAKE : 0);
+              (horn ? F_HORN : 0) | (v->Status() == 5 ? F_WRECKED : 0) | (v->VehicleFlagsLo() & 0x20 ? F_HANDBRAKE : 0) |
+              (v->Flags() & 1 ? 0 : F_NO_COLLISION);  // CEntity::m_bUsesCollision
     int type = v->VehicleSubClass();
     if (type <= game::VEHICLE_TYPE_PLANE || type == game::VEHICLE_TYPE_TRAILER) {  // CAutomobile and its subclasses
         s.extras |= X_MISC;
@@ -153,6 +154,9 @@ VehicleState VehicleState::Capture(game::CVehicle* v) {
         s.extras |= X_BIKE;
         s.lean = game::Field<float>(v, 0x648);     // m_RideAnimData.LeanAngle
         s.leanFwd = game::Field<float>(v, 0x650);  // LeanFwd
+        // the rider's quick taps on the pedals: only a player's bike counts them (CBmx::ProcessAI, 0x6C14B2), and
+        // CBmx::ProcessDrivingAnims stands its rider up on the pedals by this alone
+        if (type == game::VEHICLE_TYPE_BMX && game::Field<float>(v, 0x818) > 5.0f) s.flags |= F_SPRINT;
     }
     // CHeli::ProcessControl (0x6C7050) lights it for the police AI or a player's Police Maverick (the horn)
     if (type == game::VEHICLE_TYPE_HELI && game::Field<uint8_t>(v, 0xA11) && game::Field<float>(v, 0xA00) > 0.0f) {
@@ -238,6 +242,9 @@ void VehicleSpawn::Write(Writer& w) const {
     w.I8(area);
     w.U8(lockState);
     w.U8(script);
+    w.U8(owned);
+    w.I8(extras[0]);
+    w.I8(extras[1]);
 }
 
 bool VehicleSpawn::Read(Reader& r) {
@@ -251,6 +258,9 @@ bool VehicleSpawn::Read(Reader& r) {
     area = r.I8();
     lockState = r.U8();
     script = r.Bool();
+    owned = r.Bool();
+    extras[0] = r.I8();
+    extras[1] = r.I8();
     return r.Ok() && sync::PlausiblePosition(V(pos)) && area >= 0 && area <= 18 && health <= 10000.0f;
 }
 

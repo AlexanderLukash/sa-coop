@@ -18,6 +18,9 @@ street::Snapshot g_snapshot;
 bool g_have=false,g_started=false,g_initialRequested=false;
 uint64_t g_received=0,g_sequence=0,g_syncAt=0;
 economy::CashProjection g_projection;
+uint32_t g_cashGame = 0;
+bool g_cashGameKnown = false, g_profileSeeded = false;
+int32_t g_profileSeed = 0;
 
 void ProjectCash() {
     if(!g_have||!g_started||!core::IsPlayerReady()||!flow::InSharedWorld())return;
@@ -26,7 +29,8 @@ void ProjectCash() {
 }
 void BeginWorld() {
     if(!g_have||!core::IsPlayerReady()||!flow::InSharedWorld())return;
-    int32_t seed=std::clamp(game::PlayerInfos()[0].money,0,(int32_t)economy::kMaximumCash);
+    if (!Net().IsHost() && !g_profileSeeded) return;
+    int32_t seed=std::clamp(Net().IsHost() ? game::PlayerInfos()[0].money : g_profileSeed,0,(int32_t)economy::kMaximumCash);
     g_started=true;
     if(!g_snapshot.initialized&&!g_initialRequested){
         Writer request=EconomyRequest(street::ClientOp::Initialize);request.I32(seed);Net().Send(proto::CH_RELIABLE,request);
@@ -90,6 +94,7 @@ public:
         });
     }
     void OnSessionStart() override {
+        g_cashGameKnown = g_profileSeeded = false;
         g_snapshot={};g_have=g_started=g_initialRequested=false;g_received=g_sequence=g_syncAt=0;g_projection={};
     }
     void OnSessionEnd() override {g_have=g_started=false;g_projection.pending.clear();}
@@ -116,6 +121,29 @@ bool SetServerCash(uint8_t player,int32_t amount){
     Writer w=EconomyRequest(street::ClientOp::SetCash);w.U8(player);w.Str(ToLower(Net().PeerName(player)),64);w.I32(amount);Net().Send(proto::CH_RELIABLE,w);return true;
 }
 void RefreshAuthoritativeCash(){ProjectCash();}
+void ResetCashGame(uint32_t game) {
+    if (g_cashGameKnown && g_cashGame == game) return;
+    g_cashGame = game;
+    g_cashGameKnown = true;
+    g_profileSeeded = false;
+    g_have = g_started = g_initialRequested = false;
+    g_received = g_sequence = g_syncAt = 0;
+    g_snapshot = {};
+    g_projection = {};
+}
+void ApplyNonMissionCash(int32_t delta) {
+    CaptureNative();
+    int64_t before = g_projection.flow;
+    auto& info = game::PlayerInfos()[0];
+    info.money = (int32_t)std::clamp<int64_t>((int64_t)info.money + delta, 0, economy::kMaximumCash);
+    CaptureNative();
+    // Gifts and their refunds must never become another story mission reward.
+    g_projection.flow = before;
+}
+void SeedProfileCash(int32_t cash) {
+    g_profileSeed = cash;
+    g_profileSeeded = true;
+}
 int64_t NativeCashFlow(){
     return g_projection.flow+(g_started&&core::IsPlayerReady()&&flow::InSharedWorld()?g_projection.Difference(game::PlayerInfos()[0].money):0);
 }

@@ -1,11 +1,12 @@
-// The radio of a car with players in it. Each game plays its own radio (CAERadioTrackManager, one per game), and the
-// remote driver's car is not its player's for this game's vehicle sound (see HookVehicleAudioService in Players.cpp),
-// so a passenger heard the car's own station picked at random here, at a random point of a random track, and could
-// retune it. The driver's game sends its radio while players ride with it: the station, the tracks queued on it and
-// where the playing one is. The passenger's game tunes in to the same station, puts the same tracks in the queue and
-// starts the playing one at the driver's point; its own retune buttons are dead while the driver is a remote player.
-// The User Track Player plays files of the player's own computer: a passenger's plays its own tracks (the files are not
-// sent over the network), and the chat says so.
+// The radio of a car two players ride in (the user's request of 03.11, built on PR #49). Each game plays its own radio
+// (CAERadioTrackManager, one per game), and the remote driver's car is not its player's for this game's vehicle sound
+// (see HookVehicleAudioService in Players.cpp), so a passenger heard the car's own station picked at random here, at a
+// random point of a random track, and could retune it. The driver's game sends its radio while players ride with it:
+// the station, the tracks queued on it and where the playing one is. The passenger's game tunes in to the same station,
+// puts the same tracks in the queue and starts the playing one at the driver's point. Only the driver retunes (the
+// user's choice): a passenger's radio buttons do nothing while the driver is a remote player. The User Track Player
+// plays files of the player's own computer: a passenger's plays its own tracks (no files go over the network), and the
+// chat says so.
 #include <algorithm>
 #include <cstdlib>
 #include <map>
@@ -28,32 +29,32 @@ namespace coop {
 namespace {
 using namespace game;
 
-constexpr uintptr_t kRadio = 0x8CB6F8;          // AERadioTrackManager (CAERadioTrackManager, 0x370)
-constexpr uintptr_t kAudioEngine = 0xB6BC90;    // AudioEngine
-// CAEVehicleAudioEntity::s_pVehicleAudioSettingsForRadio: the settings of the car this game's player rides in, set by
-// TurnOnRadioForVehicle (0x4F5B20) for the driver and the passengers alike
+constexpr uintptr_t kRadio = 0x8CB6F8;        // AERadioTrackManager (CAERadioTrackManager, 0x370)
+constexpr uintptr_t kAudioEngine = 0xB6BC90;  // AudioEngine
+// the settings of the car this game's player rides in (tVehicleAudioSettings*): set by
+// CAEVehicleAudioEntity::TurnOnRadioForVehicle (0x4F5B20) for the driver and the passengers alike, cleared as they get out
 constexpr uintptr_t kRadioCarSettings = 0xB6B99C;
 constexpr uintptr_t kUserTracksCount = 0xB6B970 + 0x06;  // AEUserRadioTrackManager.m_nUserTracksCount
 
 // CAERadioTrackManager
-constexpr int kMode = 0x68;                 // m_nMode (eRadioTrackMode)
-constexpr int kStationsListed = 0x6C;       // m_nStationsListed: retune presses not acted on yet
+constexpr int kMode = 0x68;             // m_nMode (eRadioTrackMode)
+constexpr int kStationsListed = 0x6C;   // m_nStationsListed: retune presses not acted on yet
 constexpr int kStationsListDown = 0x70;
-constexpr int kMenuRequest = 0x78;          // m_iRadioStationMenuRequest: RetuneRadio while paused
-constexpr int kScriptRequest = 0x7C;        // m_iRadioStationScriptRequest: RetuneRadio otherwise
-constexpr int kRequested = 0x88;            // m_RequestedSettings (tRadioSettings, 0x3C): what Service plays next
-constexpr int kActive = 0xC4;               // m_ActiveSettings: what plays now
+constexpr int kMenuRequest = 0x78;      // m_iRadioStationMenuRequest: the menu's audio page
+constexpr int kScriptRequest = 0x7C;    // m_iRadioStationScriptRequest: RetuneRadio
+constexpr int kRequested = 0x88;        // m_RequestedSettings (tRadioSettings, 0x3C): what Service plays next
+constexpr int kActive = 0xC4;           // m_ActiveSettings: what plays now
 // tRadioSettings
-constexpr int kQueue = 0x00;                // TrackQueue[5]: the playing track first
-constexpr int kPlayingTrack = 0x14;         // CurrTrackID: AEAudioHardware.GetPlayingTrackID, every Service
-constexpr int kPlayTime = 0x1C;             // PlayTime: requested: where the first track starts; active: where it is
-constexpr int kTrackLength = 0x20;          // TrackLengthMs
-constexpr int kFlags = 0x24;                // TrackFlags (for AEAudioHardware.PlayTrack)
-constexpr int kStation = 0x25;              // StationID
-constexpr int kBass = 0x26;                 // BassSetting
-constexpr int kBassGain = 0x28;             // BassGain
-constexpr int kTypes = 0x2C;                // TrackTypes[5]
-constexpr int kIndices = 0x33;              // TrackIndices[5]
+constexpr int kQueue = 0x00;            // TrackQueue[5]: the playing track first
+constexpr int kPlayingTrack = 0x14;     // CurrTrackID: AEAudioHardware.GetPlayingTrackID, every Service
+constexpr int kPlayTime = 0x1C;         // PlayTime: requested: where the first track starts; active: where it is
+constexpr int kTrackLength = 0x20;      // TrackLengthMs
+constexpr int kFlags = 0x24;            // TrackFlags (for AEAudioHardware.PlayTrack)
+constexpr int kStation = 0x25;          // StationID
+constexpr int kBass = 0x26;             // BassSetting
+constexpr int kBassGain = 0x28;         // BassGain
+constexpr int kTypes = 0x2C;            // TrackTypes[5]
+constexpr int kIndices = 0x33;          // TrackIndices[5]
 constexpr int kQueueLength = 5;
 
 enum : int8_t { RADIO_USER_TRACKS = 12, RADIO_OFF = 13 };
@@ -61,10 +62,10 @@ enum : int32_t { MODE_PLAYING = 2 };
 enum : uint8_t { RADIO_TYPE_CIVILIAN = 0 };
 enum : int { AE_FRONTEND_RADIO_RETUNE_START = 0x22, AE_FRONTEND_RADIO_CLICK_ON = 0x25, AE_FRONTEND_RADIO_CLICK_OFF = 0x26 };
 
-constexpr uint64_t kResendMs = 3000;     // the driver's correction for the passengers
-constexpr uint64_t kStaleMs = 10000;     // the driver's radio is not known any more
-constexpr int32_t kToleranceMs = 1000;   // a passenger this far from the driver's point starts the track again
-constexpr uint64_t kSettleMs = 5000;     // a retune of ours gets this long to start playing
+constexpr uint64_t kResendMs = 3000;    // the driver's correction for the passengers
+constexpr uint64_t kStaleMs = 10000;    // the driver's radio is not known any more
+constexpr int32_t kToleranceMs = 1000;  // a passenger this far from the driver's point starts the track again
+constexpr uint64_t kSettleMs = 5000;    // a retune of ours gets this long to start playing
 
 uint8_t* Radio() { return (uint8_t*)kRadio; }
 template <typename T> T& Requested(int off) { return Field<T>(Radio(), kRequested + off); }
@@ -85,15 +86,15 @@ struct RadioState {
     uint16_t veh = 0;
     int8_t station = RADIO_OFF;
     int n = 0;  // tracks known (none for the radio off or the User Track Player)
-    int32_t tracks[kQueueLength];
-    int8_t types[kQueueLength], indices[kQueueLength];
+    int32_t tracks[kQueueLength] = {};
+    int8_t types[kQueueLength] = {}, indices[kQueueLength] = {};
     uint8_t flags = 0;
     int32_t pos = -1, length = 0;  // ms into the first track, its length
     uint64_t recvMs = 0;
-    bool fresh = false;            // not compared with this game's radio yet
+    bool fresh = false;  // not compared with this game's radio yet
 };
 
-// ---- the driver ----
+// ---------------------------------------------------------------- the driver
 
 // this game's radio as the driver's message has it; false while it retunes
 bool ReadLocal(RadioState& s) {
@@ -102,8 +103,8 @@ bool ReadLocal(RadioState& s) {
     s.pos = -1;
     if (s.station == RADIO_OFF || s.station == RADIO_USER_TRACKS) return true;
     if (Field<int32_t>(Radio(), kMode) != MODE_PLAYING || Active<int8_t>(kStation) != s.station) return false;
-    // PlayTime is the stream's position (CAERadioTrackManager::Service's argument, AEAudioHardware.GetTrackPlayTime)
-    // in the playing track, or a negative state while it loads; the queue moves on a little after the stream does
+    // PlayTime is the stream's position (CAERadioTrackManager::Service's argument, AEAudioHardware.GetTrackPlayTime) in
+    // the playing track, or a negative state while it loads; the queue moves on a little after the stream does
     // (CheckForTrackConcatenation)
     s.pos = Active<int32_t>(kPlayTime);
     if (s.pos < 0 || Active<int32_t>(kPlayingTrack) != Active<int32_t>(kQueue)) return false;
@@ -158,7 +159,7 @@ void DriverUpdate() {
     Net().Send(proto::CH_RELIABLE, w);
 }
 
-// ---- the passenger ----
+// ---------------------------------------------------------------- the passenger
 
 std::map<uint8_t, RadioState> g_drivers;  // the latest radio of each player who drives with players in the car
 
@@ -179,11 +180,13 @@ bool g_pendingSync = false;  // it starts the driver's track at the driver's poi
 RadioState g_pendingState;   // the driver's radio it was started for
 uint64_t g_playTrackMs = 0;
 int32_t g_loadMs = 250;  // from AEAudioHardware.PlayTrack to the first sound, as last measured
-// a driver's track this game was put right on, how many times: a stream that does not keep the point would restart
-// the track every few seconds
+// a driver's track this game was put right on, how many times: a stream that does not keep the point would restart the
+// track every few seconds
 int32_t g_fixedTrack = -1;
 int g_fixes = 0;
 constexpr int kMaxFixes = 2;
+bool g_unproven = false;  // a retune of ours not compared with the driver yet
+int32_t g_lengthTold = -1;  // the last track the log told is of another length here
 
 // where the driver's first track is now
 int32_t DriverPos(const RadioState& s) {
@@ -193,8 +196,8 @@ int32_t DriverPos(const RadioState& s) {
 // the driver's station on this game's radio, the driver's tracks queued from its point (none: the game's choice)
 void Tune(int8_t station, const RadioState* s) {
     int8_t was = Active<int8_t>(kStation);
-    // CAERadioTrackManager::StartRadio(id, bass, bassGain, skipTrack) as CheckForStationRetune calls it: the tracks
-    // go into m_RequestedSettings, and Service stops the playing one and starts them
+    // CAERadioTrackManager::StartRadio(id, bass, bassGain, skipTrack) as CheckForStationRetune calls it: the tracks go
+    // into m_RequestedSettings, and Service stops the playing one and starts them
     CallMethod<0x4EB3C0>(Radio(), station, Active<int8_t>(kBass), Active<float>(kBassGain), (uint8_t)0);
     if (Requested<int8_t>(kStation) != station) return;  // a mission's ambience track holds the radio
     if (station != was) {
@@ -220,9 +223,54 @@ void Tune(int8_t station, const RadioState* s) {
     Requested<uint8_t>(kFlags) = s->flags;
     Requested<int32_t>(kPlayTime) = 0;  // set again as the track starts (HookPlayTrack)
     g_pendingTrack = s->tracks[first];
+    g_unproven = true;
 }
 
 bool g_toldUserTracks = false;  // the chat said the driver's User Track Player is not heard here
+bool g_toldButtons = false;     // the chat said only the driver retunes
+
+// The game remembers the station of the car its player gets out of (CAERadioTrackManager::StopRadio: the station, the time
+// and the game's clock) and tunes the next car it gets into within a minute to it (StartRadio, the menu's radio auto-tune).
+// After a ride with the other player the driver's station came on in our own car (03.11: the host's car played the
+// partner's SF-UR). Once out of the car of the ride the game keeps what it remembered before the ride.
+constexpr int kSavedStation = 0x74, kSavedMs = 0x58, kSavedDays = 0x16, kSavedHours = 0x17;
+struct Remembered {
+    int32_t station;
+    uint32_t ms;
+    uint8_t days, hours;
+};
+Remembered Remember() {
+    return {Field<int32_t>(Radio(), kSavedStation), Field<uint32_t>(Radio(), kSavedMs), Field<uint8_t>(Radio(), kSavedDays),
+            Field<uint8_t>(Radio(), kSavedHours)};
+}
+CVehicle* g_rideCar = nullptr;  // the car we ride in with a remote driver (compared only, never read)
+Remembered g_beforeRide{};
+uint64_t g_rideLeftMs = 0;  // we got out: the game's own save of the station comes with its audio a frame later
+
+void TrackRide(RemotePlayer* driver) {
+    CPlayerPed* me = FindPlayerPed(0);
+    CVehicle* in = me ? me->VehicleIfIn() : nullptr;
+    if (!g_rideCar) {
+        if (driver && in) g_rideCar = in, g_beforeRide = Remember(), g_rideLeftMs = 0, g_fixedTrack = -1;
+        return;
+    }
+    if (in == g_rideCar) {
+        g_rideLeftMs = 0;
+        if (in->Driver() == me) g_rideCar = nullptr;  // we took the wheel: the station is ours now
+        return;
+    }
+    if (!g_rideLeftMs) g_rideLeftMs = NowMs();
+    // StopRadio writes the time it saved at: once it has, or a while on if it saved nothing
+    if (Field<uint32_t>(Radio(), kSavedMs) == g_beforeRide.ms && NowMs() - g_rideLeftMs < 1000) return;
+    if (Field<int32_t>(Radio(), kSavedStation) != g_beforeRide.station)
+        LOGI("Radio: out of the other player's car, the game remembers station %d again (not %d)", g_beforeRide.station,
+             Field<int32_t>(Radio(), kSavedStation));
+    Field<int32_t>(Radio(), kSavedStation) = g_beforeRide.station;
+    Field<uint32_t>(Radio(), kSavedMs) = g_beforeRide.ms;
+    Field<uint8_t>(Radio(), kSavedDays) = g_beforeRide.days;
+    Field<uint8_t>(Radio(), kSavedHours) = g_beforeRide.hours;
+    g_rideCar = nullptr;
+}
 
 void PassengerUpdate() {
     if (g_pending && (Field<int32_t>(Radio(), kMode) == MODE_PLAYING || NowMs() - g_pendingMs > kSettleMs)) {
@@ -232,6 +280,7 @@ void PassengerUpdate() {
         g_playTrackMs = 0;
     }
     RemotePlayer* rp = RemoteDriver();
+    TrackRide(rp);
     auto it = rp && CarRadio() ? g_drivers.find(rp->id) : g_drivers.end();
     NetVehicle* nv = rp ? Vehicles::Instance().Find(rp->ped->VehicleIfIn()) : nullptr;
     if (it == g_drivers.end() || !nv || it->second.veh != nv->netId || NowMs() - it->second.recvMs > kStaleMs) {
@@ -244,10 +293,10 @@ void PassengerUpdate() {
     } else if (!g_toldUserTracks) {
         g_toldUserTracks = true;
         ui::TheChat().AddSystem(Ref<uint16_t>(kUserTracksCount)
-                                    ? TR("Водитель слушает свою музыку, а у вас играет ваш User Track Player.",
-                                         "The driver listens to their own music; your User Track Player plays for you.")
-                                    : TR("Водитель слушает свою музыку. У вас своих треков нет, поэтому радио выключено.",
-                                         "The driver listens to their own music. You have no tracks of your own, so the radio is off."));
+                                    ? TR("Водитель слушает свою музыку, а у вас играет ваша.",
+                                         "The driver listens to their own music, and yours plays for you.")
+                                    : TR("Водитель слушает свою музыку. Своей музыки у вас нет, и радио выключено.",
+                                         "The driver listens to their own music. You have none of your own, so the radio is off."));
     }
     int8_t want = s.station;
     if (want == RADIO_USER_TRACKS && !Ref<uint16_t>(kUserTracksCount)) want = RADIO_OFF;  // no tracks of our own
@@ -261,16 +310,35 @@ void PassengerUpdate() {
     }
     if (mine == want) {
         if (!s.fresh) return;  // compared once per message: the driver's point moves on with its game's clock
+        int32_t track = Active<int32_t>(kQueue), pos = Active<int32_t>(kPlayTime);
+        // The game is starting this very track itself (a seat just taken). A stop and a start now reach the stream with the
+        // track still in its channel: CAEStreamThread::Service keeps the channel as it is (SetReady) and drops our offset, and
+        // the track went on from the game's random point, 135 s off the driver's (05.11). Compared once it plays.
+        if (track == s.tracks[0] && Field<int32_t>(Radio(), kMode) < MODE_PLAYING) return;
         s.fresh = false;
         int32_t at = DriverPos(s);
         if (at > s.length - 3000) return;  // it is about to move on to the next track of the same queue
-        int32_t track = Active<int32_t>(kQueue), pos = Active<int32_t>(kPlayTime);
-        if (track == s.tracks[0] && pos >= 0 && std::abs(pos - at) < kToleranceMs) return;
+        // the same number, another length: the games' audio files differ (a mod), and no point of it sounds like the driver's
+        if (int32_t length = Active<int32_t>(kTrackLength); track == s.tracks[0] && Active<int32_t>(kPlayingTrack) == track && pos >= 0 &&
+                                                            length != s.length && g_lengthTold != track) {
+            g_lengthTold = track;
+            LOGW("Radio: track %d is %d ms long here, %d ms at player %d: the two games' audio differs", track, length, s.length, rp->id);
+        }
+        if (track == s.tracks[0] && pos >= 0 && std::abs(pos - at) < kToleranceMs) {
+            if (g_unproven) LOGI("Radio: track %d in step with player %d, %d ms apart", track, rp->id, pos - at);
+            g_unproven = false;
+            return;
+        }
         if (g_fixedTrack != s.tracks[0]) g_fixedTrack = s.tracks[0], g_fixes = 0;
-        if (g_fixes >= kMaxFixes) return;
-        if (++g_fixes == kMaxFixes) LOGW("Radio: track %d kept missing the driver's point, left as it is", track);
-        LOGD("Radio: track %d at %d ms, player %d's track %d at %d ms", track, pos, rp->id, s.tracks[0], at);
+        if (g_fixes >= kMaxFixes) {
+            if (g_unproven) LOGW("Radio: track %d at %d ms kept missing player %d's track %d at %d ms, left as it is", track, pos, rp->id, s.tracks[0], at);
+            g_unproven = false;
+            return;
+        }
+        ++g_fixes;
+        LOGI("Radio: track %d at %d ms, player %d's track %d at %d ms", track, pos, rp->id, s.tracks[0], at);
     } else {
+        g_fixedTrack = -1;
         LOGI("Radio: player %d's station %d, track %d", rp->id, want, s.tracks[0]);
     }
     s.fresh = false;
@@ -291,23 +359,28 @@ void Handle(uint8_t from, Reader& r) {
     s.flags = r.U8();
     s.pos = r.I32();
     s.length = r.I32();
-    if (!r.Ok() || s.station <= 0 || s.station > RADIO_OFF) return;  // the police scanner (0) is not sent
+    if (!r.Ok() || from == Net().MyId() || s.station <= 0 || s.station > RADIO_OFF) return;  // the police scanner (0) is not sent
     if (s.n && (s.pos < 0 || s.tracks[0] < 0)) return;
     s.recvMs = NowMs();
     s.fresh = true;
     g_drivers[from] = s;
 }
 
-// ---- hooks ----
+// ---------------------------------------------------------------- hooks
 
 // CAERadioTrackManager::Service -> CheckForStationRetune: the retune buttons (CPad::ChangeStationJustDown/UpJustDown)
-// and RetuneRadio's requests (the scripts, the menu's audio page). A passenger of a remote driver keeps its station.
+// and RetuneRadio's requests (the scripts; under no_pause_menu also the menu's audio page, see Patches.cpp). A passenger
+// of a remote driver keeps the driver's station.
 using RetuneFn = void(__fastcall*)(void*, void*);
 RetuneFn g_origRetune = nullptr;
 void __fastcall HookCheckForStationRetune(void* radio, void* edx) {
     if (!RemoteDriver()) return g_origRetune(radio, edx);
+    if ((Field<int32_t>(radio, kStationsListed) || Field<int32_t>(radio, kStationsListDown)) && !g_toldButtons) {
+        g_toldButtons = true;
+        ui::TheChat().AddSystem(TR("Радио переключает водитель.", "The driver changes the radio station."));
+    }
     Field<int32_t>(radio, kStationsListed) = Field<int32_t>(radio, kStationsListDown) = 0;
-    Field<int32_t>(radio, kScriptRequest) = -1;
+    Field<int32_t>(radio, kScriptRequest) = Field<int32_t>(radio, kMenuRequest) = -1;
     Field<uint8_t>(radio, 0x06) = 0;  // m_bRetuneJustStarted
 }
 
@@ -323,8 +396,8 @@ void __fastcall HookCheckForStationRetuneDuringPause(void* radio, void* edx) {
 // stream takes to start it
 using PlayTrackFn = void(__fastcall*)(void*, void*, uint32_t, int32_t, uint32_t, uint8_t, uint8_t, uint8_t);
 PlayTrackFn g_origPlayTrack = nullptr;
-void __fastcall HookPlayTrack(void* hw, void* edx, uint32_t track, int32_t next, uint32_t offset, uint8_t flags,
-                              uint8_t user, uint8_t userNext) {
+void __fastcall HookPlayTrack(void* hw, void* edx, uint32_t track, int32_t next, uint32_t offset, uint8_t flags, uint8_t user,
+                              uint8_t userNext) {
     if (g_pending && g_pendingSync && g_pendingTrack >= 0 && (int32_t)track == g_pendingTrack) {
         const RadioState& s = g_pendingState;
         int32_t at = track == (uint32_t)s.tracks[0] ? DriverPos(s) : DriverPos(s) - s.length;
@@ -334,12 +407,25 @@ void __fastcall HookPlayTrack(void* hw, void* edx, uint32_t track, int32_t next,
     g_origPlayTrack(hw, edx, track, next, offset, flags, user, userNext);
 }
 
+// A track starts with both halves of the channel's buffer filled, and PrepareStream leaves m_lastWrittenSlot as the last track
+// had it. If that was 1, UpdatePlayTime reads one half ahead (3072 ms at 32 kHz) until the buffer's first half is played.
+// Compared in those 3 s a track in step looked 3 s off and was restarted for nothing, and a driver who had just got in sent a
+// point 3 s ahead (05.11: 7 of 12 rides ended "kept missing" by 2.9-3.1 s).
+using PrepareStreamFn = int(__fastcall*)(void*, void*, void*, int32_t, int32_t);
+PrepareStreamFn g_origPrepareStream = nullptr;
+int __fastcall HookPrepareStream(void* channel, void* edx, void* decoder, int32_t flags, int32_t bytes) {
+    int r = g_origPrepareStream(channel, edx, decoder, flags, bytes);
+    Field<uint8_t>(channel, 0x67) = Field<uint8_t>(channel, 0x66);  // m_lastWrittenSlot, the half the cursor is in
+    return r;
+}
+
 class SharedRadio : public Module {
 public:
     const char* Name() const override { return "SharedRadio"; }
 
     void OnInstallHooks() override {
-        mem::RedirectCallFn(0x4EB9F4, &HookCheckForStationRetune, &g_origRetune);
+        mem::HookFn(0x4F23D0, &HookPrepareStream, &g_origPrepareStream, "CAEStreamingChannel::PrepareStream");
+        mem::RedirectCallFn(0x4EB9F4, &HookCheckForStationRetune, &g_origRetune);  // CAERadioTrackManager::Service
         mem::RedirectCallFn(0x4EB9FD, &HookCheckForStationRetuneDuringPause, &g_origRetunePaused);
         mem::RedirectCallFn(0x4EBB11, &HookPlayTrack, &g_origPlayTrack);
         Net().SetHandler(proto::G_RADIO, [](uint8_t from, Reader& r) { Handle(from, r); });
@@ -355,24 +441,22 @@ public:
         PassengerUpdate();
     }
 
-    static SharedRadio& Instance() {
-        static SharedRadio m;
-        return m;
-    }
-
 private:
     static void Reset() {
         g_drivers.clear();
         g_sentTo.clear();
         g_sent = {};
-        g_pending = g_pendingSync = false;
+        g_pending = g_pendingSync = g_unproven = false;
         g_playTrackMs = 0;
-        g_toldUserTracks = false;
+        g_fixedTrack = -1;
+        g_toldUserTracks = g_toldButtons = false;
+        g_rideCar = nullptr;
     }
 };
 
+SharedRadio g_radio;
 struct Reg {
-    Reg() { core::RegisterModule(&SharedRadio::Instance()); }
+    Reg() { core::RegisterModule(&g_radio); }
 } g_reg;
 }  // namespace
 

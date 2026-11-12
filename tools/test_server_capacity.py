@@ -30,7 +30,7 @@ def main():
     for configured, maximum, capacity, protocol in [
         (None, None, 8, "current"), (3, None, 3, "current"), (4, None, 4, "current"),
         (2, 8, 8, "current"), (None, 99, 8, "current"),
-        (None, None, 8, "old"),
+        (None, None, 8, "old"), (None, None, 8, "fork-old"), (None, None, 8, "games"),
         (None, None, 8, "rules-on"), (None, None, 8, "rules-off"),
     ]:
         with tempfile.TemporaryDirectory(prefix="sacoop-capacity-") as directory:

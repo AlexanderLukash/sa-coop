@@ -11,6 +11,7 @@
 
 #include "common/lib/util/Util.h"
 #include "features/anims/Emotes.h"
+#include "features/anims/QuickEmotes.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
 #include "shared/lib/core/Core.h"
