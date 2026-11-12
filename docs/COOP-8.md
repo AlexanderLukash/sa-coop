@@ -41,7 +41,9 @@ Story missions start when all active players are in the same marker and interior
 clients silent for more than five seconds do not block the start indefinitely.
 Side jobs and races include the players who accepted their invitations. Pool,
 contests and paired animations remain activities for two within the larger session.
-Normal vehicle seat counts remain unchanged: use additional mission vehicles.
+Normal vehicle seat counts remain unchanged. When the host has no free seat,
+upstream's per-partner mechanism supplies a matching vehicle and seats the partner
+in it, including mission aircraft. The fork's older parallel host fleet is removed.
 
 The first three partners use upstream's authored cutscene paths. Extra partners
 receive distinct host-selected spots checked against the shot's map and actors.

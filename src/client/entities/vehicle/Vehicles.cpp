@@ -211,12 +211,6 @@ NetVehicle* Vehicles::EnsureNetworked(CVehicle* v) {
     if (NetVehicle* nv = Find(v)) return nv;
     if (!Net().Online()) return nullptr;
     const bool mission = v->CreatedBy() == VEHICLE_CREATED_MISSION || ScriptHolds(v);
-    return RegisterOwnedVehicle(v, mission);
-}
-
-NetVehicle* Vehicles::RegisterOwnedVehicle(CVehicle* v, bool mission, uint16_t fleetRoot) {
-    if (!v || !IsVehicleValid(v) || !Net().Online()) return nullptr;
-    if (NetVehicle* old = Find(v)) return old;
     uint16_t id;
     do {
         id = (uint16_t)(((Net().MyId() + 1) << 12) | (m_nextId++ & 0x0FFF));
@@ -228,7 +222,6 @@ NetVehicle* Vehicles::RegisterOwnedVehicle(CVehicle* v, bool mission, uint16_t f
     nv.owner = Net().MyId();
     nv.model = v->ModelIndex();
     nv.script = mission;
-    nv.missionFleetRoot = fleetRoot;
     nv.spawn.netId = id;
     nv.spawn.model = nv.model;
     nv.spawn.owner = nv.owner;
@@ -243,108 +236,7 @@ NetVehicle* Vehicles::RegisterOwnedVehicle(CVehicle* v, bool mission, uint16_t f
     m_byPtr[v] = id;
     Announce(nv);
     LOGI("Vehicle %04X (model %d) is now networked", id, nv.model);
-    if (mission && !fleetRoot && Net().IsHost()) ProvisionMissionFleet(nv);
     return &nv;
-}
-
-void Vehicles::ProvisionMissionFleet(NetVehicle& root) {
-    // Mission cleanup holds racers, NPC transport and scenery vehicles too. Only grow a fleet after
-    // a real player boards this mission vehicle; otherwise races would duplicate every opponent car.
-    if (!Net().IsHost() || !root.script || root.missionFleetRoot || !IsVehicleValid(root.veh) ||
-        !ScriptHolds(root.veh) || !HasPlayerInside(root.veh))
-        return;
-    const std::size_t activePlayers = sync::ActivePlayersFromPeers(Net().Peers().size());
-    const std::size_t passengerSeats = std::min<std::size_t>(root.veh->MaxPassengers(), 8);
-    auto npcSeat = [](CPed* ped) {
-        return ped && !ped->IsPlayer() && !Players::Instance().FindByPed(ped);
-    };
-    std::size_t npcSeats = npcSeat(root.veh->Driver()) ? 1 : 0;
-    for (std::size_t seat = 0; seat < passengerSeats && seat < 8; ++seat)
-        if (root.veh->DoorLock() == 2 || npcSeat(root.veh->Passengers()[seat]) ||
-            Peds::Instance().SeatClaimed(root.veh, (int)seat)) ++npcSeats;
-    const std::size_t required = sync::RequiredMissionVehicles(activePlayers, passengerSeats, npcSeats);
-    const std::size_t wantedCopies = required > 0 ? required - 1 : 0;
-    std::vector<uint16_t> copies;
-    for (const auto& [id, nv] : m_byId)
-        if (nv.missionFleetRoot == root.netId && VehicleAlive(nv)) copies.push_back(id);
-    while (copies.size() > wantedCopies) {
-        auto removable = std::find_if(copies.rbegin(), copies.rend(), [this](uint16_t id) {
-            NetVehicle* nv = Find(id);
-            return nv && VehicleAlive(*nv) && !HasPlayerInside(nv->veh);
-        });
-        if (removable == copies.rend()) break;
-        uint16_t id = *removable;
-        copies.erase(std::next(removable).base());
-        Writer w(proto::G_VEH_REMOVE);
-        w.U16(id);
-        Net().Send(proto::CH_RELIABLE, w);
-        Forget(id, true);
-    }
-    if (copies.size() >= wantedCopies) return;
-
-    CMatrix* matrix = root.veh->Matrix();
-    if (!matrix) return;
-    for (std::size_t n = copies.size(); n < wantedCopies; ++n) {
-        // Place support cars beside the mission car so each player can reach one without moving the original.
-        const float lane = (float)(n / 2 + 1) * 4.0f * (n % 2 == 0 ? 1.0f : -1.0f);
-        CVector pos = root.veh->GetPosition() + matrix->right * lane;
-        int handle = -1;
-        Cmd(0x00A5).I(root.model).F(pos.x).F(pos.y).F(pos.z).Out(&handle).Run();  // CREATE_CAR
-        CVehicle* copy = GetVehicle(handle);
-        if (!copy) continue;
-        SetVehicleMatrix(copy, pos, Quat::FromMatrix(*matrix));
-        memcpy(copy->Colors(), root.veh->Colors(), 4);
-        copy->Health() = root.veh->Health();
-        copy->AreaCode() = root.veh->AreaCode();
-        copy->DoorLock() = 0;  // these are party support cars, not vehicles controlled by the mission script
-        SetVehicleCreatedBy(copy, VEHICLE_CREATED_MISSION);
-        NetVehicle* support = RegisterOwnedVehicle(copy, true, root.netId);
-        if (support) SendLook(*support);
-        LOGI("Mission vehicle %04X: added party car %04X (%zu seats per car, %zu players)", root.netId,
-             support ? support->netId : 0, passengerSeats + 1, activePlayers);
-    }
-}
-
-void Vehicles::RemoveMissionFleet(uint16_t rootId) {
-    std::vector<uint16_t> ids;
-    for (const auto& [id, nv] : m_byId)
-        if (nv.missionFleetRoot == rootId && VehicleAlive(nv) && !HasPlayerInside(nv.veh)) ids.push_back(id);
-    for (uint16_t id : ids) {
-        Writer w(proto::G_VEH_REMOVE);
-        w.U16(id);
-        Net().Send(proto::CH_RELIABLE, w);
-        Forget(id, true);
-    }
-}
-
-void Vehicles::UpdateMissionFleets() {
-    if (!Net().IsHost() || NowMs() - m_lastFleetUpdate < 500) return;
-    m_lastFleetUpdate = NowMs();
-    // A script may delete its root outright instead of releasing it. Orphan
-    // support vehicles then become normal traffic rather than staying protected.
-    for (auto& [id, nv] : m_byId) {
-        if (!nv.missionFleetRoot || Find(nv.missionFleetRoot)) continue;
-        nv.missionFleetRoot = 0;
-        nv.script = false;
-        if (VehicleAlive(nv) && !ScriptHolds(nv.veh))
-            SetVehicleCreatedBy(nv.veh, VEHICLE_CREATED_RANDOM);
-    }
-    std::vector<uint16_t> roots;
-    for (const auto& [id, nv] : m_byId)
-        if (nv.script && !nv.missionFleetRoot && VehicleAlive(nv)) roots.push_back(id);
-    for (uint16_t id : roots) {
-        NetVehicle* root = Find(id);
-        if (!root || !IsVehicleValid(root->veh)) continue;
-        if (ScriptHolds(root->veh)) {
-            root->missionUnheldMs = 0;
-            ProvisionMissionFleet(*root);
-        } else if (root->missionUnheldMs == 0) {
-            root->missionUnheldMs = NowMs();
-        } else if (NowMs() - root->missionUnheldMs > 10000) {
-            RemoveMissionFleet(id);
-            root->missionUnheldMs = 0;
-        }
-    }
 }
 
 VehicleSpawn Vehicles::SpawnOf(const NetVehicle& nv) const {
@@ -1111,9 +1003,6 @@ void Vehicles::ApplyMirror(NetVehicle& nv, float dt) {
     v->SteerAngle() = st.steer * freshness;
     v->GasPedal() = st.gas * freshness;
     v->BrakePedal() = std::max(st.brake, 1.0f - freshness);
-    v->SteerAngle() = st.steer;
-    v->GasPedal() = st.gas;
-    v->BrakePedal() = st.brake;
     // CVehicle::bIsHandbrakeOn as its owner's: left on here (parked, or a car this game's player got out of), it held the
     // copy's rear wheels for good, and the car went on with its brake lights lit and its tyres smoking as if it braked.
     // A traffic driver pulls it for a moment as it stops: coming late, it locked a copy's wheels on the move ("now and then
@@ -1229,7 +1118,7 @@ void Vehicles::ScanTraffic() {
     // as the mission flew the helicopter 840 m off in one frame ("The Da Nang Thang", 04.11)
     CEntity* onVehicle = FindPlayerPed(0)->AttachedTo();
     for (auto& [id, nv] : m_byId)
-        if (!nv.missionFleetRoot && !ScriptHolds(nv.veh) && !IsMirror(nv) && IsVehicleValid(nv.veh) && !HasPlayerInside(nv.veh) && nv.veh != toy && (CEntity*)nv.veh != onVehicle &&
+        if (!IsMirror(nv) && IsVehicleValid(nv.veh) && !HasPlayerInside(nv.veh) && nv.veh != toy && (CEntity*)nv.veh != onVehicle &&
             RemoteViewDistance(nv.veh->GetPosition(), TrueArea(nv.veh)) > (Aircraft(nv.veh) ? kAirOut : kTrafficOut) &&
             !(nv.createdByUs && ByTheirDoor(nv.veh)))
             gone.push_back(id);
@@ -1344,7 +1233,6 @@ void Vehicles::OnPostProcess() {
     if (!Net().Online() || !core::IsPlayerReady()) return;
     CPlayerPed* me = FindPlayerPed(0);
     uint64_t now = NowMs();
-    UpdateMissionFleets();
     KeepCarWhileInside(me);
     HoldCarsWithoutGround();
     for (auto& [v, to] : m_giveAway)  // still ours and still free to go
@@ -1365,8 +1253,10 @@ void Vehicles::OnPostProcess() {
         if (IsMirror(nv)) {
             // keep the visual controls after the physics step (wheels, brake lights)
             if (nv.hasState) {
-                nv.veh->SteerAngle() = nv.state.steer;
-                nv.veh->BrakePedal() = nv.state.brake;
+                float freshness = sync::Freshness(sync::AgeMs(now, nv.recvMs), 500, 1000);
+                nv.veh->SteerAngle() = nv.state.steer * freshness;
+                nv.veh->GasPedal() = nv.state.gas * freshness;
+                nv.veh->BrakePedal() = std::max(nv.state.brake, 1.0f - freshness);
                 ApplyParts(nv.veh, nv.state);  // the step just leaned a bike again by its speed change
                 // CHeli::ProcessControl just switched its searchlight off (no police AI, no player here) and
                 // CHeli::PreRender (0x6C5420) adds the light to this frame at night: as the owner's
@@ -1427,13 +1317,10 @@ void Vehicles::OnSessionEnd() {
         if (IsMirror(nv)) {
             nv.script = false;
             Release(nv);
-        } else if (nv.missionFleetRoot && VehicleAlive(nv) && !ScriptHolds(nv.veh)) {
-            SetVehicleCreatedBy(nv.veh, VEHICLE_CREATED_RANDOM);  // party copies become ordinary cars after disconnect
         }
     m_byId.clear();
     m_byPtr.clear();
     m_pending.clear();
-    m_lastFleetUpdate = 0;
 }
 
 void Vehicles::OnPeerLeave(uint8_t id) {
@@ -1472,7 +1359,6 @@ void Vehicles::OnGameStarted() {
     m_byPtr.clear();
     m_pending.clear();
     m_giveAway.clear();
-    m_lastFleetUpdate = 0;
     m_local.clear();
 }
 

@@ -1,5 +1,9 @@
 # Synchronization audit
 
+> Historical audit. In fork 0.3.4 the earlier mission quorum and host support
+> fleet are superseded by upstream's all-active-player rendezvous and per-partner
+> vehicle/aircraft provisioning. See the [current release checklist](testing/upstream-0.3.3-checklist.md).
+
 The audit follows the runtime path from the ENet receive queue through the protocol readers and entity mirrors, then
 through mission/story handlers and the game hooks that apply state. The main areas are `Players`, `Peds`, `Vehicles`,
 `Damage`, `Missions`, cutscene handling, world state and the common binary buffer. The detailed ownership rules and

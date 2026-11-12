@@ -77,6 +77,14 @@ No commits after the requested release are included.
 - `node --test launcher/test/*.test.cjs`: 27 launcher tests.
 - `python tools/build_launcher_probe.py`: native config/command-line probe builds.
 
+## Post-merge item-by-item audit
+
+[All 40 requested release items](upstream-0.3.3-checklist.md) have source references
+and explicit validation limits. The follow-up audit removes the fork's older host
+support-fleet mechanism: it blocked upstream's per-partner vehicle/aircraft creation
+and automatic boarding in story missions. It also fixes duplicate assignments that
+overrode stale vehicle-control fading both before and after physics.
+
 ## Required GTA validation
 
 Automated tests do not execute GTA's SCM scripts, renderer, animation playback or physics.
