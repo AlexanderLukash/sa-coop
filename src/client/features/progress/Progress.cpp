@@ -950,6 +950,7 @@ public:
     void OnPeerJoin(uint8_t) override { g_statBased = false; m_sentModel = -1; }
     void OnGameStarted() override {  // a new world: the partner's profile goes on top again
         m_applied = false;
+        g_gameSentOk = false;
         std::random_device load;
         do g_hostLoad = load();
         while (!g_hostLoad);
@@ -984,6 +985,7 @@ public:
         CPlayerPed* me = FindPlayerPed(0);
         uint64_t now = NowMs();
         if (Net().IsHost() && (g_newGame || now - g_gameStartMs > 5000) && (!g_gameSentOk || g_gameSent != g_gameId)) {
+            ExpectHostCashGame(g_gameId);
             Writer w(proto::C_GAME_ID);
             w.U32(g_gameId);
             Net().Send(proto::CH_RELIABLE, w);

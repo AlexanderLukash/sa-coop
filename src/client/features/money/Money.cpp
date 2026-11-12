@@ -40,7 +40,7 @@ int32_t g_sent = INT32_MIN;
 uint64_t g_sentMs = 0;
 
 int32_t& Mine() { return PlayerInfos()[0].money; }
-bool Ready() { return core::IsPlayerReady() && flow::InSharedWorld() && !flow::HostWorldLoading(); }
+bool Ready() { return core::IsPlayerReady() && flow::InSharedWorld() && !flow::HostWorldLoading() && CashReady(); }
 
 void Send(uint8_t op, uint8_t to, int32_t amount) {
     Writer w(proto::G_MONEY);
@@ -134,6 +134,8 @@ bool Give(uint8_t to, int32_t amount, std::string& error) {
         error = TR("Этого игрока уже нет в игре.", "That player has left.");
     } else if (!core::IsPlayerReady() || !flow::InSharedWorld()) {
         error = TR("Передать деньги можно, когда вы в игре.", "You can give money once you are in the game.");
+    } else if (!Ready()) {
+        error = TR("Дождитесь загрузки вашего баланса.", "Wait for your cash balance to load.");
     } else if (amount <= 0) {
         error = TR("Введите сумму.", "Enter an amount.");
     } else if (amount > Mine()) {

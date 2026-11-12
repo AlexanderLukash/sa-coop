@@ -4,6 +4,7 @@
 #include <set>
 #include "common/racing/RaceProtocol.h"
 #include "common/economy/CashProjection.h"
+#include "common/economy/CashReadiness.h"
 #include "common/racing/LegacyBlips.h"
 using namespace coop;
 using namespace coop::street;
@@ -49,6 +50,37 @@ void Finish(Fixture& f,float speedHost=45,float speedGuest=40){
 RaceEngine Restore(const RaceEngine& e){Writer w;e.Write(w);Reader r(w.Data(),w.Size());RaceEngine restored;assert(restored.Read(r));return restored;}
 }
 int main(){
+    {
+        economy::CashReadiness r;
+        assert(!r.Ready(true) && !r.Ready(false));
+        r.ReceiveGame(0);  // initial server snapshot, before the loaded save's identity
+        assert(!r.Ready(true));
+        r.ExpectHostGame(77);
+        assert(!r.Ready(true));  // never project game 0's cash onto game 77
+        r.ReceiveGame(77);
+        assert(r.Ready(true) && !r.Ready(false));
+        r.profileApplied = true;
+        assert(r.Ready(false));
+        r.BeginWorld();  // same save reloaded: wait for identity/profile again
+        assert(!r.Ready(true) && !r.Ready(false));
+        r.ExpectHostGame(77);
+        assert(r.Ready(true));  // same ID needs no second server acknowledgement
+        r.profileApplied = true;
+        assert(r.Ready(false));
+        r.ExpectHostGame(88);
+        assert(!r.Ready(true));
+        r.ReceiveGame(77);  // late acknowledgement of the old game
+        assert(!r.Ready(true));
+        r.ReceiveGame(88);
+        assert(r.Ready(true) && !r.Ready(false));
+        r.profileApplied = true;
+        assert(r.Ready(false));
+        r.BeginWorld();
+        r.ExpectHostGame(0);  // an older save without a game ID
+        assert(!r.Ready(true));
+        r.ReceiveGame(0);
+        assert(r.Ready(true) && !r.Ready(false));
+    }
     {
         economy::CashProjection p;
         assert(p.Project(1000)==1000&&p.Difference(950)==-50);

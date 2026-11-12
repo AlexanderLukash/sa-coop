@@ -85,6 +85,11 @@ support-fleet mechanism: it blocked upstream's per-partner vehicle/aircraft crea
 and automatic boarding in story missions. It also fixes duplicate assignments that
 overrode stale vehicle-control fading both before and after physics.
 
+A subsequent lifecycle audit also waits for the loaded host game's identity and
+for the partner profile before applying authoritative cash. Transfers and admin
+edits wait for that balance to be ready. Regression tests cover early/old game
+acknowledgements, same-game reloads and legacy game ID 0; see the checklist.
+
 ## Required GTA validation
 
 Automated tests do not execute GTA's SCM scripts, renderer, animation playback or physics.

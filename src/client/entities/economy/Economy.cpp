@@ -4,6 +4,7 @@
 #include <set>
 #include "common/api/protocol/Protocol.h"
 #include "common/economy/CashProjection.h"
+#include "common/economy/CashReadiness.h"
 #include "common/lib/util/Util.h"
 #include "entities/session/Flow.h"
 #include "shared/api/net-session/Session.h"
@@ -18,18 +19,17 @@ street::Snapshot g_snapshot;
 bool g_have=false,g_started=false,g_initialRequested=false;
 uint64_t g_received=0,g_sequence=0,g_syncAt=0;
 economy::CashProjection g_projection;
-uint32_t g_cashGame = 0;
-bool g_cashGameKnown = false, g_profileSeeded = false;
+economy::CashReadiness g_cashReadiness;
 int32_t g_profileSeed = 0;
 
 void ProjectCash() {
-    if(!g_have||!g_started||!core::IsPlayerReady()||!flow::InSharedWorld())return;
+    if(!g_have||!g_started||!g_cashReadiness.Ready(Net().IsHost())||!core::IsPlayerReady()||!flow::InSharedWorld())return;
     int32_t projected=g_projection.Project(g_snapshot.cash);
     auto& info=game::PlayerInfos()[0];info.money=info.displayMoney=projected;
 }
 void BeginWorld() {
     if(!g_have||!core::IsPlayerReady()||!flow::InSharedWorld())return;
-    if (!Net().IsHost() && !g_profileSeeded) return;
+    if (!g_cashReadiness.Ready(Net().IsHost())) return;
     int32_t seed=std::clamp(Net().IsHost() ? game::PlayerInfos()[0].money : g_profileSeed,0,(int32_t)economy::kMaximumCash);
     g_started=true;
     if(!g_snapshot.initialized&&!g_initialRequested){
@@ -94,12 +94,12 @@ public:
         });
     }
     void OnSessionStart() override {
-        g_cashGameKnown = g_profileSeeded = false;
+        g_cashReadiness = {};
         g_snapshot={};g_have=g_started=g_initialRequested=false;g_received=g_sequence=g_syncAt=0;g_projection={};
     }
     void OnSessionEnd() override {g_have=g_started=false;g_projection.pending.clear();}
-    void OnGameShutdown() override {g_started=false;g_projection.pending.clear();}
-    void OnGameStarted() override {g_started=false;BeginWorld();}
+    void OnGameShutdown() override {g_started=false;g_projection.pending.clear();g_cashReadiness.BeginWorld();}
+    void OnGameStarted() override {g_started=false;g_cashReadiness.BeginWorld();}
     void OnPostProcess() override {
         if(!Net().Online())return;
         if(!g_have){if(NowMs()-g_syncAt>1000){Writer w(proto::C_STREET_RACING);w.U8((uint8_t)street::ClientOp::Sync);Net().Send(proto::CH_RELIABLE,w);g_syncAt=NowMs();}return;}
@@ -113,23 +113,25 @@ struct Reg{Reg(){static Economy module;core::RegisterModule(&module);}}g_reg;
 const street::Snapshot* EconomySnapshot(){return g_have?&g_snapshot:nullptr;}
 uint64_t EconomyReceivedMs(){return g_received;}
 bool CashAuthorityOnline(){return Net().Online();}
+bool CashReady(){return Net().Online() && g_have && g_started && g_snapshot.initialized && g_cashReadiness.Ready(Net().IsHost());}
 uint64_t NextCashSequence(){return g_have?++g_sequence:0;}
 Writer EconomyRequest(street::ClientOp operation){Writer w(proto::C_STREET_RACING);w.U8((uint8_t)operation);w.U64(NextCashSequence());return w;}
 bool SetServerCash(uint8_t player,int32_t amount){
-    if(!g_have||!Net().IsHost()||amount<0||amount>economy::kMaximumCash)return false;
+    if(!CashReady()||!Net().IsHost()||amount<0||amount>economy::kMaximumCash)return false;
     if(player!=Net().MyId()&&!Net().Peer(player))return false;
     Writer w=EconomyRequest(street::ClientOp::SetCash);w.U8(player);w.Str(ToLower(Net().PeerName(player)),64);w.I32(amount);Net().Send(proto::CH_RELIABLE,w);return true;
 }
 void RefreshAuthoritativeCash(){ProjectCash();}
 void ResetCashGame(uint32_t game) {
-    if (g_cashGameKnown && g_cashGame == game) return;
-    g_cashGame = game;
-    g_cashGameKnown = true;
-    g_profileSeeded = false;
+    if (!g_cashReadiness.ReceiveGame(game)) return;
     g_have = g_started = g_initialRequested = false;
     g_received = g_sequence = g_syncAt = 0;
     g_snapshot = {};
     g_projection = {};
+}
+void ExpectHostCashGame(uint32_t game) {
+    g_cashReadiness.ExpectHostGame(game);
+    if (!g_cashReadiness.Ready(true)) g_started = false;
 }
 void ApplyNonMissionCash(int32_t delta) {
     CaptureNative();
@@ -142,7 +144,7 @@ void ApplyNonMissionCash(int32_t delta) {
 }
 void SeedProfileCash(int32_t cash) {
     g_profileSeed = cash;
-    g_profileSeeded = true;
+    g_cashReadiness.profileApplied = true;
 }
 int64_t NativeCashFlow(){
     return g_projection.flow+(g_started&&core::IsPlayerReady()&&flow::InSharedWorld()?g_projection.Difference(game::PlayerInfos()[0].money):0);
