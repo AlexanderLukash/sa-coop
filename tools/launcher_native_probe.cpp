@@ -32,7 +32,7 @@ std::string Dump(const ClientConfig& c) {
     for (int i = 0; i < count; ++i) { if (i) arguments += ','; arguments += Json(WideToUtf8(args[i])); }
     LocalFree(args);
     arguments += ']';
-    return "{\"nickname\":" + Json(c.nickname) + ",\"skin\":" + std::to_string(c.skin) +
+    return "{\"nickname\":" + Json(c.nickname) + ",\"skin\":" + std::to_string(c.CatalogSkin()) +
         ",\"serverName\":" + Json(c.serverName) + ",\"password\":" + Json(c.password) +
         ",\"host\":" + Json(c.host) + ",\"port\":" + std::to_string(c.port) +
         ",\"hostMode\":" + (c.wantsHost ? "true" : "false") + ",\"autoConnect\":" + (c.autoConnect ? "true" : "false") +
@@ -104,7 +104,7 @@ int wmain(int argc, wchar_t** argv) {
                     proto::Welcome welcome; Check(welcome.Read(reader), "bad welcome");
                     std::string data = "{\"serverName\":" + Json(welcome.serverName) + ",\"friendlyFire\":" +
                         (welcome.friendlyFire ? "true" : "false") + ",\"nickname\":" + Json(cfg.nickname) +
-                        ",\"skin\":" + std::to_string(cfg.skin) + ",\"port\":" + std::to_string(cfg.port) + "}";
+                        ",\"skin\":" + std::to_string(cfg.CatalogSkin()) + ",\"port\":" + std::to_string(cfg.port) + "}";
                     WriteFileBytes(coopDir + L"probe-result.json", data.data(), data.size());
                     cfg.WriteLauncherStatus("online"); online = true;
                 } else if (message == proto::S_REJECT) {

@@ -1,16 +1,15 @@
-# Eight-player build: fork 0.3.4
+# Eight-player build: fork 0.3.5
 
 This build integrates every missing upstream commit through
-[v0.3.3 (`bf08ba1`)](https://github.com/Karimov-Akbar/sa-coop/releases/tag/v0.3.3),
-with **eight players total: one host and seven partners**. The commit inventory,
-compatibility decisions and validation are in
+[upstream main (`d9cb07e`)](https://github.com/Karimov-Akbar/sa-coop/commit/d9cb07e),
+with **eight players total: one host and seven partners**. The earlier v0.3.3 integration is documented in
 [the integration report](testing/upstream-0.3.3.md).
 
 ## Setup and update
 
 Install this build's `coop.asi` and matching `coop/coop-server.exe` on every
-machine. Fork 0.3.4 uses **protocol 55**; neither the earlier fork's protocol 24
-nor upstream v0.3.3's protocol 54 is compatible. Animation packs are included in
+machine. Fork 0.3.5 uses **protocol 64**. Upgrade clients and servers together when moving
+from fork 0.3.4 (protocol 55) or upstream 0.3.4 (protocol 63). Animation packs are included in
 `coop/packs`; optional custom IFPs go into `coop/anims` on each participating machine.
 
 The F9 host page selects 2–8 players, default 8. The selected value is saved as
@@ -39,11 +38,12 @@ IDs keep separate 12-bit namespaces for all eight owners.
 
 Story missions start when all active players are in the same marker and interior;
 clients silent for more than five seconds do not block the start indefinitely.
+The host can press Y to bring absent players over once world loading has finished.
 Side jobs and races include the players who accepted their invitations. Pool,
 contests and paired animations remain activities for two within the larger session.
 Normal vehicle seat counts remain unchanged. When the host has no free seat,
-upstream's per-partner mechanism supplies a matching vehicle and seats the partner
-in it, including mission aircraft. The fork's older parallel host fleet is removed.
+a partner can get a matching vehicle, including mission aircraft. Other partners
+can share its free seats. G also boards aircraft and boats without an ordinary seat. The fork's older parallel host fleet is removed.
 
 The first three partners use upstream's authored cutscene paths. Extra partners
 receive distinct host-selected spots checked against the shot's map and actors.
@@ -66,7 +66,7 @@ node --test launcher/test/*.test.cjs
 
 The capacity integration uses actual ENet clients and the built server: eight
 connections, rejection of the ninth, slot reuse, smaller limits, upper cap,
-45 distinct feature messages from ID 7 to all seven peers, protocol rejection,
+47 distinct feature messages from ID 7 to all seven peers, protocol rejection,
 cheat policy and separate balances when switching host games. It runs under
 Wine on Linux and natively on Windows.
 

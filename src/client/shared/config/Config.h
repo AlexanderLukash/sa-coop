@@ -7,8 +7,9 @@ namespace coop {
 struct ClientConfig {
     // [player]
     std::string nickname = "Player";
-    int skin = -1;                    // launcher skin model; -1 keeps the save's appearance
+    int CatalogSkin() const;       // numeric launcher/F9 selection, or -1 for a file or the saved appearance
     bool english = false;             // language = en: the interface in English instead of Russian
+    std::string skin;                 // worn instead of CJ (features/skins): a model's number or an own skin's file, empty: CJ
 
     // [connect]
     bool autoConnect = false;  // the F9 menu by default; launchers and test setups switch it on
@@ -22,6 +23,7 @@ struct ClientConfig {
     bool allowCheats = true;
     bool partnerTeleport = true;  // host: the partners may use /tp and /tphere
     bool sharedLife = false;      // host: a partner's death fails the host's story mission
+    bool partnerCheats = true;    // host: the partners' cheat codes work
     int maxPlayers = 8;           // host plus up to seven partners
 
     // [game]
@@ -60,6 +62,7 @@ struct ClientConfig {
     int passengerKey = 0x47;          // G
     int playerListKey = 0x71;         // F2
     int emoteKey = 0x4A;              // J, the emote wheel while held
+    int skinsKey = 0x73;              // F4: not a letter, a cheat code being typed never opens the skins
 
     // [debug]
     bool debugOverlay = false;

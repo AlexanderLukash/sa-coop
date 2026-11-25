@@ -4,6 +4,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <charconv>
 
 #include "common/api/protocol/Protocol.h"
 #include "common/config/version/Version.h"
@@ -15,6 +16,13 @@ namespace coop {
 ClientConfig& Cfg() {
     static ClientConfig cfg;
     return cfg;
+}
+
+int ClientConfig::CatalogSkin() const {
+    int id = -1;
+    auto end = skin.data() + skin.size();
+    auto parsed = std::from_chars(skin.data(), end, id);
+    return parsed.ec == std::errc{} && parsed.ptr == end ? id : -1;
 }
 
 bool ClientConfig::Load(const std::wstring& coopDirectory) {
@@ -42,9 +50,9 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     if (!ini.Load(iniPath)) return false;
 
     nickname = SanitizeNickname(ini.Get("player", "name", nickname));
-    skin = ini.GetInt("player", "skin", -1);
     if (nickname.size() < 2) nickname = "Player";
     english = ToLower(ini.Get("player", "language", "ru")) == "en";  // configs made before the switch were Russian
+    skin = ini.Get("player", "skin", "");
 
     autoConnect = ini.GetBool("connect", "auto_connect", autoConnect);
     host = ini.Get("connect", "host", host);
@@ -57,6 +65,7 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     allowCheats = ini.GetBool("connect", "allow_cheats", allowCheats);
     partnerTeleport = ini.GetBool("connect", "partner_teleport", partnerTeleport);
     sharedLife = ini.GetBool("connect", "shared_life", sharedLife);
+    partnerCheats = ini.GetBool("connect", "partner_cheats", partnerCheats);
     Ini serverIni;
     serverIni.Load(coopDir + L"server.ini");
     maxPlayers = std::clamp(ini.GetInt("connect", "max_players",
@@ -96,6 +105,7 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     passengerKey = ini.GetInt("keys", "enter_as_passenger", passengerKey);
     playerListKey = ini.GetInt("keys", "player_list", playerListKey);
     emoteKey = ini.GetInt("keys", "emote_wheel", emoteKey);
+    skinsKey = ini.GetInt("keys", "skins", skinsKey);
 
     debugOverlay = ini.GetBool("debug", "overlay", debugOverlay);
     cleanScreen = ini.GetBool("debug", "clean_screen", cleanScreen);

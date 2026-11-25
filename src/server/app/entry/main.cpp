@@ -1,7 +1,8 @@
 // coop-server.exe — SA:COOP relay server.
 //
 //   coop-server.exe [--port N] [--name "..."] [--password X] [--world <save file> | --new-game] [--host <nick>]
-//                   [--friendly-fire 0|1] [--partner-teleport 0|1] [--shared-life 0|1] [--config server.ini]
+//                   [--friendly-fire 0|1] [--partner-teleport 0|1] [--shared-life 0|1] [--partner-cheats 0|1]
+//                   [--config server.ini]
 //                   [--data <dir>]
 #include <windows.h>
 #include <mmsystem.h>
@@ -52,6 +53,8 @@ static void WriteDefaultConfig(const std::wstring& path) {
         "partner_teleport = 1\r\n"
         "; Поставьте 1, чтобы гибель напарника проваливала сюжетную миссию хоста.\r\n"
         "shared_life = 0\r\n"
+        "; Поставьте 0, чтобы у напарников не работали чит-коды.\r\n"
+        "partner_cheats = 1\r\n"
         "; Игра через интернет (UPnP, код приглашения, пробивка NAT). Если поставить 0, останется только локальная сеть.\r\n"
         "internet = 1\r\n"
         "; Ретранслятор на случай, если друг не может подключиться по коду.\r\n"
@@ -164,6 +167,7 @@ int wmain(int argc, wchar_t** argv) {
     cfg.streetRaces.maximumEvents=(uint8_t)bounded("maximum_events",8,1,8);
     cfg.partnerTeleport = ini.GetBool("server", "partner_teleport", true);
     cfg.sharedLife = ini.GetBool("server", "shared_life", false);
+    cfg.partnerCheats = ini.GetBool("server", "partner_cheats", true);
     cfg.internet = ini.GetBool("server", "internet", true);
     cfg.turn = Trim(ini.Get("server", "turn", ""));
     cfg.dataDir = dataDir;
@@ -182,6 +186,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--allow-cheats") cfg.allowCheats = next() == "1";
         else if (a == L"--partner-teleport") cfg.partnerTeleport = next() == "1";
         else if (a == L"--shared-life") cfg.sharedLife = next() == "1";
+        else if (a == L"--partner-cheats") cfg.partnerCheats = next() == "1";
         else if (a == L"--config" || a == L"--data") ++i;
     }
 

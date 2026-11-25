@@ -287,7 +287,7 @@ void RenderConnectMenu() {
         std::string query = Narrow(g_skinSearch);
         auto lower = [](std::string value) { std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return (char)std::tolower(c); }); return value; };
         query = lower(query);
-        std::vector<const skins::Skin*> matches;
+        std::vector<const skins::CatalogSkin*> matches;
         for (const auto& skin : skins::kCatalog)
             if (query.empty() || lower(Format("%d %s %s", skin.id, skin.name, skin.model)).find(query) != std::string::npos) matches.push_back(&skin);
         constexpr int pageSize = 18;
@@ -298,8 +298,8 @@ void RenderConnectMenu() {
             const auto& skin = *matches[g_skinPage * pageSize + i];
             const std::string id = "skin-" + std::to_string(skin.id);
             if (w::Button(id.c_str(), cx + (i % 3) * (cellW + 10 * s), cy + (i / 3) * (cellH + 9 * s), cellW, cellH,
-                          Format("#%d  %s", skin.id, skin.name), true, Cfg().skin == skin.id)) {
-                Cfg().skin = skin.id;
+                          Format("#%d  %s", skin.id, skin.name), true, Cfg().CatalogSkin() == skin.id)) {
+                Cfg().skin = std::to_string(skin.id);
                 flow::SaveConnectSettings();
             }
         }
@@ -308,8 +308,8 @@ void RenderConnectMenu() {
                                Format(TR("Страница %d / %d · %d скинов", "Page %d / %d · %d skins"), g_skinPage + 1, pages, (int)matches.size()));
         if (step) g_skinPage = (g_skinPage + step + pages) % pages;
         cy += rowH + 18 * s;
-        const auto* selected = skins::Find(Cfg().skin);
-        para(selected ? Format(TR("Выбрано: %s (#%d)", "Selected: %s (#%d)"), selected->name, selected->id) : "CJ", kSaBlue);
+        const auto* selected = skins::Find(Cfg().CatalogSkin());
+        para(selected ? Format(TR("Выбрано: %s (#%d)", "Selected: %s (#%d)"), selected->name, selected->id) : (Cfg().skin.ends_with(".dff") ? Cfg().skin : "CJ"), kSaBlue);
         para(TR("Скин применится вне транспорта и катсцен.", "Your skin changes when outside vehicles and cutscenes."), kSaMuted);
     } else if (g_keysPage) {
         // ---- the mod's keys and the microphone, saved in coop.ini at once
@@ -451,9 +451,9 @@ void RenderConnectMenu() {
         caption(cx, TR("Ник", "Nickname"));
         cy += ch + 6 * s;
         bool enter = w::TextBox("nick", cx, cy, 320 * s, rowH, g_nick, 20);
-        const auto* selected = skins::Find(Cfg().skin);
+        const auto* selected = skins::Find(Cfg().CatalogSkin());
         if (w::Button("skins-offline", cx + 340 * s, cy, cw - 340 * s, rowH,
-                      selected ? Format("%s · #%d", selected->name, selected->id) : TR("Выбрать скин", "Choose skin"))) g_skinBrowser = true;
+                      selected ? Format("%s · #%d", selected->name, selected->id) : (Cfg().skin.ends_with(".dff") ? Cfg().skin : TR("Выбрать скин", "Choose skin")))) g_skinBrowser = true;
         cy += rowH + 14 * s;
 
         int hostSlot = 0;
@@ -505,6 +505,7 @@ void RenderConnectMenu() {
                 Cfg().partnerTeleport = !noTeleport;
             cy += lh * 0.8f + 22 * s;
             w::Checkbox("cheats", cx, cy, TR("Разрешить чит-коды", "Allow cheat codes"), Cfg().allowCheats);
+            w::Checkbox("partner-cheats", cx + cw * 0.5f, cy, TR("Читы напарников", "Partner cheats"), Cfg().partnerCheats);
             cy += lh * 0.8f + 22 * s;
         }
 

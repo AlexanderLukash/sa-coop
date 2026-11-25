@@ -138,7 +138,7 @@ public:
         if (!m_started) {
             if (Blocked()) return Finish();
             if (!anim::BlockLoaded(m_block)) {
-                RequestModel(anim::kIfpBase + m_block, 2);
+                RequestModel(game::IfpBase() + m_block, 2);
                 m_ours.insert(m_block);
                 if (now - m_since < kLoadTimeoutMs) return;
                 LOGW("Emote %s: IFP block %s did not load", e.en, e.block);
@@ -234,7 +234,7 @@ private:
     // the emote is over: its block goes back to the streamer when we brought it in and nothing of ours plays it
     void Finish() {
         if (m_block >= 0 && m_ours.count(m_block)) {
-            Call<0x409C10>(anim::kIfpBase + m_block);  // CStreaming::SetModelIsDeletable (the association holds it)
+            Call<0x409C10>(game::IfpBase() + m_block);  // CStreaming::SetModelIsDeletable (the association holds it)
             m_ours.erase(m_block);
         }
         m_current = m_block = -1;

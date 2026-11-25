@@ -25,11 +25,10 @@ void InstallHooks() {
 // Keep referenced models intact, including characters owned by story scripts.
 struct SpecialSkin { int skin = -1; uint32_t key = 0; };
 SpecialSkin g_specialSkins[10];
-void* SkinInfo(int model) { return Ref<void*>(addr::ModelInfoPtrs + (uintptr_t)model * 4); }
 int LogicalSkin(int model) {
     if (model >= 290 && model < 300) {
         auto& cached = g_specialSkins[model - 290];
-        void* info = SkinInfo(model);
+        void* info = ModelInfoOf(model);
         return info && cached.skin >= 0 && Field<uint32_t>(info, 4) == cached.key ? cached.skin : 0;
     }
     const auto* skin = skins::Find(model);
@@ -40,15 +39,15 @@ int ResolveSkin(int id) {
     if (!skin) return -1;
     if (!skin->special) return id;
     for (int i = 0; i < 10; ++i) {
-        void* info = SkinInfo(290 + i);
+        void* info = ModelInfoOf(290 + i);
         if (info && g_specialSkins[i].skin == id && Field<uint32_t>(info, 4) == g_specialSkins[i].key && IsModelLoaded(290 + i)) return 290 + i;
     }
     for (int i = 0; i < 10; ++i) {
         const int model = 290 + i;
-        void* info = SkinInfo(model);
+        void* info = ModelInfoOf(model);
         if (!info || Field<uint16_t>(info, 8) != 0) continue;
         // Do not take a loaded slot belonging to a story script or another mod.
-        const uint8_t streamingState = Ref<uint8_t>(addr::StreamingInfo + (uintptr_t)model * 0x14 + 0x10);
+        const int streamingState = ModelLoadState(model);
         if (streamingState != 0 && (g_specialSkins[i].skin < 0 || Field<uint32_t>(info, 4) != g_specialSkins[i].key)) continue;
         Call<0x409D10>(model, skin->model, 2 | 0x10); // CStreaming::RequestSpecialModel
         LoadAllRequestedModels(false);

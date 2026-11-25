@@ -77,7 +77,8 @@ enum MsgId : uint8_t {
     G_PLAYER_AIM = 67,        // reliable, partner -> host: u16 the person its player aims at (0 none), for the story mission
     G_PLAYER_SPAWN = 68,      // reliable: (re)spawn, model, interior
     G_PLAYER_DEATH = 69,      // reliable: i16 the default group's animation the sender's player fell with (its copies die so)
-    G_PLAYER_LOOK = 70,       // reliable: clothes, fat, muscle, u16 model, the special character's name (290-299),
+    G_PLAYER_LOOK = 70,       // reliable: clothes, fat, muscle, u16 model, the special character's name (290-299) or the
+                              // own skin's (coop\skins, up to 64 bytes: the model is its number in the sender's game),
                               // u8 fighting style, u8 its moves
     G_PLAYER_STATS = 71,      // reliable: stats affecting the remote ped (skills, stamina, fight style)
     G_PLAYER_WEAPONS = 72,    // reliable: weapon inventory
@@ -138,6 +139,10 @@ enum MsgId : uint8_t {
     G_WAYPOINT = 133,         // reliable: the player's map waypoint (set or cleared)
     G_PROPERTY = 134,         // reliable: the player bought a property (its index in main.scm)
     G_HOST_SAVED = 135,       // reliable: the host saved its game, the partners save their profiles
+    G_TAKE_WHEEL = 196,       // reliable: u16 vehicle, u8 to (its driver): the sender's mission drives the sender's player in
+                              // that car (TASK_CAR_DRIVE_TO_COORD), the driver moves over to a free seat (Players.cpp)
+    G_STEALTH = 197,          // reliable: u8 victim, u8 the knife's animation group: our player knifed that player from
+                              // behind (a stealth kill, decided in the attacker's game), the victim's game plays its part
     G_EXPORT = 186,           // reliable: the docks' export list (Exports.cpp): i8 the car of the list just delivered (-1: the host
                               // says the list), i32 what it paid, bytes the list: stage, all done, 10 x delivered, 42 x imports
     G_MISSION_FX = 185,       // reliable, host -> partner: an effect of the story mission's script: u8 op (1 make, 2 play, 3 stop, 4 play
@@ -181,7 +186,9 @@ enum MsgId : uint8_t {
     G_PHOTO = 151,            // reliable, partner -> host: u8 n, u16 peds, u8 m, u16 mission objects: the host's own that
                               // the partner's camera took (their copies there), for the mission's photo checks
     G_IPL = 152,              // reliable, host -> partner: u8 op (0 in, 1 out, 2 out when far), str name: a part of the
-                              // map the host's mission brings in or takes out (REQUEST_IPL / REMOVE_IPL...)
+                              // map the host's mission brings in or takes out (REQUEST_IPL / REMOVE_IPL...); op 3, u16 n,
+                              // n x (str name, u8 held in): every part's state by name after the partner's game (re)started
+                              // (older games drop op 3 as an unknown op)
     G_HELI_SHOT = 153,        // reliable: u16 helicopter, vec3 gun from it, vec3 aimed at, u8 damage: a round of a police
                               // helicopter of the sender's game
     G_CONTACTS = 154,         // reliable, host -> partner: u8 n, the story's mission start points of the host's radar
@@ -343,6 +350,7 @@ struct Welcome {
     bool allowCheats = true;
     bool partnerTeleport = true;  // the partners may use /tp and /tphere (the host's choice too)
     bool sharedLife = false;      // a partner's death fails the host's story mission (the host's choice too)
+    bool partnerCheats = true;    // the partners' cheat codes work (the host's choice)
     std::vector<PlayerEntry> players;  // already connected players (excluding you)
 
     void Write(Writer& w) const {
@@ -362,6 +370,7 @@ struct Welcome {
         w.Bool(allowCheats);
         w.Bool(partnerTeleport);
         w.Bool(sharedLife);
+        w.Bool(partnerCheats);
     }
     bool Read(Reader& r) {
         yourId = r.U8();
@@ -383,6 +392,7 @@ struct Welcome {
         allowCheats = r.Bool();
         partnerTeleport = r.Bool();
         sharedLife = r.Bool();
+        partnerCheats = r.Bool();
         return r.Ok();
     }
 };

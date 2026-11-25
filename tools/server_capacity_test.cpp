@@ -23,7 +23,7 @@ constexpr uint8_t kFeatureMessages[] = {G_RACE, G_RADIO, G_PROPERTY_OWNERS, G_MI
                                      G_SCENE_CAM, G_TURF_WAR, G_STAT_SYNC, G_SIDE_DONE, G_BEAT, G_BEAT_SCORE,
                                      G_MISSION_IFP, G_MISSION_FACE, G_CAR_DOOR, G_NOISE, G_MISSION_HINT,
                                      G_MISSION_LOOK_AT, G_PED_NO_COLLIDE, G_PED_ATTACH, G_MISSION_LOOK, G_OBJ_HOLD, G_MARK_COLOUR, G_CONTEST, G_POOL, G_TP_ASK, G_MONEY,
-    G_WEAPON_GIFT, G_EMOTE, G_RC, G_HOST_LOADED, G_MISSION_ENV, G_MISSION_FX, G_EXPORT};
+    G_WEAPON_GIFT, G_EMOTE, G_RC, G_HOST_LOADED, G_MISSION_ENV, G_MISSION_FX, G_EXPORT, G_TAKE_WHEEL, G_STEALTH};
 
 void Check(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);
@@ -35,7 +35,7 @@ struct Clients {
     std::array<int, 9> ids{}, rosters{}, relays{};
     std::array<int, 9> balances{}, cheats{};
     std::array<street::Snapshot,9> cashStates{};
-    std::array<bool, 9> cheatsAllowed{};
+    std::array<bool, 9> cheatsAllowed{}, partnerCheats{};
     std::array<uint32_t, 9> profileGames{};
     std::array<int, 9> profileCounts{};
     std::array<std::array<int, 256>, 9> featureRelays{}, missionRelays{};
@@ -81,6 +81,7 @@ struct Clients {
                         Welcome welcome;
                         Check(welcome.Read(r), "malformed welcome");
                         cheatsAllowed[i] = welcome.allowCheats;
+                        partnerCheats[i] = welcome.partnerCheats;
                         ids[i] = welcome.yourId;
                         rosters[i] = (int)welcome.players.size();
                         Check(welcome.hostId == 0, "unexpected host ID");
@@ -148,8 +149,8 @@ int main(int argc, char** argv) {
         {
             Clients clients(std::atoi(argv[1]));
             int capacity = std::atoi(argv[2]);
-            if (std::string(argv[3]) == "old" || std::string(argv[3]) == "fork-old") {
-                clients.protocol = std::string(argv[3]) == "fork-old" ? 24 : kProtocolVersion - 1;
+            if (std::string(argv[3]) == "old" || std::string(argv[3]) == "fork-old" || std::string(argv[3]) == "fork-55") {
+                clients.protocol = std::string(argv[3]) == "fork-old" ? 24 : std::string(argv[3]) == "fork-55" ? 55 : kProtocolVersion - 1;
                 clients.Connect(0);
                 clients.Until([&] { return clients.rejected[0]; });
                 Check(!clients.welcomed[0] && clients.reasons[0].find("version") != std::string::npos,
@@ -187,11 +188,12 @@ int main(int argc, char** argv) {
                 switchGame(0x77, 45678);
                 switchGame(0x88, 0);
             } else if (std::string(argv[3]).find("rules-") == 0) {
-                const bool allowed = std::string(argv[3]) == "rules-on";
+                const bool allowed = std::string(argv[3]) != "rules-off";
+                const bool partners = std::string(argv[3]) != "rules-host-only";
                 for (int i = 0; i < 2; ++i) {
                     clients.Connect(i);
                     clients.Until([&] { return clients.welcomed[i]; });
-                    Check(clients.cheatsAllowed[i] == allowed, "cheat policy not sent in welcome");
+                    Check(clients.cheatsAllowed[i] == allowed && clients.partnerCheats[i] == partners, "cheat policy not sent in welcome");
                 }
                 auto send = [&](int who, const Writer& packet) {
                     enet_peer_send(clients.peers[who], CH_RELIABLE,
@@ -233,7 +235,7 @@ int main(int argc, char** argv) {
                 send(0, cheat);
                 send(1, cheat);
                 pump();
-                Check(clients.cheats[0] == (allowed ? 1 : 0) && clients.cheats[1] == (allowed ? 1 : 0),
+                Check(clients.cheats[0] == (allowed && partners ? 1 : 0) && clients.cheats[1] == (allowed ? 1 : 0),
                       "server did not enforce cheat policy");
             } else {
                 for (int i = 0; i < capacity; ++i) {

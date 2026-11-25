@@ -30,8 +30,8 @@ def main():
     for configured, maximum, capacity, protocol in [
         (None, None, 8, "current"), (3, None, 3, "current"), (4, None, 4, "current"),
         (2, 8, 8, "current"), (None, 99, 8, "current"),
-        (None, None, 8, "old"), (None, None, 8, "fork-old"), (None, None, 8, "games"),
-        (None, None, 8, "rules-on"), (None, None, 8, "rules-off"),
+        (None, None, 8, "old"), (None, None, 8, "fork-old"), (None, None, 8, "fork-55"), (None, None, 8, "games"),
+        (None, None, 8, "rules-on"), (None, None, 8, "rules-off"), (None, None, 8, "rules-host-only"),
     ]:
         with tempfile.TemporaryDirectory(prefix="sacoop-capacity-") as directory:
             base = Path(directory)
@@ -46,7 +46,9 @@ def main():
             if maximum is not None:
                 command += ["--max", str(maximum)]
             if protocol.startswith("rules-"):
-                command += ["--allow-cheats", "1" if protocol == "rules-on" else "0"]
+                command += ["--allow-cheats", "0" if protocol == "rules-off" else "1"]
+            if protocol == "rules-host-only":
+                command += ["--partner-cheats", "0"]
             with (base / "output.log").open("w") as output:
                 process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output,
                                            stderr=subprocess.STDOUT,

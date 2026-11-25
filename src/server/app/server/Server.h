@@ -24,6 +24,7 @@ struct Config {
     street::Settings streetRaces;
     bool partnerTeleport = true;  // the partners may use /tp and /tphere
     bool sharedLife = false;      // a partner's death fails the host's story mission
+    bool partnerCheats = true;    // the partners' cheat codes work
     uint16_t port = 7788;
     int maxPlayers = proto::kMaxPlayers;
     std::wstring dataDir;    // profiles/, world/
@@ -50,6 +51,7 @@ struct Player {
     std::vector<uint8_t> upload;
     uint32_t uploadCrc = 0;
     std::string uploadLabel;
+    uint64_t sentBytes = 0;  // what went to it since the last traffic line of the log (relayed, the world)
 };
 
 class Server {
@@ -68,6 +70,7 @@ private:
     void OnPacket(ENetPeer* peer, uint8_t channel, const uint8_t* data, size_t size, uint32_t flags);
 
     void HandleHello(Player& p, Reader& r);
+    void Join(Player& p, const proto::Hello& h, const std::string& name);  // the hello passed: in the game
     void HandleChat(Player& p, const std::string& text);
     void HandleCommand(Player* p, const std::string& text);  // p == nullptr for the console
     void HandleWorldBegin(Player& p, Reader& r);
@@ -93,6 +96,7 @@ private:
     void Leave(Player& p, proto::LeaveReason why, const std::string& reason = {});  // frees the slot, tells the others
     void EnsureHost();
     void SendPings();
+    void ReportTraffic();  // every 30 s: what went to each player
 
     Player* FindByPeer(ENetPeer* peer);
     Player* FindById(int id);
@@ -111,7 +115,10 @@ private:
     ENetHost* m_host = nullptr;
     Internet m_internet;
     StreetRacing m_streetRacing;
-    std::array<Player, proto::kMaxPlayers> m_players{};
+    // the last slot only holds a connection until its hello: a player back after a crash while its old connection still holds
+    // a slot (till ENet's timeout) found four players' slots taken (10.11 audit). The hello moves it to a slot of its own.
+    std::array<Player, proto::kMaxPlayers + 1> m_players{};
+    uint64_t m_trafficMs = 0;
     volatile bool m_running = false;
     std::vector<uint8_t> m_world;  // current world save
     std::string m_worldLabel;
