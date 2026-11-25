@@ -4,6 +4,7 @@ const os = require('node:os');
 const { constants: fsConstants } = require('node:fs');
 const { spawn } = require('node:child_process');
 const { path7za } = require('7zip-bin');
+const { ArchiveReader, libarchiveWasm } = require('libarchive-wasm');
 const { download, exists, regularPath } = require('./install.cjs');
 
 const GITHUB = 'https://api.github.com/repos';
@@ -111,6 +112,16 @@ async function sourceList(sourceConfig) {
   ]);
   return [
     { id: 'modloader', title: 'ModLoader', archive: modloader, rootPlugin: true },
+    { id: 'cleo', title: 'CLEO 4.4.4', archive: {
+      name: 'CLEO4.zip',
+      url: 'https://github.com/cleolibrary/CLEO4/releases/download/v4.4.4/CLEO4.zip',
+      size: 550990,
+      digest: 'sha256:aca8a1ca9dfc85d6f886b5963388059b2580501219f1f6b891114560552a8560',
+    } },
+    { id: 'evvp', title: 'Extended Vanilla Vehicles Pack v2.0', archive: {
+      name: 'EVVP_2.0.rar', url: 'https://gta.com.ua/files/gta-san-andreas/13862?download',
+      size: 136943825, digest: 'sha256:234175fde3e6678534b9aef589e053c2aec3311cee64e3505b426a0f40f9cc14',
+    }, modFolder: 'EVVP_2.0' },
     { id: 'silentpatch', title: 'SilentPatch', archive: silent },
     { id: 'widescreen-fix', title: 'Widescreen Fix', archive: { name: 'GTASA.WidescreenFix.zip', url: 'https://github.com/ThirteenAG/WidescreenFixesPack/releases/download/gtasa/GTASA.WidescreenFix.zip', digest: 'sha256:563078bfae5ad93be548d9378d4a97809762fb3a8dfdf0ef65e6023beadeb3ae' } },
     { id: 'skygfx', title: 'SkyGfx', archive: { name: 'SkyGfx_SA_4.2b.zip', url: 'https://github.com/aap/skygfx/releases/download/v4.2b/SkyGfx_SA_4.2b.zip' } },
@@ -119,14 +130,87 @@ async function sourceList(sourceConfig) {
   ];
 }
 
+async function hasUkrainianAudio(gameDir) {
+  for (const relative of [
+    '.sacoop-ukrainian-audio.json',
+    'modloader/SA-COOP ukrainian-audio/.installed.json',
+  ]) {
+    if (await exists(path.join(gameDir, relative))) return true;
+  }
+  return false;
+}
+
+let rarModulePromise;
+async function rarEntries(archive) {
+  const mod = await (rarModulePromise ||= libarchiveWasm());
+  const data = await fs.readFile(archive);
+  const reader = new ArchiveReader(mod, new Int8Array(data.buffer, data.byteOffset, data.byteLength));
+  const entries = [];
+  try {
+    if (reader.hasEncryptedData()) throw new Error('Зашифровані архіви модів не підтримуються.');
+    for (let entry; (entry = reader.nextEntry());) {
+      const type = entry.getFiletype();
+      const relative = entry.getPathname().replaceAll('\\', '/').replace(type === 'Directory' ? /\/+$/ : /$^/, '');
+      if (!['File', 'Directory'].includes(type) || entry.getSymlinkTarget() || entry.getHardlinkTarget()) {
+        entry.free(); throw new Error('Архів мода містить посилання або спеціальний файл.');
+      }
+      if (!relative || /[\0-\x1f]/.test(relative)) { entry.free(); throw new Error('Архів мода містить некоректний шлях.'); }
+      if (entry.isEncrypted()) { entry.free(); throw new Error('Зашифровані архіви модів не підтримуються.'); }
+      entries.push({ path: relative, type, size: entry.getSize() });
+      entry.free();
+      if (entries.length > 200000) throw new Error('Архів мода містить надто багато файлів.');
+    }
+  } finally { reader.free(); }
+  if (!entries.length) throw new Error('Архів мода порожній.');
+  const listing = entries.map(entry => `Path = ${entry.path}\nFolder = ${entry.type === 'Directory' ? '+' : '-'}\nSize = ${entry.size}`).join('\n\n');
+  const files = archiveEntries(listing);
+  if (!files.length) throw new Error('Архів мода не містить файлів.');
+  return entries;
+}
+
+async function extractRarArchive(archive, stage, signal, onProgress) {
+  const entries = await rarEntries(archive);
+  const mod = await (rarModulePromise ||= libarchiveWasm());
+  const data = await fs.readFile(archive);
+  const reader = new ArchiveReader(mod, new Int8Array(data.buffer, data.byteOffset, data.byteLength));
+  try {
+    for (let i = 0; i < entries.length; i++) {
+      signal?.throwIfAborted();
+      const entry = reader.nextEntry();
+      if (!entry) throw new Error('Архів змінився під час розпакування.');
+      const expected = entries[i];
+      const relative = entry.getPathname().replaceAll('\\', '/').replace(expected.type === 'Directory' ? /\/+$/ : /$^/, '');
+      if (relative !== expected.path || entry.getFiletype() !== expected.type || entry.getSize() !== expected.size || entry.getSymlinkTarget() || entry.getHardlinkTarget()) {
+        entry.free(); throw new Error('Некоректний запис в архіві мода.');
+      }
+      const destination = path.join(stage, ...relative.split('/'));
+      if (expected.type === 'Directory') {
+        entry.free(); await fs.mkdir(destination, { recursive: true });
+      } else {
+        const bytes = entry.readData();
+        if (!bytes || bytes.byteLength !== expected.size) throw new Error('Не вдалося розпакувати файл мода.');
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.writeFile(destination, bytes, { flag: 'wx' });
+        entry.free();
+      }
+      onProgress?.({ percent: Math.round((i + 1) / entries.length * 100) });
+    }
+  } finally { reader.free(); }
+}
+
 async function installComfortMods(gameDir, sourceConfig = {}, progress = () => {}, signal) {
   const root = await fs.realpath(gameDir);
   const game = path.join(root, 'modloader');
   const work = await fs.mkdtemp(path.join(os.tmpdir(), 'sacoop-comfort-'));
-    const plan = [], skipped = [], installedSources = [];
+  const plan = [], skipped = [], installedSources = [];
   try {
     const sources = await sourceList(sourceConfig);
     const audio = sources.find(source => source.id === 'ukrainian-audio');
+    if (audio && await hasUkrainianAudio(root)) {
+      sources.splice(sources.indexOf(audio), 1);
+      skipped.push('Українська озвучка: уже встановлена');
+      progress({ stage: 'mod-skip', mod: audio.title, reason: 'Озвучка вже є у папці гри.' });
+    }
     if (audio) {
       const oldAudioDir = path.join(game, 'SA-COOP ukrainian-audio');
       try {
@@ -149,11 +233,18 @@ async function installComfortMods(gameDir, sourceConfig = {}, progress = () => {
       await fs.mkdir(stage);
       progress({ stage: 'mod-download', mod: source.title, index: i + 1, count: pending.length });
       await download(source.archive, archive, event => progress({ ...event, stage: 'mod-download', mod: source.title, index: i + 1, count: pending.length }), signal, source.maxDownloadBytes || 1024 * 1024 * 1024);
-      const listing = await run7z(['l', '-slt', archive], signal);
-      const entries = archiveEntries(listing);
-      if (!entries.length) throw new Error(`${source.title}: архів порожній.`);
-      progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, percent: 0 });
-      await run7z(['x', archive, `-o${stage}`, '-y', '-bsp1'], signal, event => progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, ...event }));
+      if (/\.rar$/i.test(source.archive.name)) {
+        const entries = await rarEntries(archive);
+        if (!entries.length) throw new Error(`${source.title}: архів порожній.`);
+        progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, percent: 0 });
+        await extractRarArchive(archive, stage, signal, event => progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, ...event }));
+      } else {
+        const listing = await run7z(['l', '-slt', archive], signal);
+        const entries = archiveEntries(listing);
+        if (!entries.length) throw new Error(`${source.title}: архів порожній.`);
+        progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, percent: 0 });
+        await run7z(['x', archive, `-o${stage}`, '-y', '-bsp1'], signal, event => progress({ stage: 'mod-extract', mod: source.title, index: i + 1, count: pending.length, ...event }));
+      }
       const actual = await fs.readdir(stage, { recursive: true, withFileTypes: true });
       const files = actual.filter(entry => entry.isFile()).map(entry => path.relative(stage, path.join(entry.parentPath, entry.name)));
       if (!files.length) throw new Error(`${source.title}: немає файлів для встановлення.`);
@@ -162,6 +253,8 @@ async function installComfortMods(gameDir, sourceConfig = {}, progress = () => {
         if (installers.length !== 1) throw new Error(`${source.title}: очікувався один EXE-інсталятор.`);
         progress({ stage: 'mod-install', mod: source.title, index: i + 1, count: pending.length });
         await runAudioInstaller(path.join(stage, installers[0]), root, sourceConfig, signal);
+        if (source.id === 'ukrainian-audio')
+          await fs.writeFile(path.join(root, '.sacoop-ukrainian-audio.json'), JSON.stringify({ id: source.id, installedAt: new Date().toISOString() }));
         installedSources.push(source);
         continue;
       }
@@ -179,14 +272,25 @@ async function installComfortMods(gameDir, sourceConfig = {}, progress = () => {
       if (source.rootPlugin && !pluginFiles.length) throw new Error(`${source.title}: пакет не містить ASI-плагіна.`);
       for (const file of files) {
         let relative;
-        if (source.id === 'modloader') {
+        if (source.id === 'evvp') {
+          const normalized = file.replaceAll('\\', '/');
+          const marker = '/EVVP_2.0/';
+          const at = normalized.indexOf(marker);
+          if (at < 0) throw new Error(`${source.title}: архів має неочікувану структуру.`);
+          relative = normalized.slice(at + marker.length);
+        } else if (source.id === 'cleo') {
+          const normalized = file.replaceAll('\\', '/');
+          const basename = path.basename(normalized).toLowerCase();
+          if (basename === 'vorbisfile.dll' || basename === 'vorbishooked.dll') continue;
+          relative = normalized;
+        } else if (source.id === 'modloader') {
           if (pluginFiles.includes(file)) relative = path.basename(file);
           else if (file.replaceAll('\\', '/').toLowerCase().startsWith('modloader/')) relative = file.replaceAll('\\', '/');
           else continue;
         } else if (source.rootPlugin) {
           if (!pluginFiles.includes(file)) continue;
           relative = path.basename(file);
-        } else relative = path.join('modloader', `SA-COOP ${source.id}`, file);
+        } else relative = path.join('modloader', source.modFolder || `SA-COOP ${source.id}`, file);
         const destination = path.join(root, relative);
         const checked = await regularPath(root, relative);
         if (await exists(checked)) {
@@ -230,4 +334,4 @@ async function installComfortMods(gameDir, sourceConfig = {}, progress = () => {
   } finally { await fs.rm(work, { recursive: true, force: true }); }
 }
 
-module.exports = { installComfortMods, archiveEntries };
+module.exports = { installComfortMods, archiveEntries, hasUkrainianAudio, extractRarArchive };

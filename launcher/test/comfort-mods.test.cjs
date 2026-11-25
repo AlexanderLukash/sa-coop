@@ -20,3 +20,20 @@ test('Ukrainian audio ZIP accepts normal paths and rejects unsafe archive entrie
   )), /однакові шляхи/);
   assert.throws(() => archiveEntries(listing({ path: 'link', 'Symbolic Link': 'target' })), /Посилання в архіві/);
 });
+
+test('existing Ukrainian audio files skip the optional audio download', async () => {
+  const fs = require('node:fs/promises');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { hasUkrainianAudio } = require('../src/core/comfort-mods.cjs');
+  const game = await fs.mkdtemp(path.join(os.tmpdir(), 'sacoop-audio-detect-'));
+  try {
+    assert.equal(await hasUkrainianAudio(game), false);
+    const vanillaAudio = path.join(game, 'audio/streams');
+    await fs.mkdir(vanillaAudio, { recursive: true });
+    await fs.writeFile(path.join(vanillaAudio, 'CUTSCENE'), 'vanilla voice bank');
+    assert.equal(await hasUkrainianAudio(game), false);
+    await fs.writeFile(path.join(game, '.sacoop-ukrainian-audio.json'), '{}');
+    assert.equal(await hasUkrainianAudio(game), true);
+  } finally { await fs.rm(game, { recursive: true, force: true }); }
+});
