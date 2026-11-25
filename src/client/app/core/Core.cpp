@@ -18,7 +18,6 @@
 #include "features/anims/Emotes.h"
 #include "features/story/contest/Contest.h"
 #include "features/story/missions/Missions.h"
-#include "features/teleport/Teleport.h"
 #include "pages/anims-menu/AnimsMenu.h"
 #include "pages/connect-menu/ConnectMenu.h"
 #include "pages/players-menu/PlayersMenu.h"
@@ -507,7 +506,7 @@ bool StartsCodeWithU(int vk) {
 }
 
 // Y or N to the call in the middle of the screen, in the order the overlay shows them (Overlay.cpp)
-bool AnswerCall(bool yes) { return contest::Key(yes ? 'Y' : 'N') || teleport::Key(yes) || anims::Key(yes) || SideCallKey(yes); }
+bool AnswerCall(bool yes) { return contest::Key(yes ? 'Y' : 'N') || anims::Key(yes) || SideCallKey(yes); }
 
 // Right and left on a pad's D-pad answer it too (10.11: a partner who played on a pad had the keyboard across the room).
 // They are the game's own yes and no to people in the street (CONVERSATION_YES and NO), which Y and N set as well: a Y

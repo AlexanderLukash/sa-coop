@@ -13,7 +13,7 @@
 - **На борт без мест, клавиша G.** В Shamal и других самолётах без пассажирских мест, а ещё в вертолётах и лодках, где мест не осталось, клавиша G сажает на борт к водителю. На лодке у каждого своё сиденье, а с видом от оружия игрок встаёт и стреляет. В самолёте первый сидит рядом с пилотом. Вид меняется клавишей смены камеры.
 - **Кого ждёт миссия.** Хост в маркере миссии видит ники тех, кого ждут, а клавиша Y начинает миссию сразу и переносит отставших к нему. Если напарник встал в маркер первым, хост по Y сразу оказывается рядом.
 - **Цвет игрока.** Цвет стрелки, который игрок выбирает в окне F9 или командой `/blip`, теперь и у его ника в чате и над головой, у его метки на карте и у пути до неё на радаре.
-- **Геймпад.** На вопрос в середине экрана (`/tp`, приглашение, вызов) отвечает крестовина: вправо как Y, влево как N.
+- **Геймпад.** На вопрос в середине экрана (приглашение, вызов) отвечает крестовина: вправо как Y, влево как N.
 - **Чит-коды.** Хост может запретить напарникам чит-коды галочкой в окне F9 (#118).
 - **Предметы в анимациях.** При курении, питье, еде, разговоре по телефону и съёмке у CJ в руке сигарета, бутылка, банка, бургер, телефон или фотоаппарат, и другие игроки это видят. Когда вы пишете в чат, CJ коротко жестикулирует.
 - **Гонки Сезара.** Гоняются все, кто стоит рядом с хостом на старте: у каждого такая же машина, свои чекпоинты и своё место (#139).
@@ -62,7 +62,7 @@ A mod for GTA San Andreas 1.0 US that lets up to eight players go through the st
 - **Aboard without seats, G key.** In the Shamal and other planes with no passenger seats, and in helicopters and boats with no seat left, the G key takes you aboard with the driver. On a boat everyone has a seat of their own, and with the weapon view a player stands up and shoots. In a plane the first one sits next to the pilot. The camera change key switches the view.
 - **Who the mission waits for.** In a mission's marker the host sees the nicknames of those it waits for, and the Y key starts the mission at once and brings the late ones over. If a partner stood in the marker first, Y takes the host right next to them.
 - **Player colour.** The arrow colour a player picks in the F9 window or with `/blip` now also colours their nickname in the chat and over their head, their map waypoint and the route to it on the radar.
-- **Gamepad.** The D-pad answers the question in the middle of the screen (`/tp`, an invitation, a call): right as Y, left as N.
+- **Gamepad.** The D-pad answers the question in the middle of the screen (an invitation or a call): right as Y, left as N.
 - **Cheat codes.** The host can forbid cheat codes for the partners with a box in the F9 window (#118).
 - **Props in animations.** When smoking, drinking, eating, on the phone or taking a picture CJ holds a cigarette, a bottle, a can, a burger, a phone or a camera, and the other players see it. When you write in the chat, CJ gestures briefly.
 - **Cesar's races.** Everyone standing near the host at the start races: each gets the same car, their own checkpoints and their own place (#139).

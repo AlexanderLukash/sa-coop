@@ -2861,7 +2861,7 @@ bool Players::OnCommand(const std::string& cmd, const std::vector<std::string>& 
                                                : Format(TR("Ваша метка у напарника теперь %s.", "Your mark is %s for your partner now."), colour.c_str()));
         return true;
     }
-    return false;  // /tp and /tphere: requests (Teleport.cpp), carried out here once the other player says yes
+    return false;
 }
 
 bool Players::TeleportAllowed(const RemotePlayer& other, bool bring) {

@@ -292,7 +292,7 @@ sees "The server does not answer", even on a home network. If an antivirus remov
 | B | voice chat while the key is held (the mode is set in the F9 window) |
 | G | get into the nearest car as a passenger, by the nearest door |
 | Triangle (hold) | on a gamepad: get in as a passenger |
-| Y / N | yes or no to a question in the middle of the screen (/tp, an invitation, a challenge). In a mission marker the host starts the mission at once with Y |
+| Y / N | yes or no to a question in the middle of the screen (an invitation or a challenge). In a mission marker the host starts the mission at once with Y |
 | D-pad right / left | on a gamepad: the same as Y and N |
 | Right mouse button | in a vehicle with a gun: lean out and aim, fire with the left button |
 | F2 | the players: money, giving money and weapons, and with more than two players their numbers and /tp and /tphere by a click |
@@ -303,7 +303,7 @@ sees "The server does not answer", even on a home network. If an antivirus remov
 
 The chat supports the `/help`, `/players`, `/tp` (go to your partner unless they are inside a building) and `/tphere`
 (bring your partner over) commands. With more than two players the command takes the player's number: `/tp 2`,
-`/tphere 3`. The F2 window shows the numbers. Your partner answers `/tp` and `/tphere` with Y or N. The host can kick a player
+`/tphere 3`. The F2 window shows the numbers. Both commands run automatically when the players are ready. The host can kick a player
 with `/kick <nickname> [reason]` and, creating the game, turn `/tp` and `/tphere` off for partners.
 The `/anims` command opens the animations window, and `/anims` with a number plays that animation at once.
 

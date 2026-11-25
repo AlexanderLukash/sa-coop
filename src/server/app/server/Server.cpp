@@ -456,11 +456,11 @@ void Server::HandleCommand(Player* p, const std::string& text) {
             reply(kColorServer, "Для хоста: /kick <ник или номер> [причина], /say <текст>",
                   "For the host: /kick <nickname or number> [reason], /say <text>");
         if ((admin || m_cfg.partnerTeleport) && m_cfg.maxPlayers > 2)
-            reply(kColorServer, "В игре: /tp <номер> (переместиться к игроку), /tphere <номер> (позвать игрока к себе). Номера видны в окне F2. Игрок отвечает Y или N",
-                  "In the game: /tp <number> (go to a player), /tphere <number> (bring a player to you). The F2 window shows the numbers. The player answers Y or N");
+            reply(kColorServer, "В игре: /tp <номер> (переместиться к игроку), /tphere <номер> (позвать игрока к себе). Номера видны в окне F2.",
+                  "In the game: /tp <number> (go to a player), /tphere <number> (bring a player to you). The F2 window shows the numbers.");
         else if (admin || m_cfg.partnerTeleport)
-            reply(kColorServer, "В игре: /tp (переместиться к напарнику), /tphere (позвать напарника к себе). Напарник отвечает Y или N",
-                  "In the game: /tp (go to your partner), /tphere (bring your partner to you). Your partner answers Y or N");
+            reply(kColorServer, "В игре: /tp (переместиться к напарнику), /tphere (позвать напарника к себе).",
+                  "In the game: /tp (go to your partner), /tphere (bring your partner to you).");
         reply(kColorServer, "F2: игроки, у кого сколько денег, перевод денег", "F2: the players, their money, giving money");
         reply(kColorServer, "U: анимации. F4: скины", "U: animations. F4: skins");
     } else if (cmd == "players" || cmd == "status") {

@@ -251,8 +251,7 @@ enum MsgId : uint8_t {
                               // from older games), 6 input (second player: its pad's 20 values i16, u8
                               // joypad, f32 mouse x, y), 8 table (to 255: any game with a POOL2 of its own, u16 model, vec3,
                               // quat: the others' table stands so): unreliable
-    G_TP_ASK = 190,           // reliable: /tp and /tphere as requests (Teleport.cpp): u8 op (1 may I come over, 2 come over to
-                              // me, 3 yes, 4 no), u8 to. The asker's game carries a yes out (/tphere: G_TELEPORT)
+    G_TP_ASK = 190,           // reliable: teleport readiness check (1 go, 2 bring, 3 ready, 4 unavailable), u8 target
     G_MONEY = 191,            // reliable: the players' money (F2, Money.cpp): u8 op; 1 what the sender has now, i32; 2 a gift,
                               // u8 to, i32; 3 the gift came, u8 to (its giver), i32; 4 host -> partner: its share of what
                               // Big Smoke's courier paid the host (Courier.cpp), u8 to, i32

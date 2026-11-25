@@ -116,8 +116,7 @@ public:
     // our player to a spot by another player, as /tp: into that player's area (its interior's door used as a door),
     // out of its vehicle first when onFoot (else the vehicle goes along)
     void GoTo(const RemotePlayer& by, const game::CVector& spot, bool onFoot = false);
-    // /tp (go over to that player) and /tphere (bring it over) once it said yes (Teleport.cpp): allowed now? (if not,
-    // the chat says why: buildings are entered through their doors), and done
+    // Check mission and interior restrictions before moving either player.
     bool TeleportAllowed(const RemotePlayer& other, bool bring);
     void GoToPlayer(const RemotePlayer& other);
     void Bring(uint8_t id);
