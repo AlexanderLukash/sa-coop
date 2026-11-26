@@ -10,6 +10,7 @@ const { readStatus, waitForStatus } = require('./core/session-status.cjs');
 const { defaults, validate, atomicWrite, readText, writeGameConfig, launchSpec, lanAddresses } = require('./core/config.cjs');
 const { inspectGame, installedBuild, latestRelease, download, installArchive, checkInstallAccess } = require('./core/install.cjs');
 const { installComfortMods } = require('./core/comfort-mods.cjs');
+const { installVehiclePack, vehiclePackInstalled, saveDonationCode } = require('./core/vehicle-pack.cjs');
 if (process.platform === 'linux') app.disableHardwareAcceleration();
 const { LanLobbyServer, LobbyClient, discover, serverSettings } = require('./core/lobby.cjs');
 const skins = require('./skins.json');
@@ -29,7 +30,9 @@ function requireIdle() {
   if (connectionBusy) throw new Error('Дочекайтесь підключення до лобі.');
 }
 async function snapshot() {
-  return { settings, platform: process.platform, version: app.getVersion(), game: await inspectGame(settings.gameDir),
+  const game = await inspectGame(settings.gameDir);
+  game.vehiclePackInstalled = game.supported && await vehiclePackInstalled(settings.gameDir);
+  return { settings, platform: process.platform, version: app.getVersion(), game,
     addresses: lanAddresses().map(a => a.address), skins, room, selfId, playing: !!gameProcess, launching, busy, operation, release };
 }
 async function save(input) {
@@ -214,6 +217,7 @@ app.whenReady().then(async () => {
   });
   handle('choose-game', async () => {
     requireIdle();
+    if (lobbyClient) throw new Error('Вийдіть із лоббі перед встановленням модів.');
     const result = await dialog.showOpenDialog(window, { title: 'Папка GTA San Andreas', properties: ['openDirectory'] });
     if (!result.canceled) {
       const game = await inspectGame(result.filePaths[0]);
@@ -226,6 +230,12 @@ app.whenReady().then(async () => {
           const result = await installComfortMods(settings.gameDir, settings,
             progress => notify('progress', progress), installation.signal);
           const skipped = [...result.skipped];
+          try {
+            await installVehiclePack(settings.gameDir, progress => notify('progress', progress), installation.signal);
+          } catch (error) {
+            if (installation.signal.aborted) throw error;
+            skipped.push(`Extended Vanilla Vehicles Pack 2.0: ${error.message}`);
+          }
           try {
             const localization = require('./core/localization.cjs');
             const localized = await localization.installUkrainian(settings.gameDir, settings,
@@ -243,6 +253,26 @@ app.whenReady().then(async () => {
   });
   handle('release', async () => { release = await latestRelease(settings.releaseRepo); return release; });
   handle('install', install); handle('cancel-install', () => installation?.abort());
+  handle('install-vehicle-pack', async () => {
+    requireIdle();
+    if (lobbyClient) throw new Error('Вийдіть із лоббі перед встановленням модів.');
+    busy = true; operation = 'vehicle-pack'; installation = new AbortController();
+    notify('busy', { busy, operation });
+    try {
+      const game = await inspectGame(settings.gameDir);
+      if (!game.supported) throw new Error('Оберіть сумісну GTA San Andreas 1.0 US.');
+      await installVehiclePack(settings.gameDir, progress => notify('progress', progress), installation.signal);
+    } finally { busy = false; operation = null; installation = null; notify('busy', { busy, operation }); }
+    return snapshot();
+  });
+  handle('save-fla-code', async code => {
+    requireIdle();
+    if (!await vehiclePackInstalled(settings.gameDir)) throw new Error('Спочатку встановіть пакет транспорту.');
+    requireIdle();
+    busy = true;
+    try { await saveDonationCode(settings.gameDir, code); }
+    finally { busy = false; }
+  });
   handle('discover', target => discover(1300, target ? [target] : []));
   handle('host', async () => {
     requireIdle(); if (lobbyClient || lobbyServer) throw new Error('Вийдіть із поточного лоббі.');

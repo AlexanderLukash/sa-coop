@@ -112,16 +112,6 @@ async function sourceList(sourceConfig) {
   ]);
   return [
     { id: 'modloader', title: 'ModLoader', archive: modloader, rootPlugin: true },
-    { id: 'cleo', title: 'CLEO 4.4.4', archive: {
-      name: 'CLEO4.zip',
-      url: 'https://github.com/cleolibrary/CLEO4/releases/download/v4.4.4/CLEO4.zip',
-      size: 550990,
-      digest: 'sha256:aca8a1ca9dfc85d6f886b5963388059b2580501219f1f6b891114560552a8560',
-    } },
-    { id: 'evvp', title: 'Extended Vanilla Vehicles Pack v2.0', archive: {
-      name: 'EVVP_2.0.rar', url: 'https://gta.com.ua/files/gta-san-andreas/13862?download',
-      size: 136943825, digest: 'sha256:234175fde3e6678534b9aef589e053c2aec3311cee64e3505b426a0f40f9cc14',
-    }, modFolder: 'EVVP_2.0' },
     { id: 'silentpatch', title: 'SilentPatch', archive: silent },
     { id: 'widescreen-fix', title: 'Widescreen Fix', archive: { name: 'GTASA.WidescreenFix.zip', url: 'https://github.com/ThirteenAG/WidescreenFixesPack/releases/download/gtasa/GTASA.WidescreenFix.zip', digest: 'sha256:563078bfae5ad93be548d9378d4a97809762fb3a8dfdf0ef65e6023beadeb3ae' } },
     { id: 'skygfx', title: 'SkyGfx', archive: { name: 'SkyGfx_SA_4.2b.zip', url: 'https://github.com/aap/skygfx/releases/download/v4.2b/SkyGfx_SA_4.2b.zip' } },
@@ -272,18 +262,7 @@ async function installComfortMods(gameDir, sourceConfig = {}, progress = () => {
       if (source.rootPlugin && !pluginFiles.length) throw new Error(`${source.title}: пакет не містить ASI-плагіна.`);
       for (const file of files) {
         let relative;
-        if (source.id === 'evvp') {
-          const normalized = file.replaceAll('\\', '/');
-          const marker = '/EVVP_2.0/';
-          const at = normalized.indexOf(marker);
-          if (at < 0) throw new Error(`${source.title}: архів має неочікувану структуру.`);
-          relative = normalized.slice(at + marker.length);
-        } else if (source.id === 'cleo') {
-          const normalized = file.replaceAll('\\', '/');
-          const basename = path.basename(normalized).toLowerCase();
-          if (basename === 'vorbisfile.dll' || basename === 'vorbishooked.dll') continue;
-          relative = normalized;
-        } else if (source.id === 'modloader') {
+        if (source.id === 'modloader') {
           if (pluginFiles.includes(file)) relative = path.basename(file);
           else if (file.replaceAll('\\', '/').toLowerCase().startsWith('modloader/')) relative = file.replaceAll('\\', '/');
           else continue;

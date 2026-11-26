@@ -1,5 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const methods = ['state', 'save', 'profile', 'choose-game', 'release', 'install', 'cancel-install', 'discover', 'host', 'join',
+const methods = ['state', 'save', 'profile', 'choose-game', 'release', 'install', 'install-vehicle-pack', 'save-fla-code', 'cancel-install', 'discover', 'host', 'join',
   'leave', 'ready', 'start', 'solo', 'copy-invite', 'open-folder', 'open-releases'];
 const api = Object.fromEntries(methods.map(name => [name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()),
   (...args) => ipcRenderer.invoke(name, ...args)]));

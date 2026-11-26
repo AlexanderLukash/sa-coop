@@ -16,7 +16,7 @@
 <p align="center"><b>English</b> · <a href="README.ru.md">Русский</a></p>
 
 This fork integrates upstream v0.3.4 with **8 players total** (one host and seven partners).
-Use matching client/server **0.3.6, protocol 64** on every machine.
+Use matching client/server **0.3.7, protocol 64** on every machine.
 See [eight-player setup, migration and validation limits](docs/COOP-8.md).
 
 SA:COOP is a mod for GTA San Andreas that lets up to eight players go through the story together over the

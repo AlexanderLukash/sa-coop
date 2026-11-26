@@ -1,23 +1,14 @@
-# SA:COOP 0.3.6
+# SA:COOP 0.3.7
 
-Fork release, protocol remains 64. Update the client and server together.
+Протокол 64. Оновіть мод і лаунчер у всіх учасників.
 
-## What's new
+- Лаунчер встановлює Extended Vanilla Vehicles Pack 2.0 і CLEO 4.4.4. Кнопка «Встановити пакет» у «Файлах гри» оновлює стару інсталяцію EVVP.
+- Виправлено виліт під час завантаження моделей транспорту й деталей тюнінгу. fastman92 завантажується з папки GTA, а попередній Open Limit Adjuster зберігається в резервній копії.
+- У «Файлах гри» можна зберегти код із вікна fastman92, щоб приховати його при наступному запуску.
+- Клієнт перевіряє, що гра повернула очікувану модель і підтримуваний клас, перш ніж реєструвати мережеву копію машини.
 
-- Automatically installs CLEO 4.4.4 and the Extended Vanilla Vehicles Pack 2.0 into Mod Loader. CLEO's Vorbis DLLs are skipped so the game's existing audio/ASI setup is preserved.
-- Keeps an existing Ukrainian audio installation and skips downloading it again.
-- Launcher updated to 0.3.6 and uses the new photo icon.
-- Includes upstream changes through `d9cb07e`; teleport commands and F2 arrows work without a Y/N confirmation when host settings and mission rules allow them.
+Для ручного оновлення розпакуйте `SA-COOP.zip` у папку GTA San Andreas 1.0 US. Встановлення пакета транспорту доступне через лаунчер.
 
-## У новій версії
+## English
 
-- Лаунчер встановлює CLEO 4.4.4 та Extended Vanilla Vehicles Pack 2.0 через Mod Loader. DLL-файли Vorbis з CLEO пропускаються, щоб зберегти наявне аудіо й ASI-налаштування гри.
-- Якщо українська озвучка вже встановлена, лаунчер не завантажує її повторно.
-- Лаунчер оновлено до версії 0.3.6 та встановлено нову іконку з фото.
-- Включено зміни upstream до `d9cb07e`; команди телепортації та стрілки F2 працюють без підтвердження Y/N, якщо це дозволяють налаштування хоста й правила місії.
-
-## Installation / Установка
-
-Extract `SA-COOP.zip` into the GTA San Andreas 1.0 US folder so `coop.asi`, `install.bat` and `coop` are next to `gta_sa.exe`, then run `install.bat`. Unpack the archive over an existing installation to update it; settings and partner progress are preserved.
-
-Распакуйте `SA-COOP.zip` в папку GTA San Andreas 1.0 US, чтобы `coop.asi`, `install.bat` и `coop` находились рядом с `gta_sa.exe`, затем запустите `install.bat`. Для обновления распакуйте архив поверх установленной версии; настройки и прогресс напарника сохранятся.
+The launcher installs or repairs Extended Vanilla Vehicles Pack 2.0 and CLEO 4.4.4. It loads fastman92 early, sets the required vehicle and tuning limits, and backs up the previous Open Limit Adjuster. Use the Files tab to save the dismissal code shown by fastman92. SA:COOP also validates the car returned by the game before tracking it as a network mirror. Protocol 64 is unchanged.

@@ -75,6 +75,12 @@ function render() {
   status.classList.toggle('good', game.installed && game.supported);
   $('#compatibility').textContent = !game.found ? 'Очікуємо на папку з gta_sa.exe.' : game.supported ? '✓ GTA 1.0 US знайдено. Моди комфорту встановлюються автоматично.' : 'Версія gta_sa.exe не підтримується. Потрібна GTA 1.0 US, 14 383 616 байтів.';
   $('#install-mod').disabled = !game.supported || state.busy || state.playing;
+  const vehiclePack = $('#install-vehicle-pack');
+  vehiclePack.disabled = !game.supported || game.vehiclePackInstalled || state.busy || state.playing || state.launching || !!state.room;
+  $('#vehicle-pack-status').textContent = game.vehiclePackInstalled
+    ? 'Пакет транспорту встановлено.' : 'Додатковий транспорт і оновлені моделі GTA.';
+  $('#fla-code-form').hidden = !game.vehiclePackInstalled;
+  $('#fla-code-form button').disabled = state.busy || state.playing || state.launching;
   $('#choose-game').disabled = state.busy || state.playing || !!state.room;
   $('#install-progress').hidden = !state.busy;
   if (state.release) showRelease(state.release);
@@ -247,6 +253,19 @@ $('#open-folder').addEventListener('click', e => action(e.currentTarget, () => a
 $('#open-releases').addEventListener('click', () => action(null, () => api.openReleases()));
 $('#check-release').addEventListener('click', e => action(e.currentTarget, async () => { state.release = await api.release(); }));
 $('#install-mod').addEventListener('click', e => action(e.currentTarget, async () => { state = await api.install(); toast('Мод встановлено. Час збирати друзів!'); }));
+$('#install-vehicle-pack').addEventListener('click', e => action(e.currentTarget, async () => {
+  state = await api.installVehiclePack();
+  toast('Пакет транспорту встановлено.');
+}));
+$('#fla-code-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const input = $('#fla-code');
+  action(e.currentTarget.querySelector('button'), async () => {
+    await api.saveFlaCode(input.value);
+    input.value = '';
+    toast('Код збережено. Зміна набуде чинності при наступному запуску GTA.');
+  });
+});
 $('#cancel-install').addEventListener('click', () => api.cancelInstall());
 $('#join-form').addEventListener('submit', e => {
   e.preventDefault(); action($('#join-form button'), async () => {

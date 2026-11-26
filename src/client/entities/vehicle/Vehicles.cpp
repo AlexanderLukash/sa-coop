@@ -142,7 +142,13 @@ bool VehicleLook::operator==(const VehicleLook& o) const {
            !memcmp(damage, o.damage, sizeof(damage)) && !memcmp(bikeTyres, o.bikeTyres, 2) && lock == o.lock;
 }
 
-bool IsSyncableVehicle(CVehicle* v) { return !v->IsTrain(); }
+// The sync code reads fields at subclass-specific offsets. Only use it with live vehicles of the
+// known classes, including models added by a vehicle pack. Trains use their own sync module.
+bool IsSyncableVehicle(CVehicle* v) {
+    if (!v || !IsVehicleValid(v) || v->IsTrain()) return false;
+    const int type = v->VehicleSubClass();
+    return type >= VEHICLE_TYPE_AUTOMOBILE && type <= VEHICLE_TYPE_TRAILER;
+}
 
 // A mirror has the AI-driven status (STATUS_PHYSICS), so every physics step ran its AI steering
 // (CCarCtrl::SteerAICarWithPhysics): with no mission it brakes and pulls the handbrake, and the next frame's
@@ -207,7 +213,7 @@ bool Vehicles::IsMirror(const NetVehicle& nv) const { return nv.owner != Net().M
 NetVehicle* Vehicles::EnsureNetworked(CVehicle* v) {
     // a train is the Trains module's (CREATE_CAR made a train off its rails in the other game): a player getting into its
     // cab announced it as a car
-    if (!v || !IsVehicleValid(v) || !IsSyncableVehicle(v)) return nullptr;
+    if (!IsSyncableVehicle(v)) return nullptr;
     if (NetVehicle* nv = Find(v)) return nv;
     if (!Net().Online()) return nullptr;
     const bool mission = v->CreatedBy() == VEHICLE_CREATED_MISSION || ScriptHolds(v);
@@ -424,7 +430,14 @@ CVehicle* Vehicles::SpawnMirror(const VehicleSpawn& sp) {
     for (uint16_t id : ours)
         if (NetVehicle* nv = Find(id); nv && !Alive(*nv)) nv->gaveWay = true;
     CVehicle* v = GetVehicle(handle);
-    if (!v) return nullptr;
+    if (!IsVehicleValid(v)) return nullptr;
+    // Check what CREATE_CAR actually returned before tracking it as a mirror.
+    if (v->ModelIndex() != sp.model || !IsSyncableVehicle(v)) {
+        LOGW("Vehicle mirror %04X rejected: requested model %u, got model %u/type %d", sp.netId,
+             (unsigned)sp.model, (unsigned)v->ModelIndex(), (int)v->VehicleSubClass());
+        Cmd(0x00A6).I(handle).Run();  // DELETE_CAR
+        return nullptr;
+    }
     // CREATE_CAR marks the car as held by a script (CVehicle::bIsLocked), and a tow truck or a tractor never hooks such
     // a car (CAutomobile::TowTruckControl, 0x6A4366); a mission's car stays so, as in its owner's game
     if (!sp.script) v->VehicleFlagsLo() &= ~8u;

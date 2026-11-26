@@ -1,4 +1,4 @@
-# Eight-player build: fork 0.3.6
+# Eight-player build: fork 0.3.7
 
 This build integrates every missing upstream commit through
 [upstream main (`d9cb07e`)](https://github.com/Karimov-Akbar/sa-coop/commit/d9cb07e),
@@ -8,7 +8,7 @@ with **eight players total: one host and seven partners**. The earlier v0.3.3 in
 ## Setup and update
 
 Install this build's `coop.asi` and matching `coop/coop-server.exe` on every
-machine. Fork 0.3.6 uses **protocol 64**. Upgrade clients and servers together when moving
+machine. Fork 0.3.7 uses **protocol 64**. Upgrade clients and servers together when moving
 from fork 0.3.4 (protocol 55) or upstream 0.3.4 (protocol 63). Animation packs are included in
 `coop/packs`; optional custom IFPs go into `coop/anims` on each participating machine.
 
